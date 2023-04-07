@@ -13,17 +13,166 @@ import sys
 from Bio import SeqIO
 import random
 
-# Set these values to run the good or poor mutational model
-# output_file_prefix = "test_new_metadata.good_mut_model"
-output_file_prefix = sys.argv[1] if sys.argv[1] is not None else "simulation_output"
-fasta_to_write = output_file_prefix + ".sequences.fasta"
-metadata_file_to_write = output_file_prefix + ".metadata.tsv"
-use_poor_mut_model = True if len(
-    sys.argv) > 2 and sys.argv[2] == "-p" else False
-seq_limit = 16521
 
-# calculates threshold for nucleotide change based on shannon
-# column entropy
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output_file_prefix", default="syn_gen", type=str, help="prefix for output file name")
+    parser.add_argument("--proportional", default=False, action="store_true", help="use proportional scaling")
+    parser.add_argument("--poor", default=False, action="store_true", help="use poor man's scaling")
+    parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
+    parser.add_argument("align_fasta", type=str, nargs="?", default="delta.fa", help="path to alignment file in FASTA format")
+
+    args = parser.parse_args()
+
+    print(args.output_file_prefix)
+    print(args.proportional)
+    print(args.poor)
+
+    # Set these values to run the good or poor mutational model
+    # output_file_prefix = "test_new_metadata.good_mut_model"
+    output_file_prefix = args.output_file_prefix
+    fasta_to_write = output_file_prefix + ".sequences.fasta"
+    metadata_file_to_write = output_file_prefix + ".metadata.tsv"
+    use_poor_mut_model = args.poor
+    use_proportional = args.proportional
+    seq_limit = args.limit
+
+    ##########################################################
+    # read in alignment to pandas dataframe
+    print('reading alignment file into pandas dataframe.....')
+    align = AlignIO.read(args.align_fasta, 'fasta')
+    name = []
+    description = []
+    for record in align:
+        name.append(record.name)
+        description.append(record.description)
+    align2 = pd.DataFrame(align)
+
+    # create threshold list, each column threshold included
+    print('calculating entropy and setting the threshold...')
+    thresh = []
+    thresh_detail=[]
+    df = pd.DataFrame()
+    for i in range(len(align2.columns)):
+        df1 = align2.iloc[:, i].value_counts(normalize=True)
+        #df1 = df1.divide(len(align2.index))
+        thresh_detail.append(df1)
+        thresh.append(column_entropy_thresh(df1))
+
+    ##########################################################
+
+    # Read in network data
+    print('reading in the network data....')
+    df = pd.read_csv('contact_network_va_delta.csv')
+
+
+    # Create connection dataframe (pid, and contact_pid columns)
+    connections1 = df.iloc[:, 1]  # pid
+    connections2 = df.iloc[:, 3]  # contact_pid
+    connections = pd.concat([connections1, connections2],
+                            axis=1, ignore_index=False)
+
+    # Create id dataframe (with tick and exit_state columns)
+    id1 = df.iloc[:, 0]  # tick
+    id2 = df.iloc[:, 2]  # exit_state
+    ids = pd.concat([id1, id2], axis=1)  # dgaulton: looks like this is never used
+
+
+    # Assigning ticks to correct nodes for coloring based on time
+    timelist = dict(zip(connections1, id1))
+    # dgaulton: where did this number come from? Is this from 20 tick cutoff?
+    # - looks like picking out that item and moving it
+    pos = list(timelist.keys()).index(476724)
+    items = list(timelist.items())
+    items.insert(pos, (-1, 0))
+    timelist = dict(items)
+    colors_list = list(timelist.values())
+
+
+    # draw directed graph network
+    if False:
+        print('creating network digraph .......')
+        G = nx.from_pandas_edgelist(
+            df,
+            'contact_pid',
+            'pid',
+            create_using=nx.MultiDiGraph(),
+            edge_key='tick')  # tick will be edge[2]
+
+    ##########################################################
+
+    # creating .fasta and .tsv files to append
+    seq_file = open(fasta_to_write, 'w')
+    metadata_file = open(metadata_file_to_write, 'w')
+
+    # Prep metadata TSV file with required column names:
+    # https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html#required-metadata
+    metadata_file.write("strain\tdate\tvirus\tregion\n")
+
+    # need two data structures
+    # one list to just append to to generate MSA of all sequences as we go
+    # another dict that maps node to it's most recent sequence
+
+    # This assumes the data read into df is in chronological order (ascending
+    # according to tick)
+    current_sequences = {}
+    i = 0
+    max_seed_value_index = len(align2) - 1
+
+    start_date = "2021-05-31"  # start of Delta strain
+
+    strain_id = 0  # initialize strain_id for fasta, for now just increment a value, in the future could use node pid but would have to append to it in the case of multiple infections for a given pid
+
+    sequences_mutated = 0
+
+    for pid, contact_pid, tick, exit_state in zip(
+            connections1, connections2, id1, id2):
+        if exit_state == "var1E" and strain_id < seq_limit:
+            print(tick)
+            print(contact_pid)
+            print(pid)
+            print(exit_state)
+            if contact_pid == -1:  # seed case
+                # grab a new real sequence
+                print('Adding seed seq to .fasta ........')
+                index = align2.iloc[i].values.tolist()
+                index = ''.join(index)
+                if i == max_seed_value_index:  # wrap to the beginning of seed sequences if we've run out
+                    i = 0
+                else:
+                    i += 1
+
+                # update the node's current sequence
+                current_sequences[pid] = index
+
+            else:
+                # Get the parent's sequence, mutate it, and append result to fasta
+                print('Mutating sequence, adding to fasta.....')
+                seq_to_change = current_sequences[contact_pid]
+                change = determine_change(thresh)
+                print(pid)
+                if (use_poor_mut_model):
+                    new_seq = poor_mut_model(seq_to_change)
+                else:
+                    new_seq = weight_change(seq_to_change, change, thresh_detail, use_proportional)
+
+                date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
+
+                add_to_fasta(new_seq, strain_id, date)
+
+                strain_id += 1
+
+                current_sequences[pid] = new_seq
+
+    seq_file.close()
+    metadata_file.close()
+
+    print("Done")
+
+    # calculates threshold for nucleotide change based on shannon
+    # column entropy
 
 
 def column_entropy_thresh(freq_df):
@@ -62,19 +211,27 @@ def determine_change(thresh):
     return change
 
 
-def weight_change(index, change, letter_odds):
+def weight_change(index, change, letter_odds, proportional=False):
     new_seq = []
     for (nucleotide, change_val, odds_val) in zip(index, change, letter_odds):
         if change_val:
             letter_list=[]
             weight_list=[]
-            #python 3.7 order guaranteed but just in case
-            for item in odds_val.items(): letter_list.append(item[0]), weight_list.append(item[1])
-            new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)
+            if proportional:
+                #python 3.7 order guaranteed but just in case
+                for item in odds_val.items(): letter_list.append(item[0]), weight_list.append(item[1])
+                new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
+            else:
+                #set the letters to equal weight except for the gap symbol.
+                letter_list=["A","C","T","G"]
+                gap_odds=odds_val.get("-",0)
+                weight_list = [(1-gap_odds)/float(len(letter_list))] * len(letter_list) #make four copies
+                weight_list.append(gap_odds)
+                letter_list.append("-")
+                new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
         else:
             new_nucleotide = nucleotide
         new_seq.append(new_nucleotide)
-
     new_seq = ''.join(new_seq)
     return new_seq
 
@@ -227,134 +384,3 @@ def dfs_edges_with_ticks(G, source=None, depth_limit=None):
                 stack.pop()
 
 
-##########################################################
-# read in alignment to pandas dataframe
-print('reading alignment file into pandas dataframe.....')
-align = AlignIO.read('delta.fa', 'fasta')
-name = []
-description = []
-for record in align:
-    name.append(record.name)
-    description.append(record.description)
-align2 = pd.DataFrame(align)
-
-# create threshold list, each column threshold included
-print('calculating entropy and setting the threshold...')
-thresh = []
-thresh_detail=[]
-df = pd.DataFrame()
-for i in range(len(align2.columns)):
-    df1 = align2.iloc[:, i].value_counts(normalize=True)
-    #df1 = df1.divide(len(align2.index))
-    thresh_detail.append(df1)
-    thresh.append(column_entropy_thresh(df1))
-
-##########################################################
-
-# Read in network data
-print('reading in the network data....')
-df = pd.read_csv('contact_network_va_delta.csv')
-
-
-# Create connection dataframe (pid, and contact_pid columns)
-connections1 = df.iloc[:, 1]  # pid
-connections2 = df.iloc[:, 3]  # contact_pid
-connections = pd.concat([connections1, connections2],
-                        axis=1, ignore_index=False)
-
-# Create id dataframe (with tick and exit_state columns)
-id1 = df.iloc[:, 0]  # tick
-id2 = df.iloc[:, 2]  # exit_state
-ids = pd.concat([id1, id2], axis=1)  # dgaulton: looks like this is never used
-
-
-# Assigning ticks to correct nodes for coloring based on time
-timelist = dict(zip(connections1, id1))
-# dgaulton: where did this number come from? Is this from 20 tick cutoff?
-# - looks like picking out that item and moving it
-pos = list(timelist.keys()).index(476724)
-items = list(timelist.items())
-items.insert(pos, (-1, 0))
-timelist = dict(items)
-colors_list = list(timelist.values())
-
-
-# draw directed graph network
-if False:
-    print('creating network digraph .......')
-    G = nx.from_pandas_edgelist(
-        df,
-        'contact_pid',
-        'pid',
-        create_using=nx.MultiDiGraph(),
-        edge_key='tick')  # tick will be edge[2]
-
-##########################################################
-
-# creating .fasta and .tsv files to append
-seq_file = open(fasta_to_write, 'w')
-metadata_file = open(metadata_file_to_write, 'w')
-
-# Prep metadata TSV file with required column names:
-# https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html#required-metadata
-metadata_file.write("strain\tdate\tvirus\tregion\n")
-
-# need two data structures
-# one list to just append to to generate MSA of all sequences as we go
-# another dict that maps node to it's most recent sequence
-
-# This assumes the data read into df is in chronological order (ascending
-# according to tick)
-current_sequences = {}
-i = 0
-max_seed_value_index = len(align2) - 1
-
-start_date = "2021-05-31"  # start of Delta strain
-
-strain_id = 0  # initialize strain_id for fasta, for now just increment a value, in the future could use node pid but would have to append to it in the case of multiple infections for a given pid
-
-sequences_mutated = 0
-
-for pid, contact_pid, tick, exit_state in zip(
-        connections1, connections2, id1, id2):
-    if exit_state == "var1E" and strain_id < seq_limit:
-        print(tick)
-        print(contact_pid)
-        print(pid)
-        print(exit_state)
-        if contact_pid == -1:  # seed case
-            # grab a new real sequence
-            print('Adding seed seq to .fasta ........')
-            index = align2.iloc[i].values.tolist()
-            index = ''.join(index)
-            if i == max_seed_value_index:  # wrap to the beginning of seed sequences if we've run out
-                i = 0
-            else:
-                i += 1
-
-            # update the node's current sequence
-            current_sequences[pid] = index
-
-        else:
-            # Get the parent's sequence, mutate it, and append result to fasta
-            print('Mutating sequence, adding to fasta.....')
-            seq_to_change = current_sequences[contact_pid]
-            change = determine_change(thresh)
-            print(pid)
-            if (use_poor_mut_model):
-                new_seq = poor_mut_model(seq_to_change)
-            else:
-                new_seq = weight_change(seq_to_change, change, thresh_detail)
-
-            date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
-
-            add_to_fasta(new_seq, strain_id, date)
-
-            strain_id += 1
-
-            current_sequences[pid] = new_seq
-
-seq_file.close()
-metadata_file.close()
-
-print("Done")
