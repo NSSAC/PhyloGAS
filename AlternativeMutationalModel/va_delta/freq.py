@@ -18,21 +18,24 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_file_prefix", default="syn_gen", type=str, help="prefix for output file name")
+    parser.add_argument("--output_prefix", default="syn_gen", type=str, help="prefix for output file name")
     parser.add_argument("--proportional", default=False, action="store_true", help="use proportional scaling")
     parser.add_argument("--poor", default=False, action="store_true", help="use poor man's scaling")
     parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
-    parser.add_argument("align_fasta", type=str, nargs="?", default="delta.fa", help="path to alignment file in FASTA format")
+    parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
 
     args = parser.parse_args()
+    if (args.align_fasta == None):
+        parser.print_help()
+        sys.exit(0)
 
-    print(args.output_file_prefix)
+    print(args.output_prefix)
     print(args.proportional)
     print(args.poor)
 
     # Set these values to run the good or poor mutational model
     # output_file_prefix = "test_new_metadata.good_mut_model"
-    output_file_prefix = args.output_file_prefix
+    output_file_prefix = args.output_prefix
     fasta_to_write = output_file_prefix + ".sequences.fasta"
     metadata_file_to_write = output_file_prefix + ".metadata.tsv"
     use_poor_mut_model = args.poor
@@ -383,4 +386,5 @@ def dfs_edges_with_ticks(G, source=None, depth_limit=None):
             except StopIteration:
                 stack.pop()
 
-
+if __name__ == '__main__':
+    main()
