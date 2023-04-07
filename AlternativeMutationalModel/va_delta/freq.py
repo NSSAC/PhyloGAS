@@ -11,6 +11,7 @@ import numpy as np
 import glob
 import sys
 from Bio import SeqIO
+import random
 
 # Set these values to run the good or poor mutational model
 # output_file_prefix = "test_new_metadata.good_mut_model"
@@ -32,11 +33,12 @@ def column_entropy_thresh(freq_df):
         p_xi = freq_df.iloc[i]
         e_act += p_xi * np.log(p_xi)
 
-        p_xm = 1 / len(freq_df.index)
+        #p_xm = 1 / len(freq_df.index)
+        p_xm = 1 / float(5)
         e_max += p_xm * np.log(p_xm)
 
     thresh = (1 - (e_act / e_max)) * 100
-    print(thresh)
+    #print(thresh)
 
     if np.isnan(thresh):
         thresh = 0
@@ -49,19 +51,38 @@ def column_entropy_thresh(freq_df):
 def determine_change(thresh):
     change = []
     for threshold in thresh:
-        # import pdb; pdb.set_trace()
         val = np.random.randint(0, 100)
-        if val < threshold:
-            change.append('Yes')
+        #the threshold is a measure of the consistency of the column
+        #if the consistency is high, there should be less chance to change it
+        #if the consistency is low it should be easier to change
+        if val > threshold:
+            change.append(True)
         else:
-            change.append('No')
+            change.append(False)
     return change
+
+
+def weight_change(index, change, letter_odds):
+    new_seq = []
+    for (nucleotide, change_val, odds_val) in zip(index, change, letter_odds):
+        if change_val:
+            letter_list=[]
+            weight_list=[]
+            #python 3.7 order guaranteed but just in case
+            for item in odds_val.items(): letter_list.append(item[0]), weight_list.append(item[1])
+            new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)
+        else:
+            new_nucleotide = nucleotide
+        new_seq.append(new_nucleotide)
+
+    new_seq = ''.join(new_seq)
+    return new_seq
 
 
 def commit_change(index, change):
     new_seq = []
     for (nucleotide, change_val) in zip(index, change):
-        if change_val == 'Yes':
+        if change_val:
             new_nucleotide = np.random.randint(1, 5)
             if new_nucleotide == 1:
                 new_nucleotide = 'A'
@@ -89,7 +110,7 @@ def commit_change(index, change):
 def intermediate_mut_model(index, change):
     new_seq = []
     for (nucleotide, change_val) in zip(index, change):
-        if change_val == 'Yes':
+        if change_val:
             if nucleotide == 'A':
                 new_nucleotide = 'T'
                 new_seq.append(new_nucleotide)
@@ -220,13 +241,13 @@ align2 = pd.DataFrame(align)
 # create threshold list, each column threshold included
 print('calculating entropy and setting the threshold...')
 thresh = []
+thresh_detail=[]
 df = pd.DataFrame()
 for i in range(len(align2.columns)):
-    import pdb
-    pdb.set_trace()
-    df1 = align2.iloc[:, i].value_counts()
-    df1 = df1.divide(len(align2.index))
-    thresh.append(column_entropy_thresh(df1) * 100)
+    df1 = align2.iloc[:, i].value_counts(normalize=True)
+    #df1 = df1.divide(len(align2.index))
+    thresh_detail.append(df1)
+    thresh.append(column_entropy_thresh(df1))
 
 ##########################################################
 
@@ -259,13 +280,14 @@ colors_list = list(timelist.values())
 
 
 # draw directed graph network
-print('creating network digraph .......')
-G = nx.from_pandas_edgelist(
-    df,
-    'contact_pid',
-    'pid',
-    create_using=nx.MultiDiGraph(),
-    edge_key='tick')  # tick will be edge[2]
+if False:
+    print('creating network digraph .......')
+    G = nx.from_pandas_edgelist(
+        df,
+        'contact_pid',
+        'pid',
+        create_using=nx.MultiDiGraph(),
+        edge_key='tick')  # tick will be edge[2]
 
 ##########################################################
 
@@ -322,7 +344,7 @@ for pid, contact_pid, tick, exit_state in zip(
             if (use_poor_mut_model):
                 new_seq = poor_mut_model(seq_to_change)
             else:
-                new_seq = commit_change(seq_to_change, change)
+                new_seq = weight_change(seq_to_change, change, thresh_detail)
 
             date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
 
