@@ -19,8 +19,8 @@ import argparse
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_prefix", default="syn_gen", type=str, help="prefix for output file name")
-    parser.add_argument("--proportional", default=False, action="store_true", help="use proportional scaling")
-    parser.add_argument("--poor", default=False, action="store_true", help="use poor man's scaling")
+    parser.add_argument("--proportional", default=False, action="store_true", help="use proportional letter choices")
+    parser.add_argument("--poor", default=False, action="store_true", help="use poor mutational model")
     parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
     parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
 
@@ -163,7 +163,7 @@ def main():
 
                 date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
 
-                add_to_fasta(new_seq, strain_id, date)
+                add_to_fasta(new_seq, strain_id, date, seq_file, metadata_file)
 
                 strain_id += 1
 
@@ -322,7 +322,7 @@ def poor_mut_model(sequence):
     return new_seq
 
 
-def add_to_fasta(seq, strain_id, date):
+def add_to_fasta(seq, strain_id, date, seq_file,metadata_file):
     # seq_file = open(fasta_to_write, "a")
     # metadata_file = open(metadata_file_to_write, "a")
     seq_file.write(">" + str(strain_id) + "\n" + seq + "\n")
