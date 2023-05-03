@@ -22,7 +22,10 @@ def main():
     parser.add_argument("--proportional", default=False, action="store_true", help="use proportional letter choices")
     parser.add_argument("--poor", default=False, action="store_true", help="use poor mutational model")
     parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
+    parser.add_argument("--start_date", default="2021-05-31", type=str, help="simulation alignment to date")
+    parser.add_argument("--reference", default=None, type=str, help="add reference sequence to the output")
     parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
+    
 
     args = parser.parse_args()
     if (args.align_fasta == None):
@@ -32,6 +35,8 @@ def main():
     print(args.output_prefix)
     print(args.proportional)
     print(args.poor)
+    
+    start_date = args.start_date  # start of Delta strain
 
     # Set these values to run the good or poor mutational model
     # output_file_prefix = "test_new_metadata.good_mut_model"
@@ -112,7 +117,6 @@ def main():
 
     # Prep metadata TSV file with required column names:
     # https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html#required-metadata
-    metadata_file.write("strain\tdate\tvirus\tregion\n")
 
     # need two data structures
     # one list to just append to to generate MSA of all sequences as we go
@@ -124,18 +128,31 @@ def main():
     i = 0
     max_seed_value_index = len(align2) - 1
 
-    start_date = "2021-05-31"  # start of Delta strain
 
     strain_id = 0  # initialize strain_id for fasta, for now just increment a value, in the future could use node pid but would have to append to it in the case of multiple infections for a given pid
 
     sequences_mutated = 0
+    
+    line_keys=["virus","region","country","division","divisionExposure","date","strain"]
+    metadata_file.write("\t".join(line_keys)+"\n")
+
+    if args.reference != None:
+        align = AlignIO.read(args.reference, 'fasta')
+        infection = InfectionRecord()
+        country="China"
+        division="Wuhan"
+        divisionAbbr="Hu"
+        region="Asia"
+        date="2019-12-26"
+        infection.fromEpiHiper("ncov", region, country, division, division, date, "Wuhan-Hu-1/2019")
+        add_to_fasta(align.seq, infection, seq_file, metadata_file, line_keys)
 
     for pid, contact_pid, tick, exit_state in zip(
             connections1, connections2, id1, id2):
         if exit_state == "var1E" and strain_id < seq_limit:
-            print(tick)
-            print(contact_pid)
-            print(pid)
+#            print(tick)
+#            print(contact_pid)
+#            print(pid)
             print(exit_state)
             if contact_pid == -1:  # seed case
                 # grab a new real sequence
@@ -162,8 +179,13 @@ def main():
                     new_seq = weight_change(seq_to_change, change, thresh_detail, use_proportional)
 
                 date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
-
-                add_to_fasta(new_seq, strain_id, date, seq_file, metadata_file)
+                infection = InfectionRecord()
+                country="USA"
+                division="Virginia"
+                divisionAbbr="VA"
+                region="North America"
+                infection.fromEpiHiper("ncov", region, country, division, division, date, f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}")
+                add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys)
 
                 strain_id += 1
 
@@ -322,15 +344,57 @@ def poor_mut_model(sequence):
     return new_seq
 
 
-def add_to_fasta(seq, strain_id, date, seq_file,metadata_file):
+class InfectionRecord:
+    def __init__(self):
+        self.inf_dict = {
+            "virus": None,
+            "age": None,
+            "country": None,
+            "countryExposure": None,
+            "date": None,
+            "dateSubmitted": None,
+            "died": None,
+            "division": None,
+            "divisionExposure": None,
+            "fullyVaccinated": None,
+            "strain": None,
+            "gisaidCloade": None,
+            "gisaidEpiIsl": None,
+            "hospitalized": None,
+            "host": None,
+            "location": None,
+            "month": None,
+            "nextcladePangoLineage": None,
+            "nextstrainClade": None,
+            "originatingLab": None,
+            "pangoLineage": None,
+            "region": None,
+            "regionExposure": None,
+            "samplingStrategy": None,
+            "sex": None,
+            "sraAccession": None,
+            "strainold": None,
+            "submittingLab": None,
+            "year":None
+        }
+    def fromEpihiper(self, virus, region, country, division, divisionExposure, date, strain):
+        self.my_dict["virus"] = virus
+        self.my_dict["region"] = country
+        self.my_dict["country"] = country
+        self.my_dict["division"] = division
+        self.my_dict["divisionExposure"] = divisionExposure
+        self.my_dict["date"] = date
+        self.my_dict["strain"] = strain
+
+#Model the GISAID / Nextstrain metadata file for now
+#https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
+#virus,age,country,countryExposure,date,dateSubmitted,died,division,divisionExposure,fullyVaccinated,strain,gisaidClade,gisaidEpiIsl,hospitalized,host,location,month,nextcladePangoLineage,nextstrainClade,originatingLab,pangoLineage,region,regionExposure,samplingStrategy,sex,sraAccession,strainold,submittingLab,year
+#ncov,,USA,USA,2021-09-20,2021-10-11,,Virginia,Virginia,,OK455686,,EPI_ISL_5088839,,Homo sapiens,,9,,21J,,AY.122,North America,North America,,,,USA/VA-CDC-LC0291093/2021,,2021
+def add_to_fasta(seq, infection, seq_file, metadata_file, line_keys):
     # seq_file = open(fasta_to_write, "a")
     # metadata_file = open(metadata_file_to_write, "a")
     seq_file.write(">" + str(strain_id) + "\n" + seq + "\n")
-    metadata_file.write(
-        str(strain_id) +
-        "\t" +
-        str(date) +
-        "\tncov\tNorth America\n")
+    metadata_file.write("\t".join([infection.get(key) for key in line_keys])+"\n")
     # seq_file.close()
     # metadata_file.close()
 
