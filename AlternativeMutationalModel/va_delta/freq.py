@@ -144,8 +144,8 @@ def main():
         divisionAbbr="Hu"
         region="Asia"
         date="2019-12-26"
-        infection.fromEpiHiper("ncov", region, country, division, division, date, "Wuhan-Hu-1/2019")
-        add_to_fasta(align.seq, infection, seq_file, metadata_file, line_keys)
+        infection.fromEpihiper("ncov", region, country, division, division, date, "Wuhan-Hu-1/2019")
+        add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys)
 
     for pid, contact_pid, tick, exit_state in zip(
             connections1, connections2, id1, id2):
@@ -156,7 +156,7 @@ def main():
             print(exit_state)
             if contact_pid == -1:  # seed case
                 # grab a new real sequence
-                print('Adding seed seq to .fasta ........')
+                #print('Adding seed seq to .fasta ........')
                 index = align2.iloc[i].values.tolist()
                 index = ''.join(index)
                 if i == max_seed_value_index:  # wrap to the beginning of seed sequences if we've run out
@@ -169,10 +169,10 @@ def main():
 
             else:
                 # Get the parent's sequence, mutate it, and append result to fasta
-                print('Mutating sequence, adding to fasta.....')
+                #print('Mutating sequence, adding to fasta.....')
                 seq_to_change = current_sequences[contact_pid]
                 change = determine_change(thresh)
-                print(pid)
+                #print(pid)
                 if (use_poor_mut_model):
                     new_seq = poor_mut_model(seq_to_change)
                 else:
@@ -184,7 +184,7 @@ def main():
                 division="Virginia"
                 divisionAbbr="VA"
                 region="North America"
-                infection.fromEpiHiper("ncov", region, country, division, division, date, f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}")
+                infection.fromEpihiper("ncov", region, country, division, division, date.strftime("%Y-%m-%d"), f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}")
                 add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys)
 
                 strain_id += 1
@@ -377,14 +377,17 @@ class InfectionRecord:
             "submittingLab": None,
             "year":None
         }
+    def get(self,key,default=None):
+        return self.inf_dict.get(key,default)
+
     def fromEpihiper(self, virus, region, country, division, divisionExposure, date, strain):
-        self.my_dict["virus"] = virus
-        self.my_dict["region"] = country
-        self.my_dict["country"] = country
-        self.my_dict["division"] = division
-        self.my_dict["divisionExposure"] = divisionExposure
-        self.my_dict["date"] = date
-        self.my_dict["strain"] = strain
+        self.inf_dict["virus"] = virus
+        self.inf_dict["region"] = country
+        self.inf_dict["country"] = country
+        self.inf_dict["division"] = division
+        self.inf_dict["divisionExposure"] = divisionExposure
+        self.inf_dict["date"] = date
+        self.inf_dict["strain"] = strain
 
 #Model the GISAID / Nextstrain metadata file for now
 #https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
@@ -393,7 +396,7 @@ class InfectionRecord:
 def add_to_fasta(seq, infection, seq_file, metadata_file, line_keys):
     # seq_file = open(fasta_to_write, "a")
     # metadata_file = open(metadata_file_to_write, "a")
-    seq_file.write(">" + str(strain_id) + "\n" + seq + "\n")
+    seq_file.write(">" + str(infection.get("strain")) + "\n" + seq + "\n")
     metadata_file.write("\t".join([infection.get(key) for key in line_keys])+"\n")
     # seq_file.close()
     # metadata_file.close()
