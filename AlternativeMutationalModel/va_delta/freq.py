@@ -153,7 +153,7 @@ def main():
 #            print(tick)
 #            print(contact_pid)
 #            print(pid)
-            print(exit_state)
+#            print(exit_state)
             if contact_pid == -1:  # seed case
                 # grab a new real sequence
                 #print('Adding seed seq to .fasta ........')
