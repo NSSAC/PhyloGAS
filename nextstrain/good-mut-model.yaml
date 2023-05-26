@@ -1,0 +1,19 @@
+inputs:
+  - name: good_mut_model_data
+    metadata: data/good.metadata.tsv
+    aligned: data/good.sequences.fasta
+
+builds:
+  good-mut-model-build:
+    subsampling_scheme: all
+
+filter:
+  skip_diagnostics: true # Some quality control still takes place
+  min_length: 10
+
+files:
+  # Not used when "aligned" is used for the sequences
+  # alignment_reference: data/va_delta_ref.sequences.fasta
+
+# Haven't tried with this yet
+#nextclade_dataset: data/va_delta_ref_dataset.zip
