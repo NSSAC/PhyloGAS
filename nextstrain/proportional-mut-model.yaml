@@ -1,0 +1,16 @@
+inputs:
+  - name: proportional_mut_model_data
+    metadata: data/syn_gen_proportional.metadata.tsv
+    aligned: data/syn_gen_proportional.sequences.fasta
+
+# GenBank data includes "Wuhan-Hu-1/2019" which we use as the root for this build.
+builds:
+  proportional-mut-model-build:
+    subsampling_scheme: all
+
+filter:
+  skip_diagnostics: true # Some quality control still takes place
+  min_length: 10
+
+refine:
+  root: "Wuhan-Hu-1/2019"
