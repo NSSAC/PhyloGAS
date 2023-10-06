@@ -65,18 +65,19 @@ def getClas():
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
 
     # For entropy analysis.
-    parser.add_argument("--output_prefix", default="syn_gen", type=str, help="prefix for output file name (for fasta and metadata files)")
-    parser.add_argument("--proportional", default=False, action="store_true", help="use proportional letter choices")
-    parser.add_argument("--poor", default=False, action="store_true", help="use poor mutational model")
-
-    parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
     parser.add_argument("--start_date", default="2021-05-31", type=str, help="simulation alignment to date")
-    parser.add_argument("--reference", default=None, type=str, help="add reference sequence to the output")
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
 
+
     # For genomic sequences analysis.
-    parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=True, help="directed graph file; nodes are genomic sequences.")
+    parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are genomic sequences.")
+    parser.add_argument("--output_prefix", default="syn_gen", type=str, help="prefix for output file name (for fasta and metadata files)")
+    parser.add_argument("--proportional", default=False, action="store_true", help="use proportional letter choices")
+    parser.add_argument("--poor", default=False, action="store_true", help="use poor mutational model")
+    parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
+    parser.add_argument("--reference", default=None, type=str, help="add reference sequence to the output")
+
 
 
     args = parser.parse_args()
