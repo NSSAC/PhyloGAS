@@ -85,7 +85,10 @@ def getClas():
 
     args = parser.parse_args()
     if (args.align_fasta == None):
+        print("  Error.")
+        print("  args.align_fasta has value None, which is not allowed.")
         parser.print_help()
+        print("  Terminate.")
         sys.exit(0)
 
     # print(args.output_prefix)
