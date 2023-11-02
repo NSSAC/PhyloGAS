@@ -6,6 +6,9 @@ date:  06 oct 2023 (actually wrote much earlier).
 
 Purpose:
 Take a collection of genomic sequences, and do one of two analyses, or both.
+Each analysis is one execution of the code, even if you do both analyses---in this
+case, you run the code twice.
+
 
 Analysis 1:
 Determine the Shannon entropy (in the form of a threshold) for each column (i.e., location, slot)
