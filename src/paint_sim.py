@@ -1,3 +1,26 @@
+"""
+
+awarren
+
+date:  06 oct 2023 (actually wrote much earlier).
+
+Purpose:
+Take a collection of genomic sequences, and do one of two analyses, or both.
+
+Analysis 1:
+Determine the Shannon entropy (in the form of a threshold) for each column (i.e., location, slot)
+in the sequences.
+
+Analysis 2:
+Given one sequence, determine a second (following) sequence by possibly modifying
+one or more "slots" from the first sequence.
+This modification is based on the Shannon entropies calculated in analysis 1.
+So you can chain a list of sequences and their changes this way.
+
+"""
+
+
+
 from matplotlib import pyplot as plt
 import matplotlib as mpl
 import networkx as nx
@@ -12,40 +35,187 @@ import glob
 import sys
 from Bio import SeqIO
 import random
+import time
 
 
 import argparse
 
-def main():
+# ====================================
+# Constants.
+
+# Analysis types
+ENTROPY_ANALYSIS="entropy_analysis"
+GEN_SEQUENCE_ANALYSIS="generate_sequence_analysis"
+BOTH="both"
+
+
+# ====================================
+def getClas():
+    """
+    Read in command line arguments.
+    :return:
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_prefix", default="syn_gen", type=str, help="prefix for output file name")
+
+    # For both analyses.
+    parser.add_argument('--analysis_type', type=str, dest='analysis_type', required=True,
+                        choices=[ENTROPY_ANALYSIS, GEN_SEQUENCE_ANALYSIS, BOTH],
+                        help='Type of analysis to run.')
+    parser.add_argument("--threshold_file", type=str,dest="threshold_file",required=True, help="file containing column threshold values.")
+    parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
+
+    # For entropy analysis.
+    parser.add_argument("--start_date", default="2021-05-31", type=str, help="simulation alignment to date")
+    # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
+    parser.add_argument("--align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
+
+
+    # For genomic sequences analysis.
+    parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are genomic sequences.")
+    parser.add_argument("--output_prefix", default="syn_gen", type=str, help="prefix for output file name (for fasta and metadata files)")
     parser.add_argument("--proportional", default=False, action="store_true", help="use proportional letter choices")
     parser.add_argument("--poor", default=False, action="store_true", help="use poor mutational model")
     parser.add_argument("--limit", default=16521, type=int, help="maximum number of items to process")
-    parser.add_argument("--start_date", default="2021-05-31", type=str, help="simulation alignment to date")
     parser.add_argument("--reference", default=None, type=str, help="add reference sequence to the output")
-    parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
-    
+
+
 
     args = parser.parse_args()
     if (args.align_fasta == None):
         parser.print_help()
         sys.exit(0)
 
-    print(args.output_prefix)
-    print(args.proportional)
-    print(args.poor)
-    
+    # print(args.output_prefix)
+    # print(args.proportional)
+    # print(args.poor)
+
+    return args
+
+
+# ====================================
+def write_output_entropy(args, thresh, thresh_detail):
+
+    # Filename and base filename.
+    threshold_file = args.threshold_file
+    base_threshold_df = args.base_threshold_df
+
+    # Write the thresholds to file.
+    try:
+        fh_out = open(threshold_file,"w")
+    except:
+        print("   Error")
+        print("   Trying to open the output file, where thresholds are to be written.")
+        print("   This failed.")
+        print("   File name: ", threshold_file)
+        print("   Terminate.")
+        exit(1)
+
+    for ithresh in thresh:
+        fh_out.write(str(ithresh) + "\n")
+
+    fh_out.close()
+
+    # Write out a DF to file; one DF for each threshold above.
+    size_detail = len(thresh_detail)
+    for itime in range(0, size_detail):
+        df_the = thresh_detail[itime]
+        filename = base_threshold_df+"_"+str(itime)+".csv"
+
+        try:
+            df_the.to_csv(filename)
+        except:
+            print("   Error")
+            print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
+            print("   This failed.")
+            print("   CSV file name: ", filename)
+            print("   Terminate.")
+            exit(1)
+
+    return
+
+
+# ====================================
+def load_thresholds_and_dfs(args):
+
+
+    # Filenames to write things to.
+    threshold_file = args.threshold_file
+    base_threshold_df = args.base_threshold_df
+
+    # Output lists.
+    thresh=list()
+    thresh_detail=list()
+
+    # Read thresholds from file.
+    try:
+        fh_in = open(threshold_file,"r")
+    except:
+        print("   Error")
+        print("   Trying to open the output file, where thresholds are to be read.")
+        print("   This failed.")
+        print("   File name: ", threshold_file)
+        print("   Terminate.")
+        exit(1)
+
+    for aline in fh_in:
+        sline = aline.strip()
+        if (len(sline)==0 or sline[0]=="#"):
+            continue
+        ithresh=(float)(sline)
+        thresh.append(ithresh)
+    fh_in.close()
+
+    # Read in the len(thresh) number of dataframes; put into list.
+    size01 = len(thresh)
+    for itime in range(0,size01):
+        filename = base_threshold_df+"_"+str(itime)+".csv"
+        df_one = pd.read_csv(filename)
+        thresh_detail.append(df_one)
+
+
+    return thresh, thresh_detail
+
+
+# ====================================
+def main():
+
+
+    args = getClas()
+
+    analysis_type = args.analysis_type
+
+    if analysis_type == BOTH or analysis_type==ENTROPY_ANALYSIS:
+        # Compute the shannon entropies for the colummns of a
+        # group of sequences.
+        compute_entropy(args)
+
+    if analysis_type == BOTH or analysis_type==GEN_SEQUENCE_ANALYSIS:
+        # Determine perturbations in a series of sequences.
+        generate_sequences(args)
+
+
+    return
+
+# ====================================
+def compute_entropy(args):
+    """
+    Compute the entropy for each column (i.e., each position)
+    of a collection of genomic sequences.
+    :param args:  the CLAs.
+    :return:
+    """
+
     start_date = args.start_date  # start of Delta strain
 
-    # Set these values to run the good or poor mutational model
-    # output_file_prefix = "test_new_metadata.good_mut_model"
-    output_file_prefix = args.output_prefix
-    fasta_to_write = output_file_prefix + ".sequences.fasta"
-    metadata_file_to_write = output_file_prefix + ".metadata.tsv"
-    use_poor_mut_model = args.poor
-    use_proportional = args.proportional
-    seq_limit = args.limit
+    # cjk:  move this to the sequence-generating method.
+    # # Set these values to run the good or poor mutational model
+    # # output_file_prefix = "test_new_metadata.good_mut_model"
+    # output_file_prefix = args.output_prefix
+    # fasta_to_write = output_file_prefix + ".sequences.fasta"
+    # metadata_file_to_write = output_file_prefix + ".metadata.tsv"
+    # use_poor_mut_model = args.poor
+    # use_proportional = args.proportional
+    # seq_limit = args.limit
 
     ##########################################################
     # read in alignment to pandas dataframe
@@ -71,27 +241,54 @@ def main():
 
     ##########################################################
 
+    write_output_entropy(args, thresh, thresh_detail)
+
+    return
+
+
+# ====================================
+def generate_sequences(args):
+
+
+    # Set these values to run the good or poor mutational model
+    output_file_prefix = args.output_prefix
+    fasta_to_write = output_file_prefix + ".sequences.fasta"
+    metadata_file_to_write = output_file_prefix + ".metadata.tsv"
+    use_poor_mut_model = args.poor
+    use_proportional = args.proportional
+    seq_limit = args.limit
+    input_graph_csv = args.input_graph_csv
+
+
+    # Load thresholds into list.
+    # Load the dataframe for each threshold.
+    thresh, thresh_detail = load_thresholds_and_dfs()
+
+
     # Read in network data
     print('reading in the network data....')
-    df = pd.read_csv('contact_network_va_delta.csv')
+    # df = pd.read_csv('contact_network_va_delta.csv')
+    df = pd.read_csv(input_graph_csv)
 
 
     # Create connection dataframe (pid, and contact_pid columns)
     connections1 = df.iloc[:, 1]  # pid
     connections2 = df.iloc[:, 3]  # contact_pid
-    connections = pd.concat([connections1, connections2],
-                            axis=1, ignore_index=False)
+    # cjk comment out; not used.
+    # connections = pd.concat([connections1, connections2],
+    #                         axis=1, ignore_index=False)
 
     # Create id dataframe (with tick and exit_state columns)
     id1 = df.iloc[:, 0]  # tick
     id2 = df.iloc[:, 2]  # exit_state
-    ids = pd.concat([id1, id2], axis=1)  # dgaulton: looks like this is never used
+    # cjk:   ids = pd.concat([id1, id2], axis=1)  # dgaulton: looks like this is never used
 
 
     # Assigning ticks to correct nodes for coloring based on time
     timelist = dict(zip(connections1, id1))
     # dgaulton: where did this number come from? Is this from 20 tick cutoff?
     # - looks like picking out that item and moving it
+    # cjk:  see comment immediately above by dgualton:  should this be hardcoded, or an input?
     pos = list(timelist.keys()).index(476724)
     items = list(timelist.items())
     items.insert(pos, (-1, 0))
@@ -199,7 +396,10 @@ def main():
     # calculates threshold for nucleotide change based on shannon
     # column entropy
 
+    return
 
+
+# ====================================
 def column_entropy_thresh(freq_df):
     e_act = 0
     e_max = 0
@@ -219,9 +419,9 @@ def column_entropy_thresh(freq_df):
 
     return thresh
 
+
+# ====================================
 # Determine nulceotide change
-
-
 def determine_change(thresh):
     change = []
     for threshold in thresh:
@@ -454,4 +654,11 @@ def dfs_edges_with_ticks(G, source=None, depth_limit=None):
                 stack.pop()
 
 if __name__ == '__main__':
+    begin_time = time.time()
     main()
+    end_time = time.time()
+    time_s=end_time-begin_time
+    time_hr=(float)(time_s)/3600.0
+    print("   Execution time (s), (hr): ",str(time_s),str(time_hr))
+    print("   --- good termination ---")
+
