@@ -68,12 +68,12 @@ def getClas():
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
 
     # For entropy analysis.
-    parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=False, help="path to alignment file in FASTA format")
 
 
     # For genomic sequences analysis.
+    parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
     parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are genomic sequences.")
     parser.add_argument("--output_prefix", default="syn_gen", type=str, dest="output_prefix", required=False, help="prefix for output file name (for fasta and metadata files)")
     parser.add_argument("--proportional", default=False, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
@@ -264,6 +264,7 @@ def generate_sequences(args):
     use_proportional = args.proportional
     seq_limit = args.limit
     input_graph_csv = args.input_graph_csv
+    start_date = args.start_date
 
 
     # Load thresholds into list.
