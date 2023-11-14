@@ -2,12 +2,16 @@
 code="../src/freq_v02.py"
 
 ## Inputs for both analyses.
+### Analysis type.
 analysis_type="entropy_analysis"
+
+### Output files to be written.
 threshold_file=""
 base_threshold_df=""
 
+
 ## Inputs for entropy analysis.
-start_date"start_date"
+start_date="start_date"
 align_fasta="align_fasta"
 
 

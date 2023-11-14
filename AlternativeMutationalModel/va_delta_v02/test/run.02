@@ -1,0 +1,36 @@
+
+code="../src/freq_v02.py"
+
+## Inputs for both analyses.
+
+### Analysis type.
+analysis_type="generate_sequence_analysis"
+
+
+threshold_file=""
+base_threshold_df=""
+
+
+## Inputs for generate sequence analysis.
+
+input_graph_csv=""
+output_prefix=""
+proportional=""
+poor=""
+limit=""
+reference=""
+
+
+## Execute.
+python ${code}                                  \
+    --analysis_type      ${analysis_type}       \
+    --threshold_file     ${threshold_file}      \
+    --base_threshold_df  ${base_threshold_df}   \
+    --input_graph_csv    ${input_graph_csv}     \
+    --output_prefix      ${output_prefix}       \
+    --proportional       ${proportional}        \
+    --poor               ${poor}                \
+    --limit              ${limit}               \
+    --reference          ${reference}
+
+
