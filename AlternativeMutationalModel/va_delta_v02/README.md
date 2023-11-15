@@ -18,6 +18,10 @@ To run a case, type:  _./run.XX.Y_
 
 where _XX_ is _01_, _02_, etc., and _Y_ is either _a_ or _b_.
 
+_a_ means compute the entropies based on existing sequences.
+
+_b_ means compute next sequences from an existing sequence, using these entropies.
+
 To compare the resulting output to the valid output, type:
 
 _./run.diff.XX.Y_ where _XX_ and _Y_ are as above.
