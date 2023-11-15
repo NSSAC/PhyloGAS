@@ -14,6 +14,8 @@ executions of the code.
 
 There are tests cases.
 
+For kuhlman, the conda venv is py39_andrew_entropy.
+
 To run a case, type:  _./run.XX.Y_
 
 where _XX_ is _01_, _02_, etc., and _Y_ is either _a_ or _b_.
