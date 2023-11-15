@@ -17,6 +17,113 @@ Contains the source code.
 
 ---------------
 
+## Input data.
+
+Sample input file to entropy calculations:
+
+```
+
+code="../src/freq_v02.py"
+
+## Inputs for both analyses.
+### Analysis type.
+analysis_type="entropy_analysis"
+
+random_number_seed=43
+
+### Output files to be written.
+threshold_file="run.02.threshold.file"
+base_threshold_df="run.02.base.threshold.df"
+
+# Fasta file of genomic sequences.
+align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
+
+# Whether to write all threshold DFs into one file or
+# each in a differnt file.
+threshold_df_num_files="individual_files"
+
+## Execute.
+python ${code}                                        \
+    --analysis_type            ${analysis_type}       \
+    --random_number_seed     ${random_number_seed}       \
+    --threshold_file           ${threshold_file}      \
+    --base_threshold_df        ${base_threshold_df}   \
+    --align_fasta              ${align_fasta}         \
+    --threshold_df_num_files   ${threshold_df_num_files}
+
+```
+
+Sample input file to do next sequence calculations using
+entropy calculations above:
+
+```
+
+
+code="../src/freq_v02.py"
+
+## Inputs for both analyses.
+
+### Analysis type.
+analysis_type="generate_sequence_analysis"
+
+random_number_seed=43
+
+
+threshold_file="run.02.threshold.file"
+base_threshold_df="run.02.base.threshold.df"
+
+# Whether to write all threshold DFs into one file or
+# each in a differnt file.
+threshold_df_num_files="individual_files"
+
+# Fasta file of genomic sequences.
+align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
+
+## Inputs for generate sequence analysis.
+
+start_date="2022-06-29"
+
+input_graph_csv="epihiper_exp7_dendrogram.csv"
+
+# Output file prefix.
+output_prefix="run_02_prefix"
+
+# In code, this parameter's default value is False.
+# This is used in the 'better' mutational model.
+# proportional="False"
+
+# If true, then use the poor mutational model; otherwise
+# use the better model.
+# Default value is false.
+# poor="False"
+
+# Max number of values to process.
+limit="16521"
+
+# Add reference sequence to the output.
+# reference=None
+
+
+## Execute.
+python ${code}                                           \
+    --analysis_type          ${analysis_type}            \
+    --random_number_seed     ${random_number_seed}       \
+    --threshold_file         ${threshold_file}           \
+    --base_threshold_df      ${base_threshold_df}        \
+    --threshold_df_num_files ${threshold_df_num_files}   \
+    --align_fasta            ${align_fasta}              \
+    --start_date             ${start_date}               \
+    --input_graph_csv        ${input_graph_csv}          \
+    --output_prefix          ${output_prefix}            \
+    --limit                  ${limit}
+
+
+```
+
+
+
+---------------
+
 ## Directory test.
 
 There are tests cases.
@@ -78,11 +185,13 @@ well-known problems for unix to deal with a lot of files in one
 directory.
 
 **run.04 case**
+
 This is just like the run,.02 cases, except both analyses
 are done with one execution:  _./run.04_
 
 
 **run.05 case**
+
 This is just like the run,.03 cases, except both analyses
 are done with one execution:  _./run.05_
 
