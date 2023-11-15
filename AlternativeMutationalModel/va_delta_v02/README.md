@@ -87,5 +87,9 @@ This is just like the run,.03 cases, except both analyses
 are done with one execution:  _./run.05_
 
 
+----------
+
+It has been checked that all of runs run.02 through run.05 give the
+same results.
 
 
