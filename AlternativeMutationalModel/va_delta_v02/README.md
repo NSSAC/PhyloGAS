@@ -58,6 +58,11 @@ states whether all of the threshold DFs are stored individually
 (as is the case here), or all in one file (in which case the value
 is _all\_in\_one\_file_.
 
+The _analysis\_type_ variable indicates that this is an entropy analysis.
+
+The fast file is very big.  It is a real file and is therefore not included
+in the github repo.
+
 For the first analysis, entropy analysis, the random number seed is 
 not used, I believe.
 
