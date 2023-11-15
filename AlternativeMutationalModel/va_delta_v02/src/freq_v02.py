@@ -251,13 +251,19 @@ def main():
         random.seed(args.random_number_seed)
         np.random.seed(args.random_number_seed)
 
-
     analysis_type = args.analysis_type
 
     if analysis_type == BOTH or analysis_type==ENTROPY_ANALYSIS:
         # Compute the shannon entropies for the colummns of a
         # group of sequences.
+        print("  \n\n --- doing entropy calculations --- \n\n")
         compute_entropy(args)
+
+    if analysis_type == BOTH and args.threshold_df_num_files == ALL_IN_ONE_FILE:
+        # Have to put CSV extension on the file with threshold DFs, in this case.
+        # This is so the filename is well-formed when opening to read contents.
+        print("  \n\n --- doing next sequence calculations --- \n\n")
+        args.base_threshold_df = args.base_threshold_df + ".csv"
 
     if analysis_type == BOTH or analysis_type==GEN_SEQUENCE_ANALYSIS:
         # Determine perturbations in a series of sequences.
