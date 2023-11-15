@@ -66,8 +66,6 @@ def getClas():
                         help='Type of analysis to run.')
     parser.add_argument("--threshold_file", type=str,dest="threshold_file",required=True, help="file containing column threshold values.")
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
-
-    # For entropy analysis.
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=False, help="path to alignment file in FASTA format")
 
@@ -269,7 +267,7 @@ def generate_sequences(args):
 
     # Load thresholds into list.
     # Load the dataframe for each threshold.
-    thresh, thresh_detail = load_thresholds_and_dfs()
+    thresh, thresh_detail = load_thresholds_and_dfs(args)
 
 
     # Read in network data
@@ -326,6 +324,11 @@ def generate_sequences(args):
     # one list to just append to to generate MSA of all sequences as we go
     # another dict that maps node to it's most recent sequence
 
+    # kuhlman.  Need to read in fasta file again to get length.
+    align = AlignIO.read(args.align_fasta, 'fasta')
+    align2 = pd.DataFrame(align)
+
+
     # This assumes the data read into df is in chronological order (ascending
     # according to tick)
     current_sequences = {}
@@ -351,8 +354,13 @@ def generate_sequences(args):
         infection.fromEpihiper("ncov", region, country, division, division, date, "Wuhan-Hu-1/2019")
         add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys)
 
+    loop_counter=0
     for pid, contact_pid, tick, exit_state in zip(
             connections1, connections2, id1, id2):
+        # kuhlman:  to give indication of progress.
+        loop_counter += 1
+        if loop_counter%1000 == 0:
+            print("    number of graph edges processed:  ",loop_counter)
         if exit_state == "var1E" and strain_id < seq_limit:
 #            print(tick)
 #            print(contact_pid)

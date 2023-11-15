@@ -9,8 +9,6 @@ analysis_type="entropy_analysis"
 threshold_file="run.01.threshold.file"
 base_threshold_df="run.01.base.threshold.df"
 
-
-## Inputs for entropy analysis.
 align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
 
 
