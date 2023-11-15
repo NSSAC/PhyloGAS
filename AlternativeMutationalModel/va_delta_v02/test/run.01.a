@@ -12,12 +12,16 @@ base_threshold_df="run.01.base.threshold.df"
 # Fasta file of genomic sequences.
 align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
 
+# Whether to write all threshold DFs into one file or
+# each in a differnt file.
+threshold_df_num_files="all_in_one_file"
 
 ## Execute.
-python ${code}                                  \
-    --analysis_type      ${analysis_type}       \
-    --threshold_file     ${threshold_file}      \
-    --base_threshold_df  ${base_threshold_df}   \
-    --align_fasta        ${align_fasta}
+python ${code}                                        \
+    --analysis_type            ${analysis_type}       \
+    --threshold_file           ${threshold_file}      \
+    --base_threshold_df        ${base_threshold_df}   \
+    --align_fasta              ${align_fasta}         \
+    --threshold_df_num_files   ${threshold_df_num_files}
 
 

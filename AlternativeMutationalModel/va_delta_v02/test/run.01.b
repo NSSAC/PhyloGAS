@@ -10,6 +10,10 @@ analysis_type="generate_sequence_analysis"
 threshold_file="run.01.threshold.file"
 base_threshold_df="run.01.base.threshold.df"
 
+# Whether to write all threshold DFs into one file or
+# each in a differnt file.
+threshold_df_num_files="all_in_one_file"
+
 # Fasta file of genomic sequences.
 align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
 
@@ -39,15 +43,16 @@ limit="16521"
 
 
 ## Execute.
-python ${code}                                  \
-    --analysis_type      ${analysis_type}       \
-    --threshold_file     ${threshold_file}      \
-    --base_threshold_df  ${base_threshold_df}   \
-    --align_fasta        ${align_fasta}         \
-    --start_date         ${start_date}          \
-    --input_graph_csv    ${input_graph_csv}     \
-    --output_prefix      ${output_prefix}       \
-    --limit              ${limit}               
+python ${code}                                           \
+    --analysis_type          ${analysis_type}            \
+    --threshold_file         ${threshold_file}           \
+    --base_threshold_df      ${base_threshold_df}        \
+    --threshold_df_num_files ${threshold_df_num_files}   \
+    --align_fasta            ${align_fasta}              \
+    --start_date             ${start_date}               \
+    --input_graph_csv        ${input_graph_csv}          \
+    --output_prefix          ${output_prefix}            \
+    --limit                  ${limit}               
 
 
 ##     --proportional       ${proportional}        \

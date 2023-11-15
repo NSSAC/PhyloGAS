@@ -51,6 +51,10 @@ ENTROPY_ANALYSIS="entropy_analysis"
 GEN_SEQUENCE_ANALYSIS="generate_sequence_analysis"
 BOTH="both"
 
+# Whether to write all threshold DFs to individual files (the previous method)
+# or write all threshold DFs to one file.
+INDIVIDUAL_FILES="individual_files"
+ALL_IN_ONE_FILE="all_in_one_file"
 
 # ====================================
 def getClas():
@@ -68,7 +72,9 @@ def getClas():
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=True, help="path to alignment file in FASTA format")
-
+    parser.add_argument("--threshold_df_num_files", type=str, dest="threshold_df_num_files", required=True,
+                        choices=[INDIVIDUAL_FILES, ALL_IN_ONE_FILE],
+                        help="whether all threshold DFs get written to one file or individual files.")
 
     # For genomic sequences analysis.
     parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
@@ -120,20 +126,44 @@ def write_output_entropy(args, thresh, thresh_detail):
     fh_out.close()
 
     # Write out a DF to file; one DF for each threshold above.
-    size_detail = len(thresh_detail)
-    for itime in range(0, size_detail):
-        df_the = thresh_detail[itime]
-        filename = base_threshold_df+"_"+str(itime)+".csv"
+    # ... or ...
+    # put all DFs in one file.
+    if (args.threshold_df_num_files==INDIVIDUAL_FILES):
+        size_detail = len(thresh_detail)
+        for itime in range(0, size_detail):
+            df_the = thresh_detail[itime]
+            filename = base_threshold_df+"_"+str(itime)+".csv"
 
-        try:
-            df_the.to_csv(filename)
-        except:
-            print("   Error")
-            print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
-            print("   This failed.")
-            print("   CSV file name: ", filename)
-            print("   Terminate.")
-            exit(1)
+            try:
+                df_the.to_csv(filename)
+            except:
+                print("   Error")
+                print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
+                print("   This failed.")
+                print("   CSV file name: ", filename)
+                print("   Terminate.")
+                exit(1)
+    else:
+        size_detail = len(thresh_detail)
+        filename = base_threshold_df + ".csv"
+        for itime in range(0, size_detail):
+            df_the = thresh_detail[itime]
+            if itime==0:
+                fh_out = open(filename, "w")
+            else:
+                fh_out = open(filename, "a")
+            fh_out.write("--------------\n")
+            fh_out.close()
+
+            try:
+                df_the.to_csv(filename,mode="a")
+            except:
+                print("   Error")
+                print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
+                print("   This failed.")
+                print("   CSV file name: ", filename)
+                print("   Terminate.")
+                exit(1)
 
     return
 
