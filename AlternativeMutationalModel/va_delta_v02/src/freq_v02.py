@@ -67,7 +67,7 @@ def getClas():
     parser.add_argument("--threshold_file", type=str,dest="threshold_file",required=True, help="file containing column threshold values.")
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
-    parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=False, help="path to alignment file in FASTA format")
+    parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=True, help="path to alignment file in FASTA format")
 
 
     # For genomic sequences analysis.

@@ -35,7 +35,7 @@ output_prefix="run_01_prefix"
 limit="16521"
 
 # Add reference sequence to the output.
-reference=None
+# reference=None
 
 
 ## Execute.
@@ -47,9 +47,9 @@ python ${code}                                  \
     --start_date         ${start_date}          \
     --input_graph_csv    ${input_graph_csv}     \
     --output_prefix      ${output_prefix}       \
-    --limit              ${limit}               \
-    --reference          ${reference}
+    --limit              ${limit}               
 
 
 ##     --proportional       ${proportional}        \
 ##     --poor               ${poor}                \
+##     --reference          ${reference}
