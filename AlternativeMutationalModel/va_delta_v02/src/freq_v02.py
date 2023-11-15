@@ -75,6 +75,7 @@ def getClas():
     parser.add_argument("--threshold_df_num_files", type=str, dest="threshold_df_num_files", required=True,
                         choices=[INDIVIDUAL_FILES, ALL_IN_ONE_FILE],
                         help="whether all threshold DFs get written to one file or individual files.")
+    parser.add_argument("--random_number_seed", type=int, dest="random_number_seed", required=True, help="if < 0, then random assignment")
 
     # For genomic sequences analysis.
     parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
@@ -201,11 +202,40 @@ def load_thresholds_and_dfs(args):
 
     # Read in the len(thresh) number of dataframes; put into list.
     size01 = len(thresh)
-    for itime in range(0,size01):
-        filename = base_threshold_df+"_"+str(itime)+".csv"
-        df_one = pd.read_csv(filename)
+    if (args.threshold_df_num_files==INDIVIDUAL_FILES):
+        for itime in range(0,size01):
+            filename = base_threshold_df+"_"+str(itime)+".csv"
+            df_one = pd.read_csv(filename)
+            thresh_detail.append(df_one)
+    else:
+        # All data in one file.
+        filename = base_threshold_df
+        # create an Empty DataFrame object
+        df_one = pd.DataFrame(data=None, columns=['letter','change_value'])
+        fh_in = open(filename,"r")
+        # Read the first line just to get rid of it.
+        dash_string = fh_in.readline()
+        for aline in fh_in:
+            sline = aline.strip()
+            if sline[0] == "-":
+                # Found next entry, so stop entering into this DF.
+                # Add this DF to list.
+                thresh_detail.append(df_one)
+                # Create an Empty DataFrame object
+                df_one = pd.DataFrame(data=None, columns=['letter', 'change_value'])
+            else:
+                tokens = sline.split(",")
+                df_one.loc[len(df_one)] = [tokens[0], tokens[1]]
+        # The last DF needs to be added to list.
         thresh_detail.append(df_one)
 
+        # for line in finalText.splitlines():
+        #     print(line)
+        #     m = re.findall(r'\w+', line)
+        #     print(m)
+        #     matches = re.findall(r'\w+', line)
+        #     df.loc[len(df)] = [matches[1], matches[6]]
+        #     df.loc[len(df)] = [matches[9], matches[14]]
 
     return thresh, thresh_detail
 
@@ -213,8 +243,14 @@ def load_thresholds_and_dfs(args):
 # ====================================
 def main():
 
-
     args = getClas()
+
+    # Seed random numbers.
+    # If number is < 0, then using random seeding.
+    if args.random_number_seed >= 0:
+        random.seed(args.random_number_seed)
+        np.random.seed(args.random_number_seed)
+
 
     analysis_type = args.analysis_type
 

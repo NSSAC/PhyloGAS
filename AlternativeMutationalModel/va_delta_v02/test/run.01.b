@@ -8,7 +8,7 @@ analysis_type="generate_sequence_analysis"
 
 
 threshold_file="run.01.threshold.file"
-base_threshold_df="run.01.base.threshold.df"
+base_threshold_df="run.01.base.threshold.df.csv"
 
 # Whether to write all threshold DFs into one file or
 # each in a differnt file.
