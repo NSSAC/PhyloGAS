@@ -53,6 +53,17 @@ python ${code}                                        \
 
 ```
 
+Note in the file above, the variable _threshold\_df\_num\_files_
+states whether all of the threshold DFs are stored individually
+(as is the case here), or all in one file (in which case the value
+is _all\_in\_one\_file_.
+
+For the first analysis, entropy analysis, the random number seed is 
+not used, I believe.
+
+
+----------------
+
 Sample input file to do next sequence calculations using
 entropy calculations above:
 
@@ -119,6 +130,8 @@ python ${code}                                           \
 
 
 ```
+
+The _analysis\_type_ indicates that this computes next sequences.
 
 
 
