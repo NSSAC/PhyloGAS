@@ -282,13 +282,13 @@ directory.
 
 **run.04 case**
 
-This is just like the run,.02 cases, except both analyses
+This is just like the run.02 cases above, except both analyses
 are done with one execution:  _./run.04_
 
 
 **run.05 case**
 
-This is just like the run,.03 cases, except both analyses
+This is just like the run.03 cases above, except both analyses
 are done with one execution:  _./run.05_
 
 
