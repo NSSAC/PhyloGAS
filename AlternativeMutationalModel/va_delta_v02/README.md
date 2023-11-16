@@ -32,7 +32,12 @@ _conda install ZZZZ_
 
 where _ZZZZ_ are packages like numpy, matplotlib, and others.
 
-Note that Bio is the package here:  _https://biopython.org/_
+Note that Bio is the package here:  _https://biopython.org/_, so
+
+we go here _https://biopython.org/wiki/Download_ and see to use
+the command:
+
+_pip install biopython_
 
 
 ---------------
