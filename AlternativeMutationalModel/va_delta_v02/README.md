@@ -235,7 +235,7 @@ python ${code}                                           \
 ```
 
 
-In all input files, there is a _random\_number\_seed value.
+In all input files, there is a _random\_number\_seed_ value.
 This is for reproducibility in testing.
 But if one wraps this in a bash script, it is easy to get
 a random number using bash command RANDOM.
