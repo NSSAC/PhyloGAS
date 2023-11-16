@@ -44,7 +44,7 @@ _pip install biopython_
 
 ## Input data.
 
-Sample input file to entropy calculations:
+Sample input file to entropy calculations (for operation 1 above):
 
 ```
 
@@ -95,7 +95,7 @@ not used, I believe.
 
 ----------------
 
-Sample input file to do next sequence calculations using
+Sample input file to do next sequence calculations (operation 2 above) using
 entropy calculations above:
 
 ```
@@ -167,7 +167,8 @@ The _analysis\_type_ indicates that this computes next sequences.
 ---------------
 
 Both analyses can be done at one time, with one launch of code, that is,
-where _analysis\_type_ is _both_, as shown now:
+where _analysis\_type_ is _both_, as shown now (this does operations 1
+and 2 with one launch):
 
 ```
 
