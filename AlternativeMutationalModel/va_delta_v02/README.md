@@ -17,6 +17,26 @@ Contains the source code.
 
 ---------------
 
+## Python Conda Venv.
+
+We make a conda virtual environment by looking at the single source
+file and looking at the import statements.
+
+We make a python 3.9 venv, as so:
+
+_conda  create -n  py39_your_name  python=3.9_
+
+_conda activate py39_your_name_
+
+_conda install ZZZZ_
+
+where _ZZZZ_ are packages like numpy, matplotlib, and others.
+
+Note that Bio is the package here:  _https://biopython.org/_
+
+
+---------------
+
 ## Input data.
 
 Sample input file to entropy calculations:
