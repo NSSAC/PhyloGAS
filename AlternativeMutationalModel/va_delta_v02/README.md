@@ -96,7 +96,7 @@ not used, I believe.
 ----------------
 
 Sample input file to do next sequence calculations (operation 2 above) using
-entropy calculations above:
+entropy calculation results from the input file immediately above:
 
 ```
 
