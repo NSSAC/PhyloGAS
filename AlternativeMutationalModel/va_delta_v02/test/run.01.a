@@ -5,7 +5,9 @@ code="../src/freq_v02.py"
 ### Analysis type.
 analysis_type="entropy_analysis"
 
-### Output files to be written.
+random_number_seed=43
+
+##_ Output files to be written.
 threshold_file="run.01.threshold.file"
 base_threshold_df="run.01.base.threshold.df"
 
@@ -19,6 +21,7 @@ threshold_df_num_files="all_in_one_file"
 ## Execute.
 python ${code}                                        \
     --analysis_type            ${analysis_type}       \
+    --random_number_seed     ${random_number_seed}       \
     --threshold_file           ${threshold_file}      \
     --base_threshold_df        ${base_threshold_df}   \
     --align_fasta              ${align_fasta}         \

@@ -6,6 +6,7 @@ code="../src/freq_v02.py"
 ### Analysis type.
 analysis_type="generate_sequence_analysis"
 
+random_number_seed=43
 
 threshold_file="run.01.threshold.file"
 base_threshold_df="run.01.base.threshold.df.csv"
@@ -45,6 +46,7 @@ limit="16521"
 ## Execute.
 python ${code}                                           \
     --analysis_type          ${analysis_type}            \
+    --random_number_seed     ${random_number_seed}       \
     --threshold_file         ${threshold_file}           \
     --base_threshold_df      ${base_threshold_df}        \
     --threshold_df_num_files ${threshold_df_num_files}   \
