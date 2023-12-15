@@ -1,0 +1,12 @@
+name: syn_biosurv
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pandas
+  - matplotlib
+  - pip
+  - pip:
+      - biopython==1.81
+      - networkx==3.2.1
