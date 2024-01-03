@@ -20,7 +20,9 @@ Contains the source code.
 ## Python Conda Venv.
 
 We make a conda virtual environment by looking at the single source
-file and looking at the import statements.
+file and looking at the import statements. There are two ways to do this:
+
+### Manual creation of the conda venv
 
 We make a python 3.9 venv, as so:
 
@@ -39,6 +41,12 @@ the command:
 
 _pip install biopython_
 
+### More automated creation of the conda venv
+
+1. Edit the environment.yml to replace "syn_biosurv" with your preferred environment name.
+2. Create the conda environment with the command:
+   
+_conda env create -f environment.yml_
 
 ---------------
 
