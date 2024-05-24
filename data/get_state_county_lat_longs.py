@@ -14,7 +14,7 @@ df = df.loc[df["State"] == state_code]
 # Convert to format
 df["geo_resolution"] = "county"
 
-df["county"] = df["County"] + "," + df["State"]
+df["county"] = df["County"] + " " + df["State"]
 
 df = df [[ "geo_resolution","county","Latitude","Longitude" ]]
 
