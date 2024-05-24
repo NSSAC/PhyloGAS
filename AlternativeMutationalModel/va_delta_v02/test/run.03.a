@@ -8,8 +8,8 @@ analysis_type="entropy_analysis"
 random_number_seed=43
 
 ### Output files to be written.
-threshold_file="run.03.threshold.file"
-base_threshold_df="run.03.base.threshold.df"
+threshold_file="run.03/run.03.threshold.file"
+base_threshold_df="run.03/run.03.base.threshold.df"
 
 # Fasta file of genomic sequences.
 align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"

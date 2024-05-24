@@ -8,8 +8,8 @@ analysis_type="generate_sequence_analysis"
 
 random_number_seed=43
 
-threshold_file="run.03.threshold.file"
-base_threshold_df="run.03.base.threshold.df.csv"
+threshold_file="run.03/run.03.threshold.file"
+base_threshold_df="run.03/run.03.base.threshold.df.csv"
 
 # Whether to write all threshold DFs into one file or
 # each in a differnt file.
@@ -25,11 +25,20 @@ start_date="2022-06-29"
 input_graph_csv="epihiper_exp7_dendrogram.csv"
 
 # Output file prefix.
-output_prefix="run_03_prefix"
+output_prefix="run_03_with_pid_proportional"
+
+# Compress to xz format
+compression_type="xz"
+
+# Persontrait file
+persontrait_file="va_merged_person.csv"
+
+# Add metadata to include from the persontrait file
+# pid,hid,age,age_group,gender,county_fips,home_latitude,home_longitude,admin1,admin2,admin3,admin4,smh_race,latino,race
+add_metadata="gender,county,home_latitude,home_longitude,latino,race,smh_race,age_group,pid"
 
 # In code, this parameter's default value is False.
 # This is used in the 'better' mutational model.
-# proportional="False"
 
 # If true, then use the poor mutational model; otherwise
 # use the better model.
@@ -54,8 +63,10 @@ python ${code}                                           \
     --start_date             ${start_date}               \
     --input_graph_csv        ${input_graph_csv}          \
     --output_prefix          ${output_prefix}            \
-    --limit                  ${limit}               
-
+    --compression            ${compression_type}         \
+    --persontrait_file       ${persontrait_file}         \
+    --add_metadata           ${add_metadata}             \
+    --limit                  ${limit}                    
 
 ##     --proportional       ${proportional}        \
 ##     --poor               ${poor}                \

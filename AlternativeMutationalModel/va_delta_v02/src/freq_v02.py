@@ -39,6 +39,7 @@ import sys
 from Bio import SeqIO
 import random
 import time
+import lzma
 
 
 import argparse
@@ -55,6 +56,10 @@ BOTH="both"
 # or write all threshold DFs to one file.
 INDIVIDUAL_FILES="individual_files"
 ALL_IN_ONE_FILE="all_in_one_file"
+
+# Compression types
+XZ="xz"
+PARQUET="parquet" # not currently supported
 
 # ====================================
 def getClas():
@@ -85,8 +90,10 @@ def getClas():
     parser.add_argument("--poor", default=False, action="store_true", dest="poor", required=False, help="use poor mutational model")
     parser.add_argument("--limit", default=16521, type=int, dest="limit", required=False, help="maximum number of items to process")
     parser.add_argument("--reference", default=None, type=str, dest="reference", required=False, help="add reference sequence to the output")
-
-
+    parser.add_argument("--compression", default=None, type=str, dest="compression_type", required=False, help="add compression method -- None, xz, or parquet",
+                       choices=["None",XZ])
+    parser.add_argument("--persontrait_file", default=None, type=str, dest="persontrait_file", required=False, help="the full path to the persontrait data file with additional data")
+    parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
 
     args = parser.parse_args()
     if (args.align_fasta == None):
@@ -321,6 +328,29 @@ def compute_entropy(args):
 
     return
 
+# ====================================
+def create_aug_metadata_dict(metadata_cols, pid, pid_df=None):
+    # Creates a dictionary of the desired metadata items that can be posted to 
+    # add_to_fasta
+    temp_dict = {}
+
+    if len(metadata_cols) > 0:
+        for col in metadata_cols:
+            if pid_df is None:
+                temp_dict.update({col: "NA"})
+            else:
+                if col in ["sex", "gender"]:
+                    if pid_df[col] == 1:
+                        col_value = "male"
+                    else:
+                        col_value = "female"
+                elif col == "pid":
+                    col_value = pid
+                else:
+                    col_value = pid_df[col]
+                temp_dict.update({col: col_value})
+    return temp_dict
+
 
 # ====================================
 def generate_sequences(args):
@@ -328,8 +358,40 @@ def generate_sequences(args):
 
     # Set these values to run the good or poor mutational model
     output_file_prefix = args.output_prefix
-    fasta_to_write = output_file_prefix + ".sequences.fasta"
-    metadata_file_to_write = output_file_prefix + ".metadata.tsv"
+
+    # Check for special compression types
+    if args.compression_type is None or args.compression_type == "None":
+        fasta_to_write = output_file_prefix + ".sequences.fasta"
+        metadata_file_to_write = output_file_prefix + ".metadata.tsv"
+    elif args.compression_type == XZ:
+        fasta_to_write = output_file_prefix + ".sequences.fasta.xz"
+        metadata_file_to_write = output_file_prefix + ".metadata.tsv.xz"
+    else: 
+        # compression type is invalid
+        print("   Warning")
+        print("   Unsupported compression type specified.")
+        print("   Supported compression types are None and xz")
+        print("   Continuing with no compression.")
+        fasta_to_write = output_file_prefix + ".sequences.fasta"
+        metadata_file_to_write = output_file_prefix + ".metadata.tsv"
+        
+
+    # Check to see if persontrait_file is defined -- if so, augmenting metadata
+    if args.persontrait_file is None and args.add_metadata is None:
+        augment_metadata = False
+    elif args.persontrait_file is None or args.add_metadata is None:
+        # We need both the persontrait file and the columns to augment metadata
+        # If either one is missing, then we don't add metadata
+        print("   Info")
+        print("   persontrait_file and add_metadata must be used together")
+        print("   Since one is missing, not augmenting metadata")
+        augment_metadata = False
+    else:
+        # augmenting metadata
+        augment_metadata = True
+        aug_metadata_columns = args.add_metadata.split(",")
+        persontrait_df = pd.read_csv(args.persontrait_file).set_index("pid")
+
     use_poor_mut_model = args.poor
     use_proportional = args.proportional
     seq_limit = args.limit
@@ -386,8 +448,12 @@ def generate_sequences(args):
     ##########################################################
 
     # creating .fasta and .tsv files to append
-    seq_file = open(fasta_to_write, 'w')
-    metadata_file = open(metadata_file_to_write, 'w')
+    if args.compression_type == XZ:
+        seq_file = lzma.open(fasta_to_write, 'wb')
+        metadata_file = lzma.open(metadata_file_to_write, 'wb')
+    else:
+        seq_file = open(fasta_to_write, 'w')
+        metadata_file = open(metadata_file_to_write, 'w')
 
     # Prep metadata TSV file with required column names:
     # https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html#required-metadata
@@ -413,7 +479,19 @@ def generate_sequences(args):
     sequences_mutated = 0
     
     line_keys=["virus","region","country","division","divisionExposure","date","strain"]
-    metadata_file.write("\t".join(line_keys)+"\n")
+    meta_line = "\t".join(line_keys)
+
+    if augment_metadata:
+        # Add persontrait "add_metadata" columns
+        aug_metadata_str = "\t".join(aug_metadata_columns).replace("gender","sex").replace("home_latitude","latitude").replace("home_longitude","longitude")
+        meta_line += "\t" + aug_metadata_str
+
+    meta_line += "\n"
+
+    if args.compression_type == XZ:
+        metadata_file.write(meta_line.encode())
+    else:
+        metadata_file.write(meta_line)
 
     if args.reference != None:
         align = AlignIO.read(args.reference, 'fasta')
@@ -424,7 +502,12 @@ def generate_sequences(args):
         region="Asia"
         date="2019-12-26"
         infection.fromEpihiper("ncov", region, country, division, division, date, "Wuhan-Hu-1/2019")
-        add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys)
+        
+        if augment_metadata:
+            aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid=-1)
+            add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
+        else:
+            add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys, args.compression_type)
 
     loop_counter=0
     for pid, contact_pid, tick, exit_state in zip(
@@ -469,7 +552,16 @@ def generate_sequences(args):
                 divisionAbbr="VA"
                 region="North America"
                 infection.fromEpihiper("ncov", region, country, division, division, date.strftime("%Y-%m-%d"), f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}")
-                add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys)
+
+                # Get augmented values for pid
+                if augment_metadata:
+                    pid_df = persontrait_df.loc[pid]
+                    aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid,pid_df)
+
+                if augment_metadata:
+                    add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
+                else:
+                    add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys, args.compression_type)
 
                 strain_id += 1
 
@@ -531,7 +623,10 @@ def weight_change(index, change, letter_odds, proportional=False):
             weight_list=[]
             if proportional:
                 #python 3.7 order guaranteed but just in case
+                print(f"odds_val={odds_val}")
                 for item in odds_val.items(): letter_list.append(item[0]), weight_list.append(item[1])
+                # print(f"letter_list={letter_list}")
+                # print(f"weight_list={weight_list}")
                 new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
             else:
                 #set the letters to equal weight except for the gap symbol.
@@ -680,11 +775,25 @@ class InfectionRecord:
 #https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
 #virus,age,country,countryExposure,date,dateSubmitted,died,division,divisionExposure,fullyVaccinated,strain,gisaidClade,gisaidEpiIsl,hospitalized,host,location,month,nextcladePangoLineage,nextstrainClade,originatingLab,pangoLineage,region,regionExposure,samplingStrategy,sex,sraAccession,strainold,submittingLab,year
 #ncov,,USA,USA,2021-09-20,2021-10-11,,Virginia,Virginia,,OK455686,,EPI_ISL_5088839,,Homo sapiens,,9,,21J,,AY.122,North America,North America,,,,USA/VA-CDC-LC0291093/2021,,2021
-def add_to_fasta(seq, infection, seq_file, metadata_file, line_keys):
+def add_to_fasta(seq, infection, seq_file, metadata_file, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
     # seq_file = open(fasta_to_write, "a")
     # metadata_file = open(metadata_file_to_write, "a")
-    seq_file.write(">" + str(infection.get("strain")) + "\n" + seq + "\n")
-    metadata_file.write("\t".join([infection.get(key) for key in line_keys])+"\n")
+    if aug_metadata_columns is None:
+        meta_line="\t".join([infection.get(key) for key in line_keys])+"\n"
+    else:
+        meta_line="\t".join([infection.get(key) for key in line_keys])
+        for col in aug_metadata_columns:
+            meta_line += "\t" + str(aug_metadata_dict[col])
+        meta_line += "\n"
+
+    if compression_type == XZ:
+        seq_line=">" + str(infection.get("strain")) + "\n" + seq + "\n"
+        seq_file.write(seq_line.encode())
+        # meta_line="\t".join([infection.get(key) for key in line_keys])+"\n"
+        metadata_file.write(meta_line.encode())
+    else:
+        seq_file.write(">" + str(infection.get("strain")) + "\n" + seq + "\n")
+        metadata_file.write(meta_line)
     # seq_file.close()
     # metadata_file.close()
 
