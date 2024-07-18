@@ -1,11 +1,11 @@
 inputs:
   - name: syn_gen_proportional
-    metadata: data/syn_gen_proportional.metadata.tsv
-    aligned: data/syn_gen_proportional.sequences.fasta
+    metadata: data/mandys_proprtional/andrew_modified.metadata.tsv.xz
+    aligned: data/mandys_proprtional/andrew_modified.fasta.xz
 
 builds:
-  proportional-mut-model-build:
-    subsampling_scheme: all
+  proportional-mandy-model-build:
+    subsampling_scheme: my_custom_scheme
 
 filter:
   skip_diagnostics: true # Some quality control still takes place
@@ -20,6 +20,14 @@ refine:
   date_inference: "marginal"
   divergence_unit: "mutations"
   clock_filter_iqd: 8
+
+subsampling:
+  my_custom_scheme:
+    country:
+      # other subsampling parameters...
+      max_sequences: 1000
+      include: data/reference_id.txt
+
     #files:
   # Not used when "aligned" is used for the sequences
   # alignment_reference: data/va_delta_ref.sequences.fasta
