@@ -160,7 +160,7 @@ def write_output_entropy(args, thresh, thresh_detail):
                 fh_out = open(filename, "w")
             else:
                 fh_out = open(filename, "a")
-            fh_out.write("--------------\n")
+            fh_out.write("+-------------\n")
             fh_out.close()
 
             try:
@@ -216,7 +216,7 @@ def load_thresholds_and_dfs(args):
             thresh_detail.append(df_one)
     else:
         # All data in one file.
-        filename = base_threshold_df
+        filename = base_threshold_df + ".csv"
         # create an Empty DataFrame object
         df_one = pd.DataFrame(data=None, columns=['letter','change_value'])
         fh_in = open(filename,"r")
@@ -224,7 +224,7 @@ def load_thresholds_and_dfs(args):
         dash_string = fh_in.readline()
         for aline in fh_in:
             sline = aline.strip()
-            if sline[0] == "-":
+            if sline[0] == "+":
                 # Found next entry, so stop entering into this DF.
                 # Add this DF to list.
                 thresh_detail.append(df_one)
@@ -232,6 +232,7 @@ def load_thresholds_and_dfs(args):
                 df_one = pd.DataFrame(data=None, columns=['letter', 'change_value'])
             else:
                 tokens = sline.split(",")
+                # df_one.append([tokens[0], tokens[1]])
                 df_one.loc[len(df_one)] = [tokens[0], tokens[1]]
         # The last DF needs to be added to list.
         thresh_detail.append(df_one)
@@ -617,16 +618,18 @@ def determine_change(thresh):
 
 def weight_change(index, change, letter_odds, proportional=False):
     new_seq = []
+
     for (nucleotide, change_val, odds_val) in zip(index, change, letter_odds):
         if change_val:
             letter_list=[]
             weight_list=[]
             if proportional:
                 #python 3.7 order guaranteed but just in case
-                print(f"odds_val={odds_val}")
-                for item in odds_val.items(): letter_list.append(item[0]), weight_list.append(item[1])
-                # print(f"letter_list={letter_list}")
-                # print(f"weight_list={weight_list}")
+                for key, item in odds_val.iterrows():
+                    if item["change_value"] == "proportion":
+                        continue
+                    letter_list.append(item["letter"])
+                    weight_list.append(float(item["change_value"]))
                 new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
             else:
                 #set the letters to equal weight except for the gap symbol.

@@ -8,11 +8,12 @@ analysis_type="entropy_analysis"
 random_number_seed=43
 
 ### Output files to be written.
-threshold_file="run.03/run.03.threshold.file"
-base_threshold_df="run.03/run.03.base.threshold.df"
+threshold_file="run.03.delta/run.03.threshold.file"
+base_threshold_df="run.03.delta/run.03.base.threshold.df"
 
 # Fasta file of genomic sequences.
-align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
+# align_fasta="va_variant_BA.2.12.1_5_sequences.fasta"
+align_fasta="/project/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-Cov2-Biosurveillance-Simulation/data/training_sequences/delta/delta.fa"
 
 # Whether to write all threshold DFs into one file or
 # each in a differnt file.
@@ -25,6 +26,4 @@ python ${code}                                        \
     --threshold_file           ${threshold_file}      \
     --base_threshold_df        ${base_threshold_df}   \
     --align_fasta              ${align_fasta}         \
-    --threshold_df_num_files   ${threshold_df_num_files}
-
-
+    --threshold_df_num_files   ${threshold_df_num_files} 
