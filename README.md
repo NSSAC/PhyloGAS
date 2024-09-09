@@ -6,6 +6,15 @@ This repository contains all scripts pertaining to the SARS Cov2 Bisurveillance 
 ## AlternativeMutationalModel
 Contains files for the model that propagates mutations based on an entropy threshold. The freq.py file in both the va_delta and va_omicron folders is the python script that generates the mutational model based on the propagation of mutations through a contact network. The output_abridges.py file is the file that defines an abridged contact network from t = 1 to t = 20, which the mutational mode is painted onto.
 
+### Current status of the AlternativeMutationalModel
+The most recent iteration of the code exists under AlternativeMutationalModel/va_delta_v02/src, with test files available under AlternativeMutationalModel/va_delta_v02/test. The best test files to look at for the latest functionality are run.03.a and run.03.b. Added features (all for the analysis_type=generate_sequence_analysis stage) include:
+- compression: this allows the user to indicate whether to use no compression (the default) or "xz" compression, which significantly decreases the size of the output fasta file from 472M to 5M. NextStrain can read xz files.
+- persontrait_file: This allows for the addition of a secondary input file based on the EpiHiper persontrait file that can be used to augment the metadata file (e.g., including the age, gender, age group, race, county, etc. in the metadata output. This argument is optional, but when present should be used with add_metadata argument. A sample fle for this is available at /project/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-Cov2-Biosurveillance-Simulation/data/merged_population_files/va_merged_person.csv
+- add_metadata: (should be used with persontrait_file parameter) indicates which additional columns should be pulled from the persontrait file for inclusion with in the metadata output.
+- proportional: Although this was implemented in a previous version of the code, the introduction of the all_in_one_file option for the threshold_df_num_files parameter in a previous version of the code broke the format and hence the --proportial model. Unlike other parameters, in order to invoke the proportional model, the user needs only type --proportional (no argument) as the command-line argument. If the user does not specify the --proportional or --poor models on the command-line, the default is the "better" or "good" model.
+
+Again, all of these features are highlighted in the test file run.03.b. 
+
 ## hmm
 Contains files to generate hmm libraries based on defined genetic cutoffs. The hmm libaries could eventually be used to create an hmm-based mutaitonal model.
 
