@@ -2,13 +2,16 @@
 code="../src/freq_v02.py"
 
 ## Inputs for both analyses.
+### Analysis type.
 analysis_type="entropy_analysis"
-threshold_file=""
-base_threshold_df=""
+
+### Output files to be written.
+threshold_file="run.02.threshold.file"
+base_threshold_df="run.02.base.threshold.df"
+
 
 ## Inputs for entropy analysis.
-start_date"start_date"
-align_fasta="align_fasta"
+align_fasta="va_variant_BA.2.12.1_sequences.fasta"
 
 
 ## Execute.
@@ -16,7 +19,6 @@ python ${code}                                  \
     --analysis_type      ${analysis_type}       \
     --threshold_file     ${threshold_file}      \
     --base_threshold_df  ${base_threshold_df}   \
-    --start_date         ${start_date}          \
     --align_fasta        ${align_fasta}
 
 
