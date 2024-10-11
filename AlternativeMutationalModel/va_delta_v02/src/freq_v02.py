@@ -253,6 +253,7 @@ def main():
 
     args = getClas()
 
+
     # Seed random numbers.
     # If number is < 0, then using random seeding.
     if args.random_number_seed >= 0:
@@ -398,7 +399,6 @@ def generate_sequences(args):
     seq_limit = args.limit
     input_graph_csv = args.input_graph_csv
     start_date = args.start_date
-
 
     # Load thresholds into list.
     # Load the dataframe for each threshold.
@@ -620,13 +620,13 @@ def weight_change(index, change, letter_odds, proportional=False):
     new_seq = []
 
     for (nucleotide, change_val, odds_val) in zip(index, change, letter_odds):
-        if change_val:
+        if change_val and nucleotide != '-':
             letter_list=[]
             weight_list=[]
             if proportional:
                 #python 3.7 order guaranteed but just in case
                 for key, item in odds_val.iterrows():
-                    if item["change_value"] == "proportion":
+                    if item["change_value"] == "proportion" or item["letter"] not in set(['A','C','G','T']):
                         continue
                     letter_list.append(item["letter"])
                     weight_list.append(float(item["change_value"]))

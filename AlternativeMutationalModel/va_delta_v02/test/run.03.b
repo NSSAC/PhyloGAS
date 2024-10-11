@@ -24,7 +24,8 @@ align_fasta="/project/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-
 # start_date="2022-06-29"
 start_date="2021-06-01"
 
-input_graph_csv="epihiper_exp7_dendrogram.csv"
+#input_graph_csv="epihiper_exp7_dendrogram.csv"
+input_graph_csv="../../../data/dendrogram/epihiper_exp7_dendrogram.csv"
 
 # Output file prefix.
 output_prefix="run_03_with_delta_prop_ref_1000"
@@ -56,7 +57,7 @@ reference=/project/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-Cov
 
 
 ## Execute.
-python ${code}                                           \
+command="python ${code}                                           \
     --analysis_type          ${analysis_type}            \
     --random_number_seed     ${random_number_seed}       \
     --threshold_file         ${threshold_file}           \
@@ -71,7 +72,11 @@ python ${code}                                           \
     --add_metadata           ${add_metadata}             \
     --proportional                                       \
     --limit                  ${limit}                    \
-    --reference              ${reference}
+    --reference              ${reference}"
+
+echo "Executing command: $command"
+$command
+
 
 ##     --proportional       ${proportional}        \
 ##     --poor               ${poor}                \
