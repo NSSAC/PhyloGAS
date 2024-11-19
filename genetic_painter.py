@@ -77,9 +77,9 @@ def getClas():
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=True, help="path to alignment file in FASTA format")
-    parser.add_argument("--threshold_df_num_files", type=str, dest="threshold_df_num_files", required=True,
+    parser.add_argument("--threshold_df_num_files", type=str, dest="threshold_df_num_files", required=False,
                         choices=[INDIVIDUAL_FILES, ALL_IN_ONE_FILE],
-                        help="whether all threshold DFs get written to one file or individual files.")
+                        help="whether all threshold DFs get written to one file or individual files.",default="ALL_IN_ONE_FILE")
     parser.add_argument("--random_number_seed", type=int, dest="random_number_seed", required=True, help="if < 0, then random assignment")
 
     # For genomic sequences analysis.
