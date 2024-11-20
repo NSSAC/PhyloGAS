@@ -40,7 +40,7 @@ from Bio import SeqIO
 import random
 import time
 import lzma
-
+import json
 
 import argparse
 
@@ -84,9 +84,10 @@ def getClas():
 
     # For genomic sequences analysis.
     parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
-    parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are genomic sequences.")
+    parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are infections.")
     parser.add_argument("--output_prefix", default="syn_gen", type=str, dest="output_prefix", required=False, help="prefix for output file name (for fasta and metadata files)")
-    parser.add_argument("--proportional", default=False, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
+    parser.add_argument("--proportional", default=True, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
+    parser.add_argument("--neutral", default=False, action="store_false", dest="proportional", required=False, help="use neutral letter choices")
     parser.add_argument("--poor", default=False, action="store_true", dest="poor", required=False, help="use poor mutational model")
     parser.add_argument("--limit", default=16521, type=int, dest="limit", required=False, help="maximum number of items to process")
     parser.add_argument("--reference", default=None, type=str, dest="reference", required=False, help="add reference sequence to the output")
@@ -94,7 +95,8 @@ def getClas():
                        choices=["None",XZ])
     parser.add_argument("--persontrait_file", default=None, type=str, dest="persontrait_file", required=False, help="the full path to the persontrait data file with additional data")
     parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
-
+    #country="USA" division="Virginia" divisionAbbr="VA" region="North America"
+    parser.add_argument("--location", default='{country="USA",division="Virginia",divisionAbbr="VA",region="North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
     args = parser.parse_args()
     if (args.align_fasta == None):
         print("  Error.")
@@ -509,6 +511,12 @@ def generate_sequences(args):
             add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
         else:
             add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys, args.compression_type)
+    
+    location_dict = json.loads(args.location)
+    country = location_dict["country"]
+    division = location_dict["division"]
+    divisionAbbr = location_dict["divisionAbbr"]
+    region = location_dict["region"]
 
     loop_counter=0
     for pid, contact_pid, tick, exit_state in zip(
@@ -548,10 +556,7 @@ def generate_sequences(args):
 
                 date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
                 infection = InfectionRecord()
-                country="USA"
-                division="Virginia"
-                divisionAbbr="VA"
-                region="North America"
+                #get country, division, divisionAbbr, region from json parameter args.location
                 infection.fromEpihiper("ncov", region, country, division, division, date.strftime("%Y-%m-%d"), f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}")
 
                 # Get augmented values for pid
