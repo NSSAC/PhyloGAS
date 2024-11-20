@@ -516,7 +516,8 @@ def generate_sequences(args):
         # kuhlman:  to give indication of progress.
         loop_counter += 1
         if loop_counter%1000 == 0:
-            print("    number of graph edges processed:  ",loop_counter)
+            #print("    number of graph edges processed:  ",loop_counter)
+            print("    number of infections decorated:  ",strain_id)
         if exit_state == "var1E" and strain_id < seq_limit:
 #            print(tick)
 #            print(contact_pid)
