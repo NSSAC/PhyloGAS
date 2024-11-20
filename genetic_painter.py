@@ -96,7 +96,7 @@ def getClas():
     parser.add_argument("--persontrait_file", default=None, type=str, dest="persontrait_file", required=False, help="the full path to the persontrait data file with additional data")
     parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
     #country="USA" division="Virginia" divisionAbbr="VA" region="North America"
-    parser.add_argument("--location", default='{"country":"USA","division":"Virginia","divisionAbbr":"VA",region:"North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
+    parser.add_argument("--location", default='{"country":"USA","division":"Virginia","divisionAbbr":"VA","region":"North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
     args = parser.parse_args()
     if (args.align_fasta == None):
         print("  Error.")
