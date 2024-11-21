@@ -1,4 +1,4 @@
-tick,date,annotation_3,importations,seq_count
+tick,date,variant,importations,seq_count
 0,2021-01-09,B.1.1.7,1,2.0
 3,2021-01-12,B.1.1.7,1,164.0
 4,2021-01-13,B.1.1.7,1,1.0
