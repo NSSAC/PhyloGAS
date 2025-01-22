@@ -1,0 +1,175 @@
+{
+  "ann:id": "vax_%tick%_%age%",
+  "trigger": {
+    "left": {
+      "observable": "time"
+    },
+    "operator": "==",
+    "right": {
+      "value": {
+        "number": %tick%
+      }
+    }
+  },
+  "target": {
+    "set": {
+      "idRef": "vax_eligible_%age%"
+    }
+  },
+  "sampling": {
+    "type": "absolute",
+    "number": %count%,
+    "sampled": {
+      "foreach": [
+        {
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "nodeTrait",
+                  "feature": "vax_eligible"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "trait": "nodeTrait",
+                "feature": "vax_eligible",
+                "enum": "false"
+              }
+            },
+            {
+              "target": {
+                "node": {
+                  "property": "nodeTrait",
+                  "feature": "vaccinated"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "trait": "nodeTrait",
+                "feature": "vaccinated",
+                "enum": "yes"
+              }
+            }
+          ]
+        },
+        {
+          "delay": 14,
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_s","W_s","R1_s"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "V_s"
+              }
+            }
+          ]
+        },
+        {
+          "delay": 14,
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_a","W_a","R1_a"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "V_a"
+              }
+            }
+          ]
+        },
+        {
+          "delay": 14,
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_o","W_o","R1_o"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "V_o"
+              }
+            }
+          ]
+        },
+        {
+          "delay": 14,
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_g","W_g","R1_g"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "V_g"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

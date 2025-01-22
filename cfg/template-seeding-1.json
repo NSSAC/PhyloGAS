@@ -1,0 +1,185 @@
+{
+  "ann:id": "seed_1_%tick%",
+  "trigger": {
+    "left": {
+      "observable": "time"
+    },
+    "operator": "==",
+    "right": {
+      "value": {
+        "number": %tick%
+      }
+    }
+  },
+  "target": {
+    "elementType": "node",
+    "scope": "local",
+    "left": {
+      "node": {
+        "property": "healthState"
+      }
+    },
+    "operator": "in",
+    "right": {
+      "valueList": {
+        "healthState": [
+          "S_p",
+          "S_s",
+          "S_a",
+          "S_o",
+          "S_g"
+        ]
+      }
+    }
+  },
+  "sampling": {
+    "type": "absolute",
+    "count": {
+      "number": %count%
+    },
+    "sampled": {
+      "foreach": [
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "==",
+            "right": {
+              "value": {
+                "healthState": "S_p"
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E1_p"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "==",
+            "right": {
+              "value": {
+                "healthState": "S_s"
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E1_s"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "==",
+            "right": {
+              "value": {
+                "healthState": "S_a"
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E1_a"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "==",
+            "right": {
+              "value": {
+                "healthState": "S_o"
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E1_o"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "==",
+            "right": {
+              "value": {
+                "healthState": "S_g"
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E1_g"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

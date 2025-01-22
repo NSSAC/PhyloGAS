@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/NSSAC/EpiHiper-Schema/master/schema/traitsSchema.json",
+  "epiHiperSchema": "https://raw.githubusercontent.com/NSSAC/EpiHiper-Schema/master/schema/traitsSchema.json",
+  "traits": [
+    {
+      "id": "nodeTrait",
+      "features": [
+        {
+          "id": "vaccinated",
+          "enums": [
+            {
+              "id": "no"
+            },
+            {
+              "id": "yes"
+            }
+          ],
+          "default": "no"
+        },
+        {
+          "id": "vax_eligible",
+          "enums": [
+            {
+              "id": "true"
+            },
+            {
+              "id": "false"
+            }
+          ],
+          "default": "true"
+        }
+      ]
+    }
+  ]
+}

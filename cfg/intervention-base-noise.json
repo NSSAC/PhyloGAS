@@ -1,0 +1,230 @@
+{
+  "epiHiperSchema": "https://raw.githubusercontent.com/NSSAC/EpiHiper-Schema/master/schema/interventionSchema.json",
+  "variables": [
+    {
+      "id": "noise",
+      "scope": "local",
+      "initialValue": 1
+    }
+  ],
+  "sets": [
+    {
+      "id": "vax_eligible",
+      "ann:label": "nodes which are vaccine eligble",
+      "scope": "local",
+      "content": {
+        "elementType": "node",
+        "scope": "local",
+        "left": {
+          "node": {
+            "property": "nodeTrait",
+            "feature": "vaccinated"
+          }
+        },
+        "operator": "==",
+        "right": {
+          "value": {
+            "trait": "nodeTrait",
+            "feature": "vaccinated",
+            "enum": "no"
+          }
+        }
+      }
+    },
+    {
+      "id": "vax_eligible_5_17",
+      "scope": "local",
+      "content": {
+        "operation": "intersection",
+        "sets": [
+          {
+            "elementType": "node",
+            "scope": "local",
+            "left": {
+              "node": {"property": "healthState"}
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": [
+                  "S_s",
+                  "W_s",
+                  "R1_s",
+                  "R2_s"
+                ]
+              }
+            }
+          },
+          {
+            "set": {"idRef": "vax_eligible"}
+          }
+        ]
+      }
+    },
+    {
+      "id": "vax_eligible_18_64",
+      "scope": "local",
+      "content": {
+        "operation": "intersection",
+        "sets": [
+          {
+            "elementType": "node",
+            "scope": "local",
+            "left": {
+              "node": {"property": "healthState"}
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": [
+                  "S_a","S_o",
+                  "W_a","W_o",
+                  "R1_a","R1_o",
+                  "R2_a","R2_o"
+                ]
+              }
+            }
+          },
+          {
+            "set": {"idRef": "vax_eligible"}
+          }
+        ]
+      }
+    },
+    {
+      "id": "vax_eligible_65_130",
+      "scope": "local",
+      "content": {
+        "operation": "intersection",
+        "sets": [
+          {
+            "elementType": "node",
+            "scope": "local",
+            "left": {
+              "node": {"property": "healthState"}
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": [
+                  "S_g",
+                  "W_g",
+                  "R1_g",
+                  "R2_g"
+                ]
+              }
+            }
+          },
+          {
+            "set": {"idRef": "vax_eligible"}
+          }
+        ]
+      }
+    }
+  ],
+  "triggers": [],
+  "interventions": [
+    {
+      "ann:id": "maintain_week_day",
+      "ann:label": "update the week_day",
+      "trigger": {"value": true},
+      "target": {
+        "set": {"idRef": "%empty%"}
+      },
+      "once": [
+        {
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "week_day"}
+              },
+              "operator": "+=",
+              "value": {"number": 1}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "start_transmission_process",
+      "trigger": {
+        "left": {"observable": "time"},
+        "operator": "==",
+        "right": {
+          "value": {"number": 0}
+        }
+      },
+      "target": {
+        "set": {"idRef": "%empty%"}
+      },
+      "once": [
+        {
+          "priority": 0,
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "varying_transmissibility"}
+              },
+              "operator": "=",
+              "source": {
+                "variable": {"idRef": "base_transmissibility"}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "maintain_transmissibility",
+      "trigger": {"value": true},
+      "target": {
+        "set": {"idRef": "%empty%"}
+      },
+      "once": [
+        {
+          "priority": 1,
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "%transmissibility%"}
+              },
+              "operator": "=",
+              "source": {
+                "variable": {"idRef": "varying_transmissibility"}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "add_noise",
+      "trigger": {
+        "left": {"observable": "time"},
+        "operator": ">=",
+        "right": {
+          "value": {"number": 0}
+        }
+      },
+      "target": {
+        "set": {"idRef": "%empty%"}
+      },
+      "once": [
+        {
+          "priority": 3,
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "%transmissibility%"}
+              },
+              "operator": "*=",
+              "source": {
+                "variable": {"idRef": "noise"}
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
