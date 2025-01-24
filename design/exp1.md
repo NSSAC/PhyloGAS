@@ -12,4 +12,4 @@ Adapted based on [multi-variant surveilance exp7 design](https://github.com/NSSA
 - **Duration**: 365 days.
 - **Replicates**: 60.
 - **Cells**: Each state has 4 cells for 4 levels of cross-infection parameter.
-- Simulation paths on Rivanna are TBD.
+- Simulation path on Rivanna: `/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20250120_1/output_root/proj/20250120_1/batch_1/`. The output files are `output*.csv.gz`.

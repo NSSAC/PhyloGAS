@@ -1,0 +1,235 @@
+{
+  "epiHiperSchema": "https://raw.githubusercontent.com/NSSAC/EpiHiper-Schema/master/schema/initializationSchema.json",
+  "variables": [
+    {
+      "id": "total_population",
+      "scope": "local",
+      "initialValue": 0
+    },
+    {
+      "id": "base_transmissibility",
+      "scope": "local",
+      "initialValue": 1.0
+    },
+    {
+      "id": "varying_transmissibility",
+      "scope": "local",
+      "initialValue": 1.0
+    },
+    {
+      "id": "week_day",
+      "initialValue": 0,
+      "scope": "local",
+      "reset": 7
+    }
+  ],
+  "sets": [
+    {
+      "id": "agegroup_p",
+      "scope": "local",
+      "content": {
+        "elementType": "node",
+        "scope": "local",
+        "left": {"field": "age_group"},
+        "operator": "==",
+        "right": {"value": "p"}
+      }
+    },
+    {
+      "id": "agegroup_s",
+      "scope": "local",
+      "content": {
+        "elementType": "node",
+        "scope": "local",
+        "left": {"field": "age_group"},
+        "operator": "==",
+        "right": {"value": "s"}
+      }
+    },
+    {
+      "id": "agegroup_a",
+      "scope": "local",
+      "content": {
+        "elementType": "node",
+        "scope": "local",
+        "left": {"field": "age_group"},
+        "operator": "==",
+        "right": {"value": "a"}
+      }
+    },
+    {
+      "id": "agegroup_o",
+      "scope": "local",
+      "content": {
+        "elementType": "node",
+        "scope": "local",
+        "left": {"field": "age_group"},
+        "operator": "==",
+        "right": {"value": "o"}
+      }
+    },
+    {
+      "id": "agegroup_g",
+      "scope": "local",
+      "content": {
+        "scope": "local",
+        "elementType": "node",
+        "left": {"field": "age_group"},
+        "operator": "==",
+        "right": {"value": "g"}
+      }
+    }
+  ],
+  "initializations": [
+    {
+      "ann:id": "init_variables",
+      "target": {
+        "set": {"idRef": "%empty%"}
+      },
+      "once": [
+        {
+          "priority": 0,
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "base_transmissibility"}
+              },
+              "operator": "=",
+              "variable": {"idRef": "%transmissibility%"}
+            }
+          ]
+        },
+        {
+          "priority": 1,
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "varying_transmissibility"}
+              },
+              "operator": "=",
+              "value": {"number": 0}
+            }
+          ]
+        },
+        {
+          "priority": 2,
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "%transmissibility%"}
+              },
+              "operator": "=",
+              "variable": {"idRef": "varying_transmissibility"}
+            }
+          ]
+        },
+        {
+          "operations": [
+            {
+              "target": {
+                "variable": {"idRef": "total_population"}
+              },
+              "operator": "=",
+              "observable": "totalPopulation"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "init_agegroup_p",
+      "target": {
+        "set": {"idRef": "agegroup_p"}
+      },
+      "foreach": [
+        {
+          "operations": [
+            {
+              "target": {
+                "node": {"property": "healthState"}
+              },
+              "operator": "=",
+              "value": {"healthState": "S_p"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "init_agegroup_s",
+      "target": {
+        "set": {"idRef": "agegroup_s"}
+      },
+      "foreach": [
+        {
+          "operations": [
+            {
+              "target": {
+                "node": {"property": "healthState"}
+              },
+              "operator": "=",
+              "value": {"healthState": "S_s"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "init_agegroup_a",
+      "target": {
+        "set": {"idRef": "agegroup_a"}
+      },
+      "foreach": [
+        {
+          "operations": [
+            {
+              "target": {
+                "node": {"property": "healthState"}
+              },
+              "operator": "=",
+              "value": {"healthState": "S_a"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "init_agegroup_o",
+      "target": {
+        "set": {"idRef": "agegroup_o"}
+      },
+      "foreach": [
+        {
+          "operations": [
+            {
+              "target": {
+                "node": {"property": "healthState"}
+              },
+              "operator": "=",
+              "value": {"healthState": "S_o"}
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ann:id": "init_agegroup_g",
+      "target": {
+        "set": {"idRef": "agegroup_g"}
+      },
+      "foreach": [
+        {
+          "operations": [
+            {
+              "target": {
+                "node": {"property": "healthState"}
+              },
+              "operator": "=",
+              "value": {"healthState": "S_g"}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
