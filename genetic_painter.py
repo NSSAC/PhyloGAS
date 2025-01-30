@@ -46,7 +46,7 @@ import argparse
 
 # ====================================
 # Constants.
-
+__version__ = '0.0.10'
 # Analysis types
 ENTROPY_ANALYSIS="entropy_analysis"
 GEN_SEQUENCE_ANALYSIS="generate_sequence_analysis"
@@ -85,6 +85,7 @@ def getClas():
     # For genomic sequences analysis.
     parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
     parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are infections.")
+    parser.add_argument("--input_graph_painted_state", type=str,dest="input_graph_painted_state",default="var1E",required=False, help="Exit state that gets painted")
     parser.add_argument("--output_prefix", default="syn_gen", type=str, dest="output_prefix", required=False, help="prefix for output file name (for fasta and metadata files)")
     parser.add_argument("--proportional", default=True, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
     parser.add_argument("--neutral", default=False, action="store_false", dest="proportional", required=False, help="use neutral letter choices")
@@ -97,6 +98,8 @@ def getClas():
     parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
     #country="USA" division="Virginia" divisionAbbr="VA" region="North America"
     parser.add_argument("--location", default='{"country":"USA","division":"Virginia","divisionAbbr":"VA","region":"North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
+    parser.add_argument("--reference_location", default='{"country":"China","division":"Wuhan","divisionAbbr":"Hu","region":"Asia","date":"2019-12-26"}', type=str, dest="reference_location", required=False, help="the location data for the reference infection record")
+    parser.add_argument('--version', action='version', version=f'genetic_painter {__version__}')
     args = parser.parse_args()
     if (args.align_fasta == None):
         print("  Error.")
@@ -414,39 +417,15 @@ def generate_sequences(args):
 
 
     # Create connection dataframe (pid, and contact_pid columns)
-    connections1 = df.iloc[:, 1]  # pid
-    connections2 = df.iloc[:, 3]  # contact_pid
+    connections1 = df.loc[:, "pid"]  # pid
+    connections2 = df.loc[:, "contact_pid"]  # contact_pid
     # cjk comment out; not used.
     # connections = pd.concat([connections1, connections2],
     #                         axis=1, ignore_index=False)
 
     # Create id dataframe (with tick and exit_state columns)
-    id1 = df.iloc[:, 0]  # tick
-    id2 = df.iloc[:, 2]  # exit_state
-    # cjk:   ids = pd.concat([id1, id2], axis=1)  # dgaulton: looks like this is never used
-
-
-    # Assigning ticks to correct nodes for coloring based on time
-    timelist = dict(zip(connections1, id1))
-    # dgaulton: where did this number come from? Is this from 20 tick cutoff?
-    # - looks like picking out that item and moving it
-    # cjk:  see comment immediately above by dgualton:  should this be hardcoded, or an input?
-    pos = list(timelist.keys()).index(476724)
-    items = list(timelist.items())
-    items.insert(pos, (-1, 0))
-    timelist = dict(items)
-    colors_list = list(timelist.values())
-
-
-    # draw directed graph network
-    if False:
-        print('creating network digraph .......')
-        G = nx.from_pandas_edgelist(
-            df,
-            'contact_pid',
-            'pid',
-            create_using=nx.MultiDiGraph(),
-            edge_key='tick')  # tick will be edge[2]
+    id1 = df.loc[:, "tick"]  # tick
+    id2 = df.loc[:, "exit_state"]  # exit_state
 
     ##########################################################
 
@@ -496,15 +475,16 @@ def generate_sequences(args):
     else:
         metadata_file.write(meta_line)
 
-    if args.reference != None:
+    ref_location_dict = json.loads(args.reference_location)
+    if args.reference is not None:
         align = AlignIO.read(args.reference, 'fasta')
         infection = InfectionRecord()
-        country="China"
-        division="Wuhan"
-        divisionAbbr="Hu"
-        region="Asia"
-        date="2019-12-26"
-        infection.fromEpihiper("ncov", region, country, division, division, date, "Wuhan-Hu-1/2019")
+        country=ref_location_dict['country']
+        division=ref_location_dict['division']
+        divisionAbbr=ref_location_dict['divisionAbbr']
+        region=ref_location_dict['region']
+        date=ref_location_dict['date']
+        infection.fromEpihiper("ncov", region, country, division, division, date, f"{division}-{divisionAbbr}-1/{date.split('-')[0]}")
         
         if augment_metadata:
             aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid=-1)
@@ -519,6 +499,7 @@ def generate_sequences(args):
     region = location_dict["region"]
 
     loop_counter=0
+    painted_exit_state = args.input_graph_painted_state
     for pid, contact_pid, tick, exit_state in zip(
             connections1, connections2, id1, id2):
         # kuhlman:  to give indication of progress.
@@ -526,7 +507,7 @@ def generate_sequences(args):
         if loop_counter%1000 == 0:
             #print("    number of graph edges processed:  ",loop_counter)
             print("    number of infections decorated:  ",strain_id)
-        if exit_state == "var1E" and strain_id < seq_limit:
+        if exit_state == painted_exit_state and strain_id < seq_limit:
 #            print(tick)
 #            print(contact_pid)
 #            print(pid)
