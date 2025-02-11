@@ -46,7 +46,7 @@ import argparse
 
 # ====================================
 # Constants.
-__version__ = '0.0.10'
+__version__ = '0.0.11'
 # Analysis types
 ENTROPY_ANALYSIS="entropy_analysis"
 GEN_SEQUENCE_ANALYSIS="generate_sequence_analysis"
@@ -76,7 +76,8 @@ def getClas():
     parser.add_argument("--threshold_file", type=str,dest="threshold_file",required=True, help="file containing column threshold values.")
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
     # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
-    parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=True, help="path to alignment file in FASTA format")
+    parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=False, help="path to alignment file in FASTA format")
+    parser.add_argument("--seed_fasta", type=str, default=None, nargs='?', dest="seed_fasta", required=False, help="path to seed file in FASTA format; defaults to align_fasta if not set")
     parser.add_argument("--threshold_df_num_files", type=str, dest="threshold_df_num_files", required=False,
                         choices=[INDIVIDUAL_FILES, ALL_IN_ONE_FILE],
                         help="whether all threshold DFs get written to one file or individual files.",default="ALL_IN_ONE_FILE")
@@ -101,12 +102,22 @@ def getClas():
     parser.add_argument("--reference_location", default='{"country":"China","division":"Wuhan","divisionAbbr":"Hu","region":"Asia","date":"2019-12-26"}', type=str, dest="reference_location", required=False, help="the location data for the reference infection record")
     parser.add_argument('--version', action='version', version=f'genetic_painter {__version__}')
     args = parser.parse_args()
+    
     if (args.align_fasta == None):
-        print("  Error.")
-        print("  args.align_fasta has value None, which is not allowed.")
-        parser.print_help()
-        print("  Terminate.")
-        sys.exit(0)
+        if (args.analysis_type != GEN_SEQUENCE_ANALYSIS):
+            print("  Error.")
+            print("  args.align_fasta has value None, which is not allowed.")
+            parser.print_help()
+            print("  Terminate.")    
+            sys.exit(0)
+        elif (args.seed_fasta == None):
+            print("  Error.")
+            print("  Either args.align_fasta or args.seed_fasta must be set.")
+            parser.print_help()
+            print("  Terminate.")    
+            sys.exit(0)
+
+
 
     # print(args.output_prefix)
     # print(args.proportional)
@@ -445,7 +456,11 @@ def generate_sequences(args):
     # another dict that maps node to it's most recent sequence
 
     # kuhlman.  Need to read in fasta file again to get length.
-    align = AlignIO.read(args.align_fasta, 'fasta')
+    if args.seed_fasta == None:
+        align = AlignIO.read(args.align_fasta, 'fasta')
+    else:
+        align = AlignIO.read(args.seed_fasta, 'fasta')
+    
     align2 = pd.DataFrame(align)
 
 
