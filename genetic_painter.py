@@ -127,11 +127,26 @@ def getClas():
 
 
 # ====================================
-def write_output_entropy(args, thresh, thresh_detail):
+def write_output_entropy(args, thresh, thresh_detail, entropy_values):
 
     # Filename and base filename.
     threshold_file = args.threshold_file
     base_threshold_df = args.base_threshold_df
+    entropy_file = base_threshold_df + "_entropy.csv"
+
+    # Write the entropy values to file.
+    try:
+        fh_out = open(entropy_file,"w")
+    except:
+        print("   Error")
+        print("   Trying to open the output file, where entropy values are to be written.")
+        print("   This failed.")
+        print("   File name: ", entropy_file)
+        print("   Terminate.")
+        exit(1)
+    #write out all the entropy values joined by newline
+    fh_out.write("\n".join([str(e) for e in entropy_values]))
+    fh_out.close()
 
     # Write the thresholds to file.
     try:
@@ -297,6 +312,33 @@ def main():
 
     return
 
+def aligned_to_df(align_file):
+     # read in alignment to pandas dataframe
+    print('reading alignment file into pandas dataframe.....')
+    align = AlignIO.read(align_file, 'fasta')
+    name = []
+    description = []
+    for record in align:
+        name.append(record.name)
+        description.append(record.description)
+    align2 = pd.DataFrame(align)
+    return align2
+
+def df_to_entropy(align2):
+    # create threshold list, each column threshold included
+    print('calculating entropy and getting the threshold...')
+    thresh = []
+    thresh_detail=[]
+    entropy_values = []
+    for i in range(len(align2.columns)):
+        df1 = align2.iloc[:, i].value_counts(normalize=True)
+        #df1 = df1.divide(len(align2.index))
+        thresh_detail.append(df1)
+        e_act, thresh_val = column_entropy_thresh(df1)
+        thresh.append(thresh_val)
+        entropy_values.append(e_act)
+    return thresh, thresh_detail, entropy_values
+
 # ====================================
 def compute_entropy(args):
     """
@@ -319,30 +361,15 @@ def compute_entropy(args):
     # seq_limit = args.limit
 
     ##########################################################
-    # read in alignment to pandas dataframe
-    print('reading alignment file into pandas dataframe.....')
-    align = AlignIO.read(args.align_fasta, 'fasta')
-    name = []
-    description = []
-    for record in align:
-        name.append(record.name)
-        description.append(record.description)
-    align2 = pd.DataFrame(align)
 
-    # create threshold list, each column threshold included
-    print('calculating entropy and setting the threshold...')
-    thresh = []
-    thresh_detail=[]
-    df = pd.DataFrame()
-    for i in range(len(align2.columns)):
-        df1 = align2.iloc[:, i].value_counts(normalize=True)
-        #df1 = df1.divide(len(align2.index))
-        thresh_detail.append(df1)
-        thresh.append(column_entropy_thresh(df1))
+    # read in alignment to pandas dataframe
+    align2 = aligned_to_df(args.align_fasta)
+    thresh, thresh_detail, entropy_values = df_to_entropy(align2)
+
 
     ##########################################################
 
-    write_output_entropy(args, thresh, thresh_detail)
+    write_output_entropy(args, thresh, thresh_detail, entropy_values)
 
     return
 
@@ -599,7 +626,7 @@ def column_entropy_thresh(freq_df):
     if np.isnan(thresh):
         thresh = 0
 
-    return thresh
+    return e_act, thresh
 
 
 # ====================================
@@ -853,6 +880,9 @@ def dfs_edges_with_ticks(G, source=None, depth_limit=None):
                         stack.append((child, depth_now - 1, iter(G[child])))
             except StopIteration:
                 stack.pop()
+
+
+
 
 if __name__ == '__main__':
     begin_time = time.time()
