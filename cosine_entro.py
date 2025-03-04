@@ -3,6 +3,8 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 from genetic_painter import aligned_to_df, df_to_entropy
+import gzip
+import lzma
 
 def read_entropy_profile(file_path):
     with open(file_path, 'r') as file:
@@ -41,3 +43,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+    def read_file(file_path):
+        if file_path.endswith('.gz'):
+            with gzip.open(file_path, 'rt') as file:
+                return file.read()
+        elif file_path.endswith('.xz'):
+            with lzma.open(file_path, 'rt') as file:
+                return file.read()
+        else:
+            with open(file_path, 'r') as file:
+                return file.read()
+
+    def read_entropy_profile(file_path):
+        file_content = read_file(file_path)
+        entropy_values = [float(line.strip()) for line in file_content.splitlines()]
+        return np.array(entropy_values)
+
+    def read_entropy_msa(file_path):
+        file_content = read_file(file_path)
+        df = aligned_to_df(file_content)
+        entropy_values = df_to_entropy(df)
+        return np.array(entropy_values)
