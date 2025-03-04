@@ -26,6 +26,10 @@ def main():
     group2.add_argument('--entropy_profile_2', type=str, help="Path to the second entropy profile file.")
     group2.add_argument('--entropy_msa_2', type=str, help="Path to the second MSA file.")
     
+    if len(vars(parser.parse_args())) == 0:
+        parser.print_help()
+        parser.exit()
+    
     args = parser.parse_args()
     
     if args.entropy_profile_1:
