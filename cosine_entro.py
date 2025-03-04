@@ -49,10 +49,10 @@ if __name__ == "__main__":
     main()
     def read_file(file_path):
         if file_path.endswith('.gz'):
-            with gzip.open(file_path, 'rt') as file:
+            with gzip.open(file_path, 'rt', encoding='utf-8') as file:
                 return file.read()
         elif file_path.endswith('.xz'):
-            with lzma.open(file_path, 'rt') as file:
+            with lzma.open(file_path, 'rt', encoding='utf-8') as file:
                 return file.read()
         else:
             with open(file_path, 'r') as file:
