@@ -339,6 +339,8 @@ def df_to_entropy(align2):
         entropy_values.append(e_act)
     return thresh, thresh_detail, entropy_values
 
+
+
 # ====================================
 def compute_entropy(args):
     """
@@ -530,9 +532,11 @@ def generate_sequences(args):
         
         if augment_metadata:
             aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid=-1)
-            add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
+            add_to_fasta(str(align[0].seq), infection, seq_file, args.compression_type)
+            write_metadata(metadata_file, infection, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
         else:
-            add_to_fasta(str(align[0].seq), infection, seq_file, metadata_file, line_keys, args.compression_type)
+            add_to_fasta(str(align[0].seq), infection, seq_file, args.compression_type)
+            write_metadata(metadata_file, infection, line_keys, args.compression_type)
     
     location_dict = json.loads(args.location)
     country = location_dict["country"]
@@ -807,7 +811,7 @@ class InfectionRecord:
 #https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
 #virus,age,country,countryExposure,date,dateSubmitted,died,division,divisionExposure,fullyVaccinated,strain,gisaidClade,gisaidEpiIsl,hospitalized,host,location,month,nextcladePangoLineage,nextstrainClade,originatingLab,pangoLineage,region,regionExposure,samplingStrategy,sex,sraAccession,strainold,submittingLab,year
 #ncov,,USA,USA,2021-09-20,2021-10-11,,Virginia,Virginia,,OK455686,,EPI_ISL_5088839,,Homo sapiens,,9,,21J,,AY.122,North America,North America,,,,USA/VA-CDC-LC0291093/2021,,2021
-def add_to_fasta(seq, infection, seq_file, metadata_file, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
+def add_to_fasta_OLD(seq, infection, seq_file, metadata_file, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
     # seq_file = open(fasta_to_write, "a")
     # metadata_file = open(metadata_file_to_write, "a")
     if aug_metadata_columns is None:
@@ -828,6 +832,48 @@ def add_to_fasta(seq, infection, seq_file, metadata_file, line_keys, compression
         metadata_file.write(meta_line)
     # seq_file.close()
     # metadata_file.close()
+
+
+#    line_keys=["virus","region","country","division","divisionExposure","date","strain"]
+def write_metadata(metadata_file, infection, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
+    """
+    Writes metadata to a file with optional compression and additional metadata columns.
+
+    Parameters:
+    metadata_file (file object): The file object to write the metadata to.
+    infection (dict): A dictionary containing infection data.
+    line_keys (list): A list of keys to extract from the infection dictionary.
+    compression_type (str): The type of compression to use (e.g., 'XZ' for XZ compression).
+    aug_metadata_columns (list, optional): A list of additional metadata columns to include. Defaults to None.
+    aug_metadata_dict (dict, optional): A dictionary containing additional metadata values. Defaults to None.
+
+    Returns:
+    None
+    """
+
+    if aug_metadata_columns is None:
+        meta_line = "\t".join([infection.get(key) for key in line_keys]) + "\n"
+    else:
+        meta_line = "\t".join([infection.get(key) for key in line_keys])
+        for col in aug_metadata_columns:
+            meta_line += "\t" + str(aug_metadata_dict[col])
+        meta_line += "\n"
+
+    if compression_type == XZ:
+        metadata_file.write(meta_line.encode())
+    else:
+        metadata_file.write(meta_line)
+
+
+
+
+
+def add_to_fasta(seq, infection, seq_file, compression_type): 
+    seq_line = ">" + str(infection.get("strain")) + "\n" + seq + "\n"
+    if compression_type == XZ:
+        seq_file.write(seq_line.encode())
+    else:
+        seq_file.write(seq_line)
 
 
 def find_seq(node):
