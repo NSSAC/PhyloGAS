@@ -7,11 +7,19 @@ import gzip
 import lzma
 
 def read_entropy_profile(file_path):
-    with open(file_path, 'r') as file:
+    if file_path.endswith('.gz'):
+        open_func = gzip.open
+    elif file_path.endswith('.xz'):
+        open_func = lzma.open
+    else:
+        open_func = open
+
+    with open_func(file_path, 'rt') as file:
         entropy_values = [float(line.strip()) for line in file]
     return np.array(entropy_values)
 
 def read_entropy_msa(file_path):
+
     df = aligned_to_df(file_path)
     thresh, thresh_detail, entropy_values = df_to_entropy(df)
     return np.array(entropy_values)

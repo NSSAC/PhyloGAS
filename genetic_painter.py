@@ -318,7 +318,15 @@ def main():
 def aligned_to_df(align_file):
      # read in alignment to pandas dataframe
     print('reading alignment file into pandas dataframe.....')
-    align = AlignIO.read(align_file, 'fasta')
+    if align_file.endswith('.gz'):
+        open_func = gzip.open
+    elif align_file.endswith('.xz'):
+        open_func = lzma.open
+    else:
+        open_func = open
+
+    with open_func(align_file, 'rt') as file:
+        align = AlignIO.read(file, 'fasta')
     name = []
     description = []
     for record in align:
