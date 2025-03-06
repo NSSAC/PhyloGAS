@@ -86,8 +86,11 @@ def getClas():
     # For genomic sequences analysis.
     parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
     parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are infections.")
-    parser.add_argument("--input_graph_painted_state", type=str,dest="input_graph_painted_state",default="var1E",required=False, help="Exit state that gets painted")
+    #parser.add_argument("--input_graph_painted_state", type=str,dest="input_graph_painted_state",default="var1E",required=False, help="Infection state that gets painted")
     parser.add_argument("--output_prefix", default="syn_gen", type=str, dest="output_prefix", required=False, help="prefix for output file name (for fasta and metadata files)")
+    paint_group = parser.add_mutually_exclusive_group(required=True)
+    paint_group.add_argument("--input_graph_painted_state", type=str, dest="input_graph_painted_state", default="var1E", help="Infection state that gets painted")
+    paint_group.add_argument("--input_graph_painted_prefix", type=str, dest="input_graph_painted_prefix", default=None, help="Prefix for infection states that get painted")
     parser.add_argument("--proportional", default=True, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
     parser.add_argument("--neutral", default=False, action="store_false", dest="proportional", required=False, help="use neutral letter choices")
     parser.add_argument("--poor", default=False, action="store_true", dest="poor", required=False, help="use poor mutational model")
@@ -545,7 +548,16 @@ def generate_sequences(args):
     region = location_dict["region"]
 
     loop_counter=0
-    painted_exit_state = args.input_graph_painted_state
+
+    def check_prefix(state):
+            return state.startswith(args.input_graph_painted_prefix)
+    def check_state(state):
+            return state == args.input_graph_painted_state
+    paint_this = check_state
+    if args.input_graph_painted_prefix:
+        paint_this = check_prefix
+
+        
     for pid, contact_pid, tick, exit_state in zip(
             connections1, connections2, id1, id2):
         # kuhlman:  to give indication of progress.
@@ -553,7 +565,7 @@ def generate_sequences(args):
         if loop_counter%1000 == 0:
             #print("    number of graph edges processed:  ",loop_counter)
             print("    number of infections decorated:  ",strain_id)
-        if exit_state == painted_exit_state and strain_id < seq_limit:
+        if paint_this(exit_state) and strain_id < seq_limit:
 #            print(tick)
 #            print(contact_pid)
 #            print(pid)
