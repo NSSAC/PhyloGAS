@@ -89,19 +89,24 @@ def read_metadata(file_path):
     return pd.read_csv(file_path, sep='\t')
 
 def main():
-    parser = argparse.ArgumentParser(description='Sample metadata from a TSV file.')
-    parser.add_argument('--metadata_path', type=str, help='The path to the metadata TSV file.')
-    parser.add_argument('--num_samples', type=int, default=10, help='The number of samples to draw.')
+    parser = argparse.ArgumentParser(description='Sample infections from a (fasta, tsv) pair.')
+    parser.add_argument('--metadata_path', required=True, type=str, help='The path to the metadata TSV file.')
+    parser.add_argument('--num_samples', type=int, default=500, help='The number of samples to draw per time window.')
     parser.add_argument('--time_range_days', type=int, default=7, help='The time range in days for sampling.')
     parser.add_argument('--strategy', type=str, default='uniform', help='The sampling strategy to use.')
+    parser.add_argument('--fasta_path', required=True, type=str, help='The path to the input FASTA file.')
+    parser.add_argument('--output_path', required= True, type=str, help='The path to the output directory.')
     
     args = parser.parse_args()
+    # if no parameters are passed, print help and exit
+    if len(vars(args)) == 0:
+        parser.print_help()
+        parser.exit()
     
     metadata_df = read_metadata(args.file_path)
     sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, args.time_range_days)
     
-    parser.add_argument('--fasta_path', type=str, help='The path to the input FASTA file.')
-    parser.add_argument('--output_path', type=str, help='The path to the output directory.')
+   
 
     args = parser.parse_args()
     
