@@ -47,24 +47,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    def read_file(file_path):
-        if file_path.endswith('.gz'):
-            with gzip.open(file_path, 'rb', encoding='utf-8') as file:
-                return file.read()
-        elif file_path.endswith('.xz'):
-            with lzma.open(file_path, 'rb', encoding='utf-8') as file:
-                return file.read()
-        else:
-            with open(file_path, 'r') as file:
-                return file.read()
-
-    def read_entropy_profile(file_path):
-        file_content = read_file(file_path)
-        entropy_values = [float(line.strip()) for line in file_content.splitlines()]
-        return np.array(entropy_values)
-
-    def read_entropy_msa(file_path):
-        file_content = read_file(file_path)
-        df = aligned_to_df(file_content)
-        entropy_values = df_to_entropy(df)
-        return np.array(entropy_values)
