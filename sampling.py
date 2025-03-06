@@ -90,7 +90,7 @@ def read_metadata(file_path):
 
 def main():
     parser = argparse.ArgumentParser(description='Sample metadata from a TSV file.')
-    parser.add_argument('metadata_path', type=str, help='The path to the metadata TSV file.')
+    parser.add_argument('--metadata_path', type=str, help='The path to the metadata TSV file.')
     parser.add_argument('--num_samples', type=int, default=10, help='The number of samples to draw.')
     parser.add_argument('--time_range_days', type=int, default=7, help='The time range in days for sampling.')
     parser.add_argument('--strategy', type=str, default='uniform', help='The sampling strategy to use.')
@@ -100,8 +100,8 @@ def main():
     metadata_df = read_metadata(args.file_path)
     sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, args.time_range_days)
     
-    parser.add_argument('fasta_path', type=str, help='The path to the input FASTA file.')
-    parser.add_argument('output_path', type=str, help='The path to the output directory.')
+    parser.add_argument('--fasta_path', type=str, help='The path to the input FASTA file.')
+    parser.add_argument('--output_path', type=str, help='The path to the output directory.')
 
     args = parser.parse_args()
     
