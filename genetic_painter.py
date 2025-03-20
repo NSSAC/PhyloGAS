@@ -88,7 +88,7 @@ def getClas():
     parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are infections.")
     #parser.add_argument("--input_graph_painted_state", type=str,dest="input_graph_painted_state",default="var1E",required=False, help="Infection state that gets painted")
     parser.add_argument("--output_prefix", default="syn_gen", type=str, dest="output_prefix", required=False, help="prefix for output file name (for fasta and metadata files)")
-    paint_group = parser.add_mutually_exclusive_group(required=True)
+    paint_group = parser.add_mutually_exclusive_group(required=False)
     paint_group.add_argument("--input_graph_painted_state", type=str, dest="input_graph_painted_state", default="var1E", help="Infection state that gets painted")
     paint_group.add_argument("--input_graph_painted_prefix", type=str, dest="input_graph_painted_prefix", default=None, help="Prefix for infection states that get painted")
     parser.add_argument("--proportional", default=True, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
@@ -612,10 +612,11 @@ def generate_sequences(args):
                     pid_df = persontrait_df.loc[pid]
                     aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid,pid_df)
 
-                if augment_metadata:
-                    add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
+                    add_to_fasta(new_seq, infection, seq_file, args.compression_type)
+                    write_metadata(metadata_file, infection, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
                 else:
-                    add_to_fasta(new_seq, infection, seq_file, metadata_file, line_keys, args.compression_type)
+                    add_to_fasta(new_seq, infection, seq_file, args.compression_type)
+                    write_metadata(metadata_file, infection, line_keys, args.compression_type)
 
                 strain_id += 1
 
