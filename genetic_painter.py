@@ -52,11 +52,6 @@ ENTROPY_ANALYSIS="entropy_analysis"
 GEN_SEQUENCE_ANALYSIS="generate_sequence_analysis"
 BOTH="both"
 
-# Whether to write all threshold DFs to individual files (the previous method)
-# or write all threshold DFs to one file.
-INDIVIDUAL_FILES="individual_files"
-ALL_IN_ONE_FILE="all_in_one_file"
-
 # Compression types
 XZ="xz"
 PARQUET="parquet" # not currently supported
@@ -75,18 +70,13 @@ def getClas():
                         help='Type of analysis to run.')
     parser.add_argument("--threshold_file", type=str,dest="threshold_file",required=True, help="file containing column threshold values.")
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs.")
-    # parser.add_argument("align_fasta", type=str, default=None, nargs='?', help="path to alignment file in FASTA format")
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=False, help="path to alignment file in FASTA format")
     parser.add_argument("--seed_fasta", type=str, default=None, nargs='?', dest="seed_fasta", required=False, help="path to seed file in FASTA format; defaults to align_fasta if not set")
-    parser.add_argument("--threshold_df_num_files", type=str, dest="threshold_df_num_files", required=False,
-                        choices=[INDIVIDUAL_FILES, ALL_IN_ONE_FILE],
-                        help="whether all threshold DFs get written to one file or individual files.",default="ALL_IN_ONE_FILE")
     parser.add_argument("--random_number_seed", type=int, dest="random_number_seed", required=True, help="if < 0, then random assignment")
 
     # For genomic sequences analysis.
     parser.add_argument("--start_date", default="2021-05-31", dest="start_date", required=False, type=str, help="simulation alignment to date")
     parser.add_argument("--input_graph_csv", type=str,dest="input_graph_csv",required=False, help="directed graph file; nodes are infections.")
-    #parser.add_argument("--input_graph_painted_state", type=str,dest="input_graph_painted_state",default="var1E",required=False, help="Infection state that gets painted")
     parser.add_argument("--output_prefix", default="syn_gen", type=str, dest="output_prefix", required=False, help="prefix for output file name (for fasta and metadata files)")
     paint_group = parser.add_mutually_exclusive_group(required=False)
     paint_group.add_argument("--input_graph_painted_state", type=str, dest="input_graph_painted_state", default="var1E", help="Infection state that gets painted")
@@ -100,7 +90,6 @@ def getClas():
                        choices=["None",XZ])
     parser.add_argument("--persontrait_file", default=None, type=str, dest="persontrait_file", required=False, help="the full path to the persontrait data file with additional data")
     parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
-    #country="USA" division="Virginia" divisionAbbr="VA" region="North America"
     parser.add_argument("--location", default='{"country":"USA","division":"Virginia","divisionAbbr":"VA","region":"North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
     parser.add_argument("--reference_location", default='{"country":"China","division":"Wuhan","divisionAbbr":"Hu","region":"Asia","date":"2019-12-26"}', type=str, dest="reference_location", required=False, help="the location data for the reference infection record")
     parser.add_argument('--version', action='version', version=f'genetic_painter {__version__}')
@@ -167,45 +156,27 @@ def write_output_entropy(args, thresh, thresh_detail, entropy_values):
 
     fh_out.close()
 
-    # Write out a DF to file; one DF for each threshold above.
-    # ... or ...
     # put all DFs in one file.
-    if (args.threshold_df_num_files==INDIVIDUAL_FILES):
-        size_detail = len(thresh_detail)
-        for itime in range(0, size_detail):
-            df_the = thresh_detail[itime]
-            filename = base_threshold_df+"_"+str(itime)+".csv"
+    size_detail = len(thresh_detail)
+    filename = base_threshold_df + ".csv"
+    for itime in range(0, size_detail):
+        df_the = thresh_detail[itime]
+        if itime==0:
+            fh_out = open(filename, "w")
+        else:
+            fh_out = open(filename, "a")
+        fh_out.write("+-------------\n")
+        fh_out.close()
 
-            try:
-                df_the.to_csv(filename)
-            except:
-                print("   Error")
-                print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
-                print("   This failed.")
-                print("   CSV file name: ", filename)
-                print("   Terminate.")
-                exit(1)
-    else:
-        size_detail = len(thresh_detail)
-        filename = base_threshold_df + ".csv"
-        for itime in range(0, size_detail):
-            df_the = thresh_detail[itime]
-            if itime==0:
-                fh_out = open(filename, "w")
-            else:
-                fh_out = open(filename, "a")
-            fh_out.write("+-------------\n")
-            fh_out.close()
-
-            try:
-                df_the.to_csv(filename,mode="a")
-            except:
-                print("   Error")
-                print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
-                print("   This failed.")
-                print("   CSV file name: ", filename)
-                print("   Terminate.")
-                exit(1)
+        try:
+            df_the.to_csv(filename,mode="a")
+        except:
+            print("   Error")
+            print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
+            print("   This failed.")
+            print("   CSV file name: ", filename)
+            print("   Terminate.")
+            exit(1)
 
     return
 
@@ -243,41 +214,27 @@ def load_thresholds_and_dfs(args):
 
     # Read in the len(thresh) number of dataframes; put into list.
     size01 = len(thresh)
-    if (args.threshold_df_num_files==INDIVIDUAL_FILES):
-        for itime in range(0,size01):
-            filename = base_threshold_df+"_"+str(itime)+".csv"
-            df_one = pd.read_csv(filename)
+    # All data in one file.
+    filename = base_threshold_df + ".csv"
+    # create an Empty DataFrame object
+    df_one = pd.DataFrame(data=None, columns=['letter','change_value'])
+    fh_in = open(filename,"r")
+    # Read the first line just to get rid of it.
+    dash_string = fh_in.readline()
+    for aline in fh_in:
+        sline = aline.strip()
+        if sline[0] == "+":
+            # Found next entry, so stop entering into this DF.
+            # Add this DF to list.
             thresh_detail.append(df_one)
-    else:
-        # All data in one file.
-        filename = base_threshold_df + ".csv"
-        # create an Empty DataFrame object
-        df_one = pd.DataFrame(data=None, columns=['letter','change_value'])
-        fh_in = open(filename,"r")
-        # Read the first line just to get rid of it.
-        dash_string = fh_in.readline()
-        for aline in fh_in:
-            sline = aline.strip()
-            if sline[0] == "+":
-                # Found next entry, so stop entering into this DF.
-                # Add this DF to list.
-                thresh_detail.append(df_one)
-                # Create an Empty DataFrame object
-                df_one = pd.DataFrame(data=None, columns=['letter', 'change_value'])
-            else:
-                tokens = sline.split(",")
-                # df_one.append([tokens[0], tokens[1]])
-                df_one.loc[len(df_one)] = [tokens[0], tokens[1]]
-        # The last DF needs to be added to list.
-        thresh_detail.append(df_one)
-
-        # for line in finalText.splitlines():
-        #     print(line)
-        #     m = re.findall(r'\w+', line)
-        #     print(m)
-        #     matches = re.findall(r'\w+', line)
-        #     df.loc[len(df)] = [matches[1], matches[6]]
-        #     df.loc[len(df)] = [matches[9], matches[14]]
+            # Create an Empty DataFrame object
+            df_one = pd.DataFrame(data=None, columns=['letter', 'change_value'])
+        else:
+            tokens = sline.split(",")
+            # df_one.append([tokens[0], tokens[1]])
+            df_one.loc[len(df_one)] = [tokens[0], tokens[1]]
+    # The last DF needs to be added to list.
+    thresh_detail.append(df_one)
 
     return thresh, thresh_detail
 
@@ -301,12 +258,6 @@ def main():
         # group of sequences.
         print("  \n\n --- doing entropy calculations --- \n\n")
         compute_entropy(args)
-
-    if analysis_type == BOTH and args.threshold_df_num_files == ALL_IN_ONE_FILE:
-        # Have to put CSV extension on the file with threshold DFs, in this case.
-        # This is so the filename is well-formed when opening to read contents.
-        print("  \n\n --- doing next sequence calculations --- \n\n")
-        args.base_threshold_df = args.base_threshold_df + ".csv"
 
     if analysis_type == BOTH or analysis_type==GEN_SEQUENCE_ANALYSIS:
         # Determine perturbations in a series of sequences.
@@ -343,7 +294,6 @@ def df_to_entropy(align2):
     entropy_values = []
     for i in range(len(align2.columns)):
         df1 = align2.iloc[:, i].value_counts(normalize=True)
-        #df1 = df1.divide(len(align2.index))
         thresh_detail.append(df1)
         e_act, thresh_val = column_entropy_thresh(df1)
         thresh.append(thresh_val)
@@ -362,18 +312,6 @@ def compute_entropy(args):
     """
 
     start_date = args.start_date  # start of Delta strain
-
-    # cjk:  move this to the sequence-generating method.
-    # # Set these values to run the good or poor mutational model
-    # # output_file_prefix = "test_new_metadata.good_mut_model"
-    # output_file_prefix = args.output_prefix
-    # fasta_to_write = output_file_prefix + ".sequences.fasta"
-    # metadata_file_to_write = output_file_prefix + ".metadata.tsv"
-    # use_poor_mut_model = args.poor
-    # use_proportional = args.proportional
-    # seq_limit = args.limit
-
-    ##########################################################
 
     # read in alignment to pandas dataframe
     align2 = aligned_to_df(args.align_fasta)
@@ -456,23 +394,18 @@ def generate_sequences(args):
     input_graph_csv = args.input_graph_csv
     start_date = args.start_date
 
-    # Load thresholds into list.
     # Load the dataframe for each threshold.
     thresh, thresh_detail = load_thresholds_and_dfs(args)
 
 
     # Read in network data
     print('reading in the network data....')
-    # df = pd.read_csv('contact_network_va_delta.csv')
     df = pd.read_csv(input_graph_csv)
 
 
     # Create connection dataframe (pid, and contact_pid columns)
     connections1 = df.loc[:, "pid"]  # pid
     connections2 = df.loc[:, "contact_pid"]  # contact_pid
-    # cjk comment out; not used.
-    # connections = pd.concat([connections1, connections2],
-    #                         axis=1, ignore_index=False)
 
     # Create id dataframe (with tick and exit_state columns)
     id1 = df.loc[:, "tick"]  # tick
@@ -495,7 +428,6 @@ def generate_sequences(args):
     # one list to just append to to generate MSA of all sequences as we go
     # another dict that maps node to it's most recent sequence
 
-    # kuhlman.  Need to read in fasta file again to get length.
     if args.seed_fasta == None:
         align = AlignIO.read(args.align_fasta, 'fasta')
     else:
@@ -558,9 +490,9 @@ def generate_sequences(args):
     loop_counter=0
 
     def check_prefix(state):
-            return state.startswith(args.input_graph_painted_prefix)
+        return state.startswith(args.input_graph_painted_prefix)
     def check_state(state):
-            return state == args.input_graph_painted_state
+        return state == args.input_graph_painted_state
     paint_this = check_state
     if args.input_graph_painted_prefix:
         paint_this = check_prefix
@@ -568,10 +500,9 @@ def generate_sequences(args):
         
     for pid, contact_pid, tick, exit_state in zip(
             connections1, connections2, id1, id2):
-        # kuhlman:  to give indication of progress.
+        # to give indication of progress.
         loop_counter += 1
         if loop_counter%1000 == 0:
-            #print("    number of graph edges processed:  ",loop_counter)
             print("    number of infections decorated:  ",strain_id)
         if paint_this(exit_state) and strain_id < seq_limit:
 #            print(tick)
@@ -641,7 +572,6 @@ def column_entropy_thresh(freq_df):
         p_xi = freq_df.iloc[i]
         e_act += p_xi * np.log(p_xi)
 
-        #p_xm = 1 / len(freq_df.index)
         p_xm = 1 / float(5)
         e_max += p_xm * np.log(p_xm)
 
@@ -832,30 +762,7 @@ class InfectionRecord:
 #https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
 #virus,age,country,countryExposure,date,dateSubmitted,died,division,divisionExposure,fullyVaccinated,strain,gisaidClade,gisaidEpiIsl,hospitalized,host,location,month,nextcladePangoLineage,nextstrainClade,originatingLab,pangoLineage,region,regionExposure,samplingStrategy,sex,sraAccession,strainold,submittingLab,year
 #ncov,,USA,USA,2021-09-20,2021-10-11,,Virginia,Virginia,,OK455686,,EPI_ISL_5088839,,Homo sapiens,,9,,21J,,AY.122,North America,North America,,,,USA/VA-CDC-LC0291093/2021,,2021
-def add_to_fasta_OLD(seq, infection, seq_file, metadata_file, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
-    # seq_file = open(fasta_to_write, "a")
-    # metadata_file = open(metadata_file_to_write, "a")
-    if aug_metadata_columns is None:
-        meta_line="\t".join([infection.get(key) for key in line_keys])+"\n"
-    else:
-        meta_line="\t".join([infection.get(key) for key in line_keys])
-        for col in aug_metadata_columns:
-            meta_line += "\t" + str(aug_metadata_dict[col])
-        meta_line += "\n"
 
-    if compression_type == XZ:
-        seq_line=">" + str(infection.get("strain")) + "\n" + seq + "\n"
-        seq_file.write(seq_line.encode())
-        # meta_line="\t".join([infection.get(key) for key in line_keys])+"\n"
-        metadata_file.write(meta_line.encode())
-    else:
-        seq_file.write(">" + str(infection.get("strain")) + "\n" + seq + "\n")
-        metadata_file.write(meta_line)
-    # seq_file.close()
-    # metadata_file.close()
-
-
-#    line_keys=["virus","region","country","division","divisionExposure","date","strain"]
 def write_metadata(metadata_file, infection, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
     """
     Writes metadata to a file with optional compression and additional metadata columns.
@@ -884,9 +791,6 @@ def write_metadata(metadata_file, infection, line_keys, compression_type, aug_me
         metadata_file.write(meta_line.encode())
     else:
         metadata_file.write(meta_line)
-
-
-
 
 
 def add_to_fasta(seq, infection, seq_file, compression_type): 
@@ -939,7 +843,6 @@ def dfs_edges_with_ticks(G, source=None, depth_limit=None):
                 # iter(G[start]) to treat a new edge with an old neighbor as
                 # new - that would occur above at stack =
                 child = next(children)
-                # tick = child.
                 if child not in visited:
                     yield parent, child
                     visited.add(child + "_" + tick)
