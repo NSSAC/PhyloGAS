@@ -23,7 +23,6 @@ So you can chain a list of sequences and their changes this way.
 """
 
 
-
 from matplotlib import pyplot as plt
 import matplotlib as mpl
 import networkx as nx
@@ -43,6 +42,7 @@ import lzma
 import json
 
 import argparse
+from itertools import islice, cycle
 
 # ====================================
 # Constants.
@@ -184,7 +184,6 @@ def write_output_entropy(args, thresh, thresh_detail, entropy_values):
 # ====================================
 def load_thresholds_and_dfs(args):
 
-
     # Filenames to write things to.
     threshold_file = args.threshold_file
     base_threshold_df = args.base_threshold_df
@@ -212,31 +211,8 @@ def load_thresholds_and_dfs(args):
         thresh.append(ithresh)
     fh_in.close()
 
-    # Read in the len(thresh) number of dataframes; put into list.
-    size01 = len(thresh)
-    # All data in one file.
-    filename = base_threshold_df + ".csv"
-    # create an Empty DataFrame object
-    df_one = pd.DataFrame(data=None, columns=['letter','change_value'])
-    fh_in = open(filename,"r")
-    # Read the first line just to get rid of it.
-    dash_string = fh_in.readline()
-    for aline in fh_in:
-        sline = aline.strip()
-        if sline[0] == "+":
-            # Found next entry, so stop entering into this DF.
-            # Add this DF to list.
-            thresh_detail.append(df_one)
-            # Create an Empty DataFrame object
-            df_one = pd.DataFrame(data=None, columns=['letter', 'change_value'])
-        else:
-            tokens = sline.split(",")
-            # df_one.append([tokens[0], tokens[1]])
-            df_one.loc[len(df_one)] = [tokens[0], tokens[1]]
-    # The last DF needs to be added to list.
-    thresh_detail.append(df_one)
-
-    return thresh, thresh_detail
+    prob_matrix = np.load(args.base_threshold_df, allow_pickle=False)
+    return thresh, prob_matrix
 
 
 # ====================================
@@ -301,7 +277,6 @@ def df_to_entropy(align2):
     return thresh, thresh_detail, entropy_values
 
 
-
 # ====================================
 def compute_entropy(args):
     """
@@ -326,7 +301,7 @@ def compute_entropy(args):
 
 # ====================================
 def create_aug_metadata_dict(metadata_cols, pid, pid_df=None):
-    # Creates a dictionary of the desired metadata items that can be posted to 
+    # Creates a dictionary of the desired metadata items that can be posted to
     # add_to_fasta
     temp_dict = {}
 
@@ -351,7 +326,6 @@ def create_aug_metadata_dict(metadata_cols, pid, pid_df=None):
 # ====================================
 def generate_sequences(args):
 
-
     # Set these values to run the good or poor mutational model
     output_file_prefix = args.output_prefix
 
@@ -370,7 +344,6 @@ def generate_sequences(args):
         print("   Continuing with no compression.")
         fasta_to_write = output_file_prefix + ".sequences.fasta"
         metadata_file_to_write = output_file_prefix + ".metadata.tsv"
-        
 
     # Check to see if persontrait_file is defined -- if so, augmenting metadata
     if args.persontrait_file is None and args.add_metadata is None:
@@ -395,13 +368,11 @@ def generate_sequences(args):
     start_date = args.start_date
 
     # Load the dataframe for each threshold.
-    thresh, thresh_detail = load_thresholds_and_dfs(args)
-
-
+    thresh, prob_matrix = load_thresholds_and_dfs(args)
+    # prob_matrix = thresh_detail_to_prob_matrix(thresh_detail)
     # Read in network data
     print('reading in the network data....')
     df = pd.read_csv(input_graph_csv)
-
 
     # Create connection dataframe (pid, and contact_pid columns)
     connections1 = df.loc[:, "pid"]  # pid
@@ -432,21 +403,17 @@ def generate_sequences(args):
         align = AlignIO.read(args.align_fasta, 'fasta')
     else:
         align = AlignIO.read(args.seed_fasta, 'fasta')
-    
-    align2 = pd.DataFrame(align)
-
 
     # This assumes the data read into df is in chronological order (ascending
     # according to tick)
     current_sequences = {}
     i = 0
-    max_seed_value_index = len(align2) - 1
-
-
+    max_seed_value_index = len(align) - 1
+    print(max_seed_value_index)
     strain_id = 0  # initialize strain_id for fasta, for now just increment a value, in the future could use node pid but would have to append to it in the case of multiple infections for a given pid
 
     sequences_mutated = 0
-    
+
     line_keys=["virus","region","country","division","divisionExposure","date","strain"]
     meta_line = "\t".join(line_keys)
 
@@ -464,7 +431,7 @@ def generate_sequences(args):
 
     ref_location_dict = json.loads(args.reference_location)
     if args.reference is not None:
-        align = AlignIO.read(args.reference, 'fasta')
+        align_ref = AlignIO.read(args.reference, "fasta")
         infection = InfectionRecord()
         country=ref_location_dict['country']
         division=ref_location_dict['division']
@@ -472,15 +439,19 @@ def generate_sequences(args):
         region=ref_location_dict['region']
         date=ref_location_dict['date']
         infection.fromEpihiper("ncov", region, country, division, division, date, f"{division}-{divisionAbbr}-1/{date.split('-')[0]}")
-        
+
         if augment_metadata:
             aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid=-1)
-            add_to_fasta(str(align[0].seq), infection, seq_file, args.compression_type)
+            add_to_fasta(
+                str(align_ref[0].seq), infection, seq_file, args.compression_type
+            )
             write_metadata(metadata_file, infection, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
         else:
-            add_to_fasta(str(align[0].seq), infection, seq_file, args.compression_type)
+            add_to_fasta(
+                str(align_ref[0].seq), infection, seq_file, args.compression_type
+            )
             write_metadata(metadata_file, infection, line_keys, args.compression_type)
-    
+
     location_dict = json.loads(args.location)
     country = location_dict["country"]
     division = location_dict["division"]
@@ -497,62 +468,93 @@ def generate_sequences(args):
     if args.input_graph_painted_prefix:
         paint_this = check_prefix
 
-        
-    for pid, contact_pid, tick, exit_state in zip(
-            connections1, connections2, id1, id2):
-        # to give indication of progress.
+    transitions_to_paint = df[df["exit_state"].map(paint_this)]
+    seed_transitions = transitions_to_paint["contact_pid"] == -1
+
+    # Assign seed sequences
+    seed = transitions_to_paint[seed_transitions]
+    seed = seed["pid"].to_frame()
+    # For each pid add sequence in align if keep adding form the begining
+    # if the pid list is larger than align
+    N = len(seed)
+    M = len(align)
+    if N <= M:
+        seed["seq"] = [np.array(list(r.seq)) for r in align[:N]]
+    else:
+        align_str = [np.array(list(r.seq)) for r in align]
+        seed["seq"] = list(islice(cycle(align_str), N))
+    current_sequences = seed[["pid", "seq"]].set_index("pid")["seq"].to_dict()
+
+    # Work on on remaining transitions
+    transitions_to_paint = transitions_to_paint[~seed_transitions][
+        ["pid", "contact_pid", "tick"]
+    ]
+    # Get only the seq_limit transitions
+    if seq_limit:
+        transitions_to_paint = transitions_to_paint.iloc[:seq_limit]
+
+    # Convert tick to date relative to start date
+    transitions_to_paint["date"] = transitions_to_paint["tick"].map(pd.offsets.Day)
+    transitions_to_paint["date"] = (
+        pd.to_datetime(start_date) + transitions_to_paint["date"]
+    )
+    thresh = np.array(thresh)
+    cumulative_probs_matrix = np.cumsum(prob_matrix, axis=0)
+
+    for _, pid, contact_pid, date in transitions_to_paint[
+        ["pid", "contact_pid", "date"]
+    ].itertuples():
         loop_counter += 1
-        if loop_counter%1000 == 0:
-            print("    number of infections decorated:  ",strain_id)
-        if paint_this(exit_state) and strain_id < seq_limit:
-#            print(tick)
-#            print(contact_pid)
-#            print(pid)
-#            print(exit_state)
-            if contact_pid == -1:  # seed case
-                # grab a new real sequence
-                #print('Adding seed seq to .fasta ........')
-                index = align2.iloc[i].values.tolist()
-                index = ''.join(index)
-                if i == max_seed_value_index:  # wrap to the beginning of seed sequences if we've run out
-                    i = 0
-                else:
-                    i += 1
+        if loop_counter % 1000 == 0:
+            # print("    number of graph edges processed:  ",loop_counter)
+            print("    number of infections decorated:  ", strain_id)
+            # Get the parent's sequence, mutate it, and append result to fasta
+            # print('Mutating sequence, adding to fasta.....')
+        seq_to_change = current_sequences[contact_pid]
+        change = determine_change(thresh)
+        # print(pid)
+        if use_poor_mut_model:
+            new_seq = poor_mut_model(seq_to_change)
+        else:
+            # new_seq = weight_change(seq_to_change, change, thresh_detail, use_proportional)
+            # new_seq = weighted_change_np(seq_to_change, change, prob_matrix)
+            new_seq = weighted_change_np(seq_to_change, change, cumulative_probs_matrix)
+        current_sequences[pid] = new_seq
 
-                # update the node's current sequence
-                current_sequences[pid] = index
+        new_seq = "".join(new_seq.tolist())
 
-            else:
-                # Get the parent's sequence, mutate it, and append result to fasta
-                #print('Mutating sequence, adding to fasta.....')
-                seq_to_change = current_sequences[contact_pid]
-                change = determine_change(thresh)
-                #print(pid)
-                if (use_poor_mut_model):
-                    new_seq = poor_mut_model(seq_to_change)
-                else:
-                    new_seq = weight_change(seq_to_change, change, thresh_detail, use_proportional)
+        infection = InfectionRecord()
+        # get country, division, divisionAbbr, region from json parameter args.location
+        infection.fromEpihiper(
+            "ncov",
+            region,
+            country,
+            division,
+            division,
+            date.strftime("%Y-%m-%d"),
+            f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}",
+        )
 
-                date = pd.to_datetime(start_date) + pd.DateOffset(days=tick)
-                infection = InfectionRecord()
-                #get country, division, divisionAbbr, region from json parameter args.location
-                infection.fromEpihiper("ncov", region, country, division, division, date.strftime("%Y-%m-%d"), f"{country}/{divisionAbbr}-EHip-{strain_id}/{date.year}")
+        # Get augmented values for pid
+        if augment_metadata:
+            pid_df = persontrait_df.loc[pid]
+            aug_metadata_dict = create_aug_metadata_dict(
+                aug_metadata_columns, pid, pid_df
+            )
 
-                # Get augmented values for pid
-                if augment_metadata:
-                    pid_df = persontrait_df.loc[pid]
-                    aug_metadata_dict = create_aug_metadata_dict(aug_metadata_columns,pid,pid_df)
-
-                    add_to_fasta(new_seq, infection, seq_file, args.compression_type)
-                    write_metadata(metadata_file, infection, line_keys, args.compression_type, aug_metadata_columns, aug_metadata_dict)
-                else:
-                    add_to_fasta(new_seq, infection, seq_file, args.compression_type)
-                    write_metadata(metadata_file, infection, line_keys, args.compression_type)
-
-                strain_id += 1
-
-                current_sequences[pid] = new_seq
-
+            add_to_fasta(new_seq, infection, seq_file, args.compression_type)
+            write_metadata(
+                metadata_file,
+                infection,
+                line_keys,
+                args.compression_type,
+                aug_metadata_columns,
+                aug_metadata_dict,
+            )
+        else:
+            add_to_fasta(new_seq, infection, seq_file, args.compression_type)
+            write_metadata(metadata_file, infection, line_keys, args.compression_type)
+        strain_id += 1
     seq_file.close()
     metadata_file.close()
 
@@ -587,12 +589,17 @@ def column_entropy_thresh(freq_df):
 # ====================================
 # Determine nulceotide change
 def determine_change(thresh):
+    comparison_values = np.random.randint(0, 100, len(thresh))
+    return comparison_values > thresh
+
+
+def determine_change_old(thresh):
     change = []
     for threshold in thresh:
         val = np.random.randint(0, 100)
-        #the threshold is a measure of the consistency of the column
-        #if the consistency is high, there should be less chance to change it
-        #if the consistency is low it should be easier to change
+        # the threshold is a measure of the consistency of the column
+        # if the consistency is high, there should be less chance to change it
+        # if the consistency is low it should be easier to change
         if val > threshold:
             change.append(True)
         else:
@@ -608,7 +615,7 @@ def weight_change(index, change, letter_odds, proportional=False):
             letter_list=[]
             weight_list=[]
             if proportional:
-                #python 3.7 order guaranteed but just in case
+                # python 3.7 order guaranteed but just in case
                 for key, item in odds_val.iterrows():
                     if item["change_value"] == "proportion" or item["letter"] not in set(['A','C','G','T']):
                         continue
@@ -616,7 +623,7 @@ def weight_change(index, change, letter_odds, proportional=False):
                     weight_list.append(float(item["change_value"]))
                 new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
             else:
-                #set the letters to equal weight except for the gap symbol.
+                # set the letters to equal weight except for the gap symbol.
                 letter_list=["A","C","T","G"]
                 gap_odds=odds_val.get("-",0)
                 weight_list = [(1-gap_odds)/float(len(letter_list))] * len(letter_list) #make four copies
@@ -628,6 +635,82 @@ def weight_change(index, change, letter_odds, proportional=False):
         new_seq.append(new_nucleotide)
     new_seq = ''.join(new_seq)
     return new_seq
+
+LETTERS = np.array(["A", "C", "G", "T", "-"])
+
+
+def weighted_change_py(sequence, change, prob_matrix):
+    # Generate random numbers for each column
+    random_values = np.random.rand(prob_matrix.shape[1])
+    sequence = []
+    for position in range(prob_matrix.shape[1]):
+        if change[position]:
+            letter_list = []
+            weight_list = []
+            for idx, value in enumerate(prob_matrix[:, position]):
+                if value > 0:
+                    letter_list.append(LETTERS[idx])
+                    weight_list.append(value)
+                new_nucleotide = random.choices(letter_list, weights=weight_list, k=1)[
+                    0
+                ]
+                sequence.append(new_nucleotide)
+        else:
+            sequence.append(sequence[position])
+    return "".join(sequence)
+
+    # Compute cumulative probabilities for each column
+    cumulative_probs = np.cumsum(prob_matrix, axis=0)
+
+    # Determine the index of the letter for each position
+    # If our random number is higher than the cumulative probability, we take the next index
+    letter_indices = (random_values[np.newaxis, :] < cumulative_probs).argmax(axis=0)
+    new_sequence = LETTERS[letter_indices]
+    # Apply change based on change mask
+    sequence = np.array(list(sequence))
+    sequence[change] = new_sequence[change]
+    return "".join(sequence)
+
+
+def weighted_change_np(sequence, change, cumulative_prob_matrix):
+    # Generate random numbers for each column
+    random_values = np.random.rand(cumulative_prob_matrix.shape[1])
+
+    # Compute cumulative probabilities for each column
+
+    # Determine the index of the letter for each position
+    # If our random number is higher than the cumulative probability, we take the next index
+    letter_indices = (random_values[np.newaxis, :] < cumulative_prob_matrix).argmax(
+        axis=0
+    )
+    new_sequence = LETTERS[letter_indices]
+    # Apply change based on change mask
+    sequence = sequence.copy()
+    sequence[change] = new_sequence[change]
+    return sequence
+
+
+def thresh_detail_to_prob_matrix(thresh_detail):
+    # TODO: proportional
+    letters = LETTERS
+    prob_matrix = np.zeros((len(letters), len(thresh_detail)))
+    filtered_thresh_detail = [
+        df[df["letter"].isin(letters)].copy() for df in thresh_detail
+    ]
+
+    for col_index, df in enumerate(filtered_thresh_detail):
+        df["change_value"] = df["change_value"].astype(float)
+        total_count = df["change_value"].sum()
+        for letter_index, letter in enumerate(letters):
+            if letter in df["letter"].values:
+                prob_matrix[letter_index, col_index] = (
+                    df.loc[df["letter"] == letter, "change_value"].values[0]
+                    / total_count
+                )
+            else:
+                prob_matrix[letter_index, col_index] = 0
+
+    return prob_matrix
 
 
 def commit_change(index, change):
@@ -852,8 +935,6 @@ def dfs_edges_with_ticks(G, source=None, depth_limit=None):
                 stack.pop()
 
 
-
-
 if __name__ == '__main__':
     begin_time = time.time()
     main()
@@ -862,4 +943,3 @@ if __name__ == '__main__':
     time_hr=(float)(time_s)/3600.0
     print("   Execution time (s), (hr): ",str(time_s),str(time_hr))
     print("   --- good termination ---")
-
