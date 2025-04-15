@@ -94,7 +94,7 @@ def getClas():
     parser.add_argument("--reference_location", default='{"country":"China","division":"Wuhan","divisionAbbr":"Hu","region":"Asia","date":"2019-12-26"}', type=str, dest="reference_location", required=False, help="the location data for the reference infection record")
     parser.add_argument('--version', action='version', version=f'genetic_painter {__version__}')
     args = parser.parse_args()
-    
+
     if (args.align_fasta == None):
         if (args.analysis_type != GEN_SEQUENCE_ANALYSIS):
             print("  Error.")
@@ -109,8 +109,6 @@ def getClas():
             print("  Terminate.")    
             sys.exit(0)
 
-
-
     # print(args.output_prefix)
     # print(args.proportional)
     # print(args.poor)
@@ -119,7 +117,7 @@ def getClas():
 
 
 # ====================================
-def write_output_entropy(args, thresh, thresh_detail, entropy_values):
+def write_output_entropy(args, thresh, prob_matrix, entropy_values):
 
     # Filename and base filename.
     threshold_file = args.threshold_file
@@ -136,7 +134,7 @@ def write_output_entropy(args, thresh, thresh_detail, entropy_values):
         print("   File name: ", entropy_file)
         print("   Terminate.")
         exit(1)
-    #write out all the entropy values joined by newline
+    # write out all the entropy values joined by newline
     fh_out.write("\n".join([str(e) for e in entropy_values]))
     fh_out.close()
 
@@ -156,27 +154,15 @@ def write_output_entropy(args, thresh, thresh_detail, entropy_values):
 
     fh_out.close()
 
-    # put all DFs in one file.
-    size_detail = len(thresh_detail)
-    filename = base_threshold_df + ".csv"
-    for itime in range(0, size_detail):
-        df_the = thresh_detail[itime]
-        if itime==0:
-            fh_out = open(filename, "w")
-        else:
-            fh_out = open(filename, "a")
-        fh_out.write("+-------------\n")
-        fh_out.close()
-
-        try:
-            df_the.to_csv(filename,mode="a")
-        except:
-            print("   Error")
-            print("   Trying to write to a CSV file using a DF, where threshold DFs are to be written.")
-            print("   This failed.")
-            print("   CSV file name: ", filename)
-            print("   Terminate.")
-            exit(1)
+    try:
+        np.save(base_threshold_df, prob_matrix, allow_pickle=False)
+    except:
+        print("   Error")
+        print("   Trying to write to a probablity matrix to npy file.")
+        print("   This failed.")
+        print("   File name base: ", base_threshold_df)
+        print("   Terminate.")
+        exit(1)
 
     return
 
@@ -270,11 +256,37 @@ def df_to_entropy(align2):
     entropy_values = []
     for i in range(len(align2.columns)):
         df1 = align2.iloc[:, i].value_counts(normalize=True)
+
+        # If we have N (unknown) then use the frequencies of others only
+        # (distribute N equally between the other letters and gaps).
+        # special case: If we have only N or N and gap only, then distribute N equally among ACTG.
+        if "N" in df1.index:
+            if len(df1) == 1:
+                value = 0.25
+                df1 = pd.Series(
+                    [value, value, value, value], index=["A", "C", "G", "T"]
+                )
+            elif len(df1) == 2 and "-" in df1.index:
+                gap_value = df1["-"]
+                others_value = (1 - gap_value) / 4
+                df1 = pd.Series(
+                    [others_value, others_value, others_value, others_value, gap_value],
+                    index=["A", "C", "G", "T", "-"],
+                )
+            else:
+                df1 = df1.drop(index="N")
+                # Normalize the frequencies so they sum to 1.
+                df1 = df1 / df1.sum()
+        df1.name = i
         thresh_detail.append(df1)
+
         e_act, thresh_val = column_entropy_thresh(df1)
         thresh.append(thresh_val)
         entropy_values.append(e_act)
-    return thresh, thresh_detail, entropy_values
+    # Create a matrix of probabilities for each letter at each position,
+    # fill missing with 0 and reindex to maintain order
+    prob_matrix = pd.concat(thresh_detail, axis=1).fillna(0).loc[LETTERS].values
+    return thresh, prob_matrix, entropy_values
 
 
 # ====================================
@@ -841,10 +853,10 @@ class InfectionRecord:
         self.inf_dict["date"] = date
         self.inf_dict["strain"] = strain
 
-#Model the GISAID / Nextstrain metadata file for now
-#https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
-#virus,age,country,countryExposure,date,dateSubmitted,died,division,divisionExposure,fullyVaccinated,strain,gisaidClade,gisaidEpiIsl,hospitalized,host,location,month,nextcladePangoLineage,nextstrainClade,originatingLab,pangoLineage,region,regionExposure,samplingStrategy,sex,sraAccession,strainold,submittingLab,year
-#ncov,,USA,USA,2021-09-20,2021-10-11,,Virginia,Virginia,,OK455686,,EPI_ISL_5088839,,Homo sapiens,,9,,21J,,AY.122,North America,North America,,,,USA/VA-CDC-LC0291093/2021,,2021
+# Model the GISAID / Nextstrain metadata file for now
+# https://docs.nextstrain.org/projects/ncov/en/latest/guides/data-prep/local-data.html
+# virus,age,country,countryExposure,date,dateSubmitted,died,division,divisionExposure,fullyVaccinated,strain,gisaidClade,gisaidEpiIsl,hospitalized,host,location,month,nextcladePangoLineage,nextstrainClade,originatingLab,pangoLineage,region,regionExposure,samplingStrategy,sex,sraAccession,strainold,submittingLab,year
+# ncov,,USA,USA,2021-09-20,2021-10-11,,Virginia,Virginia,,OK455686,,EPI_ISL_5088839,,Homo sapiens,,9,,21J,,AY.122,North America,North America,,,,USA/VA-CDC-LC0291093/2021,,2021
 
 def write_metadata(metadata_file, infection, line_keys, compression_type, aug_metadata_columns=None, aug_metadata_dict=None):
     """
