@@ -260,21 +260,16 @@ def df_to_entropy(align2):
         # If we have N (unknown) then use the frequencies of others only
         # (distribute N equally between the other letters and gaps).
         # special case: If we have only N or N and gap only, then distribute N equally among ACTG.
-        if "N" in df1.index:
+        if "-" in df1.index:
             if len(df1) == 1:
+                # This should be inconsequential, as we keep gaps as is
                 value = 0.25
                 df1 = pd.Series(
                     [value, value, value, value], index=["A", "C", "G", "T"]
                 )
-            elif len(df1) == 2 and "-" in df1.index:
-                gap_value = df1["-"]
-                others_value = (1 - gap_value) / 4
-                df1 = pd.Series(
-                    [others_value, others_value, others_value, others_value, gap_value],
-                    index=["A", "C", "G", "T", "-"],
-                )
             else:
-                df1 = df1.drop(index="N")
+                # Don't use gaps for entropy calculation
+                df1 = df1.drop(index="-")
                 # Normalize the frequencies so they sum to 1.
                 df1 = df1 / df1.sum()
         df1.name = i
@@ -285,7 +280,7 @@ def df_to_entropy(align2):
         entropy_values.append(e_act)
     # Create a matrix of probabilities for each letter at each position,
     # fill missing with 0 and reindex to maintain order
-    prob_matrix = pd.concat(thresh_detail, axis=1).fillna(0).loc[LETTERS].values
+    prob_matrix = pd.concat(thresh_detail, axis=1).reindex(LETTERS).fillna(0).values
     return thresh, prob_matrix, entropy_values
 
 
@@ -385,14 +380,6 @@ def generate_sequences(args):
     # Read in network data
     print('reading in the network data....')
     df = pd.read_csv(input_graph_csv)
-
-    # Create connection dataframe (pid, and contact_pid columns)
-    connections1 = df.loc[:, "pid"]  # pid
-    connections2 = df.loc[:, "contact_pid"]  # contact_pid
-
-    # Create id dataframe (with tick and exit_state columns)
-    id1 = df.loc[:, "tick"]  # tick
-    id2 = df.loc[:, "exit_state"]  # exit_state
 
     ##########################################################
 
@@ -511,7 +498,25 @@ def generate_sequences(args):
         pd.to_datetime(start_date) + transitions_to_paint["date"]
     )
     thresh = np.array(thresh)
+    sequence = next(current_sequences.values().__iter__())
+    if not args.proportional:
+        letters_to_use = np.array(["A", "C", "G", "T"])
+        n_letters = len(letters_to_use)
+        prob_matrix = np.repeat(
+            np.array([1 / n_letters] * n_letters)[:, np.newaxis],
+            repeats=len(sequence),
+            axis=1,
+        )
+    else:
+        letters_to_use = LETTERS
     cumulative_probs_matrix = np.cumsum(prob_matrix, axis=0)
+    # Validate
+    assert (
+        len(sequence) == cumulative_probs_matrix.shape[1]
+    ), "Sequence length must match the number of columns in the probability matrix"
+    assert (
+        len(letters_to_use) == cumulative_probs_matrix.shape[0]
+    ), "Number of letters must match the number of rows in the probability matrix"
 
     for _, pid, contact_pid, date in transitions_to_paint[
         ["pid", "contact_pid", "date"]
@@ -523,14 +528,16 @@ def generate_sequences(args):
             # Get the parent's sequence, mutate it, and append result to fasta
             # print('Mutating sequence, adding to fasta.....')
         seq_to_change = current_sequences[contact_pid]
-        change = determine_change(thresh)
+        change = determine_change(thresh, seq_to_change)
         # print(pid)
         if use_poor_mut_model:
             new_seq = poor_mut_model(seq_to_change)
         else:
             # new_seq = weight_change(seq_to_change, change, thresh_detail, use_proportional)
             # new_seq = weighted_change_np(seq_to_change, change, prob_matrix)
-            new_seq = weighted_change_np(seq_to_change, change, cumulative_probs_matrix)
+            new_seq = weighted_change(
+                seq_to_change, change, cumulative_probs_matrix, letters=letters_to_use
+            )
         current_sequences[pid] = new_seq
 
         new_seq = "".join(new_seq.tolist())
@@ -590,7 +597,7 @@ def column_entropy_thresh(freq_df):
         e_max += p_xm * np.log(p_xm)
 
     thresh = (1 - (e_act / e_max)) * 100
-    #print(thresh)
+    # print(thresh)
 
     if np.isnan(thresh):
         thresh = 0
@@ -599,10 +606,12 @@ def column_entropy_thresh(freq_df):
 
 
 # ====================================
-# Determine nulceotide change
-def determine_change(thresh):
+# Determine nucleotide change
+def determine_change(thresh, seq_to_change):
     comparison_values = np.random.randint(0, 100, len(thresh))
-    return comparison_values > thresh
+    random_selection = comparison_values > thresh
+    # If the position is a gap, then don't change it
+    return random_selection & (seq_to_change != "-")
 
 
 def determine_change_old(thresh):
@@ -619,72 +628,13 @@ def determine_change_old(thresh):
     return change
 
 
-def weight_change(index, change, letter_odds, proportional=False):
-    new_seq = []
-
-    for (nucleotide, change_val, odds_val) in zip(index, change, letter_odds):
-        if change_val and nucleotide != '-':
-            letter_list=[]
-            weight_list=[]
-            if proportional:
-                # python 3.7 order guaranteed but just in case
-                for key, item in odds_val.iterrows():
-                    if item["change_value"] == "proportion" or item["letter"] not in set(['A','C','G','T']):
-                        continue
-                    letter_list.append(item["letter"])
-                    weight_list.append(float(item["change_value"]))
-                new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
-            else:
-                # set the letters to equal weight except for the gap symbol.
-                letter_list=["A","C","T","G"]
-                gap_odds=odds_val.get("-",0)
-                weight_list = [(1-gap_odds)/float(len(letter_list))] * len(letter_list) #make four copies
-                weight_list.append(gap_odds)
-                letter_list.append("-")
-                new_nucleotide = random.choices(letter_list, weights=weight_list,k=1)[0]
-        else:
-            new_nucleotide = nucleotide
-        new_seq.append(new_nucleotide)
-    new_seq = ''.join(new_seq)
-    return new_seq
-
-LETTERS = np.array(["A", "C", "G", "T", "-"])
+# Includes ambiguous nucleotides
+LETTERS = np.array(
+    ["A", "C", "G", "T", "N", "R", "K", "S", "Y", "M", "W", "B", "H", "D", "V"]
+)
 
 
-def weighted_change_py(sequence, change, prob_matrix):
-    # Generate random numbers for each column
-    random_values = np.random.rand(prob_matrix.shape[1])
-    sequence = []
-    for position in range(prob_matrix.shape[1]):
-        if change[position]:
-            letter_list = []
-            weight_list = []
-            for idx, value in enumerate(prob_matrix[:, position]):
-                if value > 0:
-                    letter_list.append(LETTERS[idx])
-                    weight_list.append(value)
-                new_nucleotide = random.choices(letter_list, weights=weight_list, k=1)[
-                    0
-                ]
-                sequence.append(new_nucleotide)
-        else:
-            sequence.append(sequence[position])
-    return "".join(sequence)
-
-    # Compute cumulative probabilities for each column
-    cumulative_probs = np.cumsum(prob_matrix, axis=0)
-
-    # Determine the index of the letter for each position
-    # If our random number is higher than the cumulative probability, we take the next index
-    letter_indices = (random_values[np.newaxis, :] < cumulative_probs).argmax(axis=0)
-    new_sequence = LETTERS[letter_indices]
-    # Apply change based on change mask
-    sequence = np.array(list(sequence))
-    sequence[change] = new_sequence[change]
-    return "".join(sequence)
-
-
-def weighted_change_np(sequence, change, cumulative_prob_matrix):
+def weighted_change(sequence, change, cumulative_prob_matrix, letters=LETTERS):
     # Generate random numbers for each column
     random_values = np.random.rand(cumulative_prob_matrix.shape[1])
 
@@ -695,7 +645,7 @@ def weighted_change_np(sequence, change, cumulative_prob_matrix):
     letter_indices = (random_values[np.newaxis, :] < cumulative_prob_matrix).argmax(
         axis=0
     )
-    new_sequence = LETTERS[letter_indices]
+    new_sequence = letters[letter_indices]
     # Apply change based on change mask
     sequence = sequence.copy()
     sequence[change] = new_sequence[change]
