@@ -70,15 +70,32 @@ def process_tsv(input_file: str, output_file: str, pango_lineage: str):
         (pd.to_datetime(lineage_df['date'], errors='coerce') <= latest_date + two_weeks)
     ]
     
-    # Write the filtered table to the output file
-    filtered_df.to_csv(output_file, sep='\t', index=False)
-    print(f"Filtered table written to {output_file}")
+    return filtered_df
+
+def create_reductions(df: pd.DataFrame, output_file: str, num_reductions: int):
+    """
+    Create multiple 2-fold reductions of the table and save them to files.
+    """
+    for i in range(1, num_reductions + 1):
+        reduction_factor = 2 ** i
+        reduced_df = df.iloc[::reduction_factor, :]  # Take every nth row based on the reduction factor
+        reduced_output_file = output_file.replace('.tsv', f'_reduction_{reduction_factor}.tsv')
+        reduced_df.to_csv(reduced_output_file, sep='\t', index=False)
+        print(f"Reduction {reduction_factor} written to {reduced_output_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Filter a TSV table based on pango lineage and date ranges.")
     parser.add_argument("input_file", help="Path to the input TSV file.")
     parser.add_argument("output_file", help="Path to the output TSV file.")
     parser.add_argument("pango_lineage", help="Pango lineage to filter by.")
+    parser.add_argument("--reductions", type=int, default=0, help="Number of 2-fold reductions to create.")
+
     args = parser.parse_args()
     
-    process_tsv(args.input_file, args.output_file, args.pango_lineage)
+    filtered_df=process_tsv(args.input_file, args.output_file, args.pango_lineage)
+    # Write the filtered table to the output file
+    filtered_df.to_csv(output_file, sep='\t', index=False)
+    print(f"Filtered table written to {output_file}")
+    # Create reductions if specified
+    if args.reductions > 0:
+        create_reductions(filtered_df, args.output_file, args.reductions)
