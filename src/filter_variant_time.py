@@ -54,6 +54,8 @@ def process_tsv(input_file: str, output_file: str, pango_lineage: str):
     if earliest_date is None or latest_date is None:
         print("No valid dates found for the specified lineage.")
         return
+    else:
+        print(f"Earliest date: {earliest_date}, Latest date: {latest_date}")
     
     # Filter rows within two weeks of the earliest and latest dates
     earliest_date = pd.to_datetime(earliest_date)
