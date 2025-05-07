@@ -30,7 +30,7 @@ def filter_outliers(dates: pd.Series) -> pd.Timestamp:
         return None
     z_scores = zscore((dates - dates.min()).dt.days)
     non_outliers = dates[np.abs(z_scores) <= 2]
-    return non_outliers.min() if not non_outliers.empty else None
+    return non_outliers if not non_outliers.empty else None
 
 def process_tsv(input_file: str, output_file: str, pango_lineage: str):
     """
@@ -48,8 +48,12 @@ def process_tsv(input_file: str, output_file: str, pango_lineage: str):
     lineage_df = df[df['regularized'] == pango_lineage]
     
     # Find the earliest and latest non-outlier dates
-    earliest_date = filter_outliers(lineage_df['date'])
-    latest_date = filter_outliers(lineage_df['date'][lineage_df['date'] > earliest_date])
+    accepted_dates = filter_outliers(lineage_df['date'])
+    if accepted_dates is None:
+        print("No valid dates found for the specified lineage.")
+        return
+    earliest_date = accepted_dates.min()
+    latest_date = accepted_dates.max()
     
     if earliest_date is None or latest_date is None:
         print("No valid dates found for the specified lineage.")
