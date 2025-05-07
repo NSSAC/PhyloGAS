@@ -38,7 +38,7 @@ def process_tsv(input_file: str, output_file: str, pango_lineage: str):
     for a given pango lineage.
     """
     # Read the TSV file
-    df = pd.read_csv(input_file, sep='\t')
+    df = pd.read_csv(input_file, sep='\t', parse_dates=['date'], infer_datetime_format=True)
     
     # Create the 'regularized' column
     replace_map = make_variant_base_map([pango_lineage])
