@@ -6,6 +6,7 @@ from typing import List, Dict
 #https://github.com/aswarren/pango_aliasor
 from pango_aliasor.aliasor import Aliasor
 import us
+import os
 
 def make_variant_base_map(base_variants: List[str]) -> Dict[str, str]:
     """
