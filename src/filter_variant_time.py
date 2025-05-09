@@ -160,6 +160,6 @@ if __name__ == "__main__":
     filtered_df=process_tsv(args.input_file, args.pango_lineage)
     if args.target_state != None and args.reductions > 0:
         #create a region column
-        create_reductions(filtered_df, output_base, args.reductions, args.target_state)
+        create_reductions(filtered_df, output_base, args.reductions, args.target_state, args.mode)
 
 
