@@ -104,6 +104,8 @@ def create_reductions(df: pd.DataFrame, output_base: str, num_reductions: int, t
             # Create a bash script to extract the reduced target rows
             #set reduced output file to be the protobuf file *.pb
             reduced_output_file = output_base + f'_{abbr_state}_reduction_{reduction_factor}.pb'
+            reduced_output_folder = os.path.dirname(reduced_output_file)
+            reduced_output_name = os.path.basename(reduced_output_file)
             reduced_ids_file = output_base + f'_{abbr_state}_reduction_{reduction_factor}_ids.txt'
             script_file = output_base + f'_{abbr_state}_reduction_{reduction_factor}.sh'
             with open(script_file, 'w') as f, open(reduced_ids_file, 'w') as id_file:
@@ -116,9 +118,9 @@ def create_reductions(df: pd.DataFrame, output_base: str, num_reductions: int, t
                 f.write("fi\n")
                 f.write("\n")
                 f.write(f"echo 'Running matUtils extract with the following command:'\n")
-                f.write(f"echo 'matUtils extract --input-mat $1 --write-mat {reduced_output_file} --samples {reduced_ids_file}'\n")
+                f.write(f"echo 'matUtils extract --input-mat $1 --write-mat {reduced_output_name} --output-directory {reduced_output_folder} --samples {reduced_ids_file}'\n")
                 f.write("\n")
-                f.write(f"matUtils extract --input-mat $1 --write-mat {reduced_output_file} --samples {reduced_ids_file}\n")
+                f.write(f"matUtils extract --input-mat $1 --write-mat {reduced_output_name} --output-directory {reduced_output_folder} --samples {reduced_ids_file}\n")
             print(f"Script for reduction {reduction_factor} written to {script_file}")
 
 
