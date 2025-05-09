@@ -114,7 +114,7 @@ def create_reductions(df: pd.DataFrame, output_base: str, num_reductions: int, t
                 f.write("  echo 'Usage: $0 <input-mat>'\n")
                 f.write("  exit 1\n")
                 f.write("fi\n")
-                f.write(f"matutils extract --input-mat $1 --output {reduced_output_file} --samples {reduced_ids_file}\n")
+                f.write(f"matUtils extract --input-mat $1 --output {reduced_output_file} --samples {reduced_ids_file}\n")
             print(f"Script for reduction {reduction_factor} written to {script_file}")
 
 
