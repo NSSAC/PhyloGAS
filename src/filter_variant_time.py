@@ -34,7 +34,7 @@ def filter_outliers(dates: pd.Series) -> pd.Timestamp:
     non_outliers = dates[np.abs(z_scores) <= 2]
     return non_outliers if not non_outliers.empty else None
 
-def process_tsv(input_file: str, output_file: str, pango_lineage: str):
+def process_tsv(input_file: str, pango_lineage: str):
     """
     Process the TSV file to filter rows based on the earliest and latest dates
     for a given pango lineage.
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     output_base = args.output_path + os.path.splitext(os.path.basename(args.input_file))[0]
     args = parser.parse_args()
     #filter by time / pango lineage
-    filtered_df=process_tsv(args.input_file, args.output_file, args.pango_lineage)
+    filtered_df=process_tsv(args.input_file, args.pango_lineage)
     if args.target_state != None and args.reductions > 0:
         #create a region column
         create_reductions(filtered_df, output_base, args.reductions. args.target_state)
