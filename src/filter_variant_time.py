@@ -154,7 +154,7 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="script", choices=["metadata", "script"], help="Mode of operation: 'filter' or 'script'.")
     args = parser.parse_args()
     #combine output path with input file name minus extension
-    output_base = args.output_path + os.path.splitext(os.path.basename(args.input_file))[0]
+    output_base = args.output_path + os.path.splitext(os.path.basename(args.input_file))[0]+"_" + args.pango_lineage
     args = parser.parse_args()
     #filter by time / pango lineage
     filtered_df=process_tsv(args.input_file, args.pango_lineage)
