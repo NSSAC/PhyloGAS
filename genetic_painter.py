@@ -624,46 +624,57 @@ def generate_sequences(args):
         elif args.rate_limit:
             # --- Rate Limiting Logic ---
             burst_size = random.randint(min_burst_size, max_burst_size)
+            effective_initial_load = args.initial_viral_load
             
-            # Calculate replication cycles for the "early" phase
-            # args.initial_viral_load is used here
-            effective_initial_load = args.initial_viral_load # Already checked > 0 in getClas
-            
-            # Calculate cycles to reach the 'early population threshold'
             replication_cycles_for_early_phase = calculate_replication_cycles(
                 effective_initial_load,
                 rt_early_population_threshold * peak_viral_load,
                 burst_size
             )
-            replication_cycles_for_early_phase = max(1, replication_cycles_for_early_phase) # Ensure at least 1 cycle
+            replication_cycles_for_early_phase = max(1, replication_cycles_for_early_phase)
 
-            # Number of potential mutations during these early cycles
             num_potential_mutations = np.random.poisson(
                 mutation_rate_per_cycle * len(seq_to_change_arr) * replication_cycles_for_early_phase
             )
             num_potential_mutations = min(num_potential_mutations, len(seq_to_change_arr))
 
-            # Select sites for these potential mutations
-            if num_potential_mutations > 0:
-                potential_mutation_sites = random.sample(range(len(seq_to_change_arr)), num_potential_mutations)
-            else:
-                potential_mutation_sites = []
-
-            # This mask will determine which sites actually get changed by weighted_change
             final_change_mask = np.zeros(len(seq_to_change_arr), dtype=bool)
 
-            # Original entropy-based eligibility check
-            entropy_eligible_mask = determine_change(thresh_np, seq_to_change_arr)
-
-            for site_idx in potential_mutation_sites:
-                # A mutation must be eligible by entropy AND selected by rate-limiting
-                if not entropy_eligible_mask[site_idx]:
-                    continue 
+            if num_potential_mutations > 0:
+                # --- Weighted Site Selection ---
+                # Weights: Higher for more entropy (lower threshold)
+                # Ensure weights are non-negative
+                site_weights = np.maximum(0.0, 1.0 - (thresh_np / 100.0)) 
                 
-                # The fact that this mutation is considered means it occurred within the "early cycles".
-                # Now, apply probability for it to become a major variant.
-                if random.random() < rt_early_mutation_probability:
-                    final_change_mask[site_idx] = True
+                # Do not allow mutating existing gaps
+                gap_indices = np.where(seq_to_change_arr == '-')[0]
+                site_weights[gap_indices] = 0.0
+
+                # Normalize weights (optional, but good practice for probabilities)
+                # If sum_weights is 0, it means no sites are mutable, handle this.
+                sum_weights = np.sum(site_weights)
+                if sum_weights > 0:
+                    # Using random.choices for weighted sampling.
+                    # Note: random.choices samples WITH replacement by default.
+                    # If num_potential_mutations is small relative to genome length,
+                    # duplicates are rare. If concerned, could sample more and take unique,
+                    # or implement a more complex weighted sampling without replacement.
+                    potential_mutation_indices = random.choices(
+                        population=range(len(seq_to_change_arr)), 
+                        weights=site_weights, 
+                        k=num_potential_mutations
+                    )
+                    
+                    for site_idx in potential_mutation_indices:
+                        # Fixation probability for this "successful" iSNV to become major
+                        if random.random() < rt_early_mutation_probability:
+                            # The check for gap 'if seq_to_change_arr[site_idx] != '-':' is now implicitly
+                            # handled by site_weights[gap_indices] = 0.0, as such sites
+                            # should not be chosen by random.choices if their weight is 0.
+                            # However, a direct check before assignment is still a safeguard.
+                            if seq_to_change_arr[site_idx] != '-': # Safeguard
+                                final_change_mask[site_idx] = True
+                # --- End Weighted Site Selection ---
             
             new_seq_arr = weighted_change(
                 seq_to_change_arr, final_change_mask, cumulative_probs_matrix, letters=letters_to_use
