@@ -93,6 +93,14 @@ def getClas():
     parser.add_argument("--neutral", default=False, action="store_false", dest="proportional", required=False, help="use neutral letter choices")
     parser.add_argument("--poor", default=False, action="store_true", dest="poor", required=False, help="use poor mutational model")
     parser.add_argument("--limit", default=16521, type=int, dest="limit", required=False, help="maximum number of items to process")
+    tick_group = parser.add_mutually_exclusive_group(required=False)
+    tick_group.add_argument("--end_tick", type=int, dest="end_tick",
+                            help="End tick for processing the input_graph_csv. Mutually exclusive with --num_ticks.")
+    tick_group.add_argument("--num_ticks", type=int, dest="num_ticks",
+                            help="Number of ticks to process from the start of the simulation or from --start_tick if provided. Mutually exclusive with --end_tick.")
+    parser.add_argument("--start_tick", type=int, dest="start_tick", required=False, default=0,
+                        help="Start tick for processing the input_graph_csv. Defaults to 0.")
+
     parser.add_argument("--reference", default=None, type=str, dest="reference", required=False, help="add reference sequence to the output")
     parser.add_argument("--compression", default=None, type=str, dest="compression_type", required=False, help="add compression method -- None, xz, or parquet",
                        choices=["None",XZ])
@@ -557,6 +565,44 @@ def generate_sequences(args):
     transitions_to_paint_df = transitions_to_paint[~seed_transitions_mask][ # Renamed
         ["pid", "contact_pid", "tick"] # Removed exit_state as it's already filtered
     ]
+
+ # --- START: TICK-BASED FILTERING ---
+    print(f"  Initial number of transitions to paint: {len(transitions_to_paint_df)}")
+
+    # Apply start_tick
+    # The default for args.start_tick is 0, so this filter will always be applied.
+    # If you want to truly skip start_tick unless specified, default should be None and check for it.
+    # Assuming default=0 means we always filter from at least tick 0.
+    if args.start_tick > 0: # Only filter if start_tick is greater than the absolute minimum
+        transitions_to_paint_df = transitions_to_paint_df[transitions_to_paint_df["tick"] >= args.start_tick]
+        print(f"  After applying --start_tick {args.start_tick}: {len(transitions_to_paint_df)} transitions")
+
+    # Apply end_tick or num_ticks (mutually exclusive due to argparse group)
+    if args.end_tick is not None:
+        # Filter by end_tick (inclusive of end_tick)
+        transitions_to_paint_df = transitions_to_paint_df[transitions_to_paint_df["tick"] <= args.end_tick]
+        print(f"  After applying --end_tick {args.end_tick}: {len(transitions_to_paint_df)} transitions")
+    elif args.num_ticks is not None:
+        # Determine the effective end tick based on num_ticks and start_tick
+        # The starting point for num_ticks is args.start_tick if specified, 
+        # otherwise it's the minimum tick present in the (potentially already start_tick filtered) data.
+        
+        if not transitions_to_paint_df.empty:
+            # If args.start_tick was used to filter, current_min_tick_for_num_ticks is effectively args.start_tick
+            # If args.start_tick was 0 (or less than actual min tick), then use the actual min tick in the current df
+            current_min_tick_for_num_ticks = transitions_to_paint_df["tick"].min()
+            # If start_tick was specified and is > current_min_tick, num_ticks should start from start_tick
+            effective_start_for_num_ticks = max(current_min_tick_for_num_ticks, args.start_tick)
+            
+            calculated_end_tick = effective_start_for_num_ticks + args.num_ticks - 1 # -1 because num_ticks includes the start_tick itself
+
+            transitions_to_paint_df = transitions_to_paint_df[transitions_to_paint_df["tick"] <= calculated_end_tick]
+            print(f"  After applying --num_ticks {args.num_ticks} (from effective start {effective_start_for_num_ticks}, calculated end: {calculated_end_tick}): {len(transitions_to_paint_df)} transitions")
+        else:
+            print(f"  DataFrame empty before applying --num_ticks, no further filtering.")
+            
+    # --- END: TICK-BASED FILTERING ---
+
     
     if seq_limit and seq_limit > 0 : # Ensure positive limit
         transitions_to_paint_df = transitions_to_paint_df.iloc[:seq_limit]
