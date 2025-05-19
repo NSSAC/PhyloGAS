@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
+from scipy.stats import zscore # Added for Z-score outlier detection
 
 # Attempt to import pango_aliasor and define make_variant_base_map
 try:
@@ -45,7 +46,7 @@ else:
 COVSPECTRUM_API_URL = 'https://lapis.cov-spectrum.org/open/v2/sample/alignedNucleotideSequences'
 DEFAULT_TSV_URL = 'https://clustertracker.gi.ucsc.edu/data/hardcoded_clusters.tsv'
 DEFAULT_TSV_BASENAME = 'hardcoded_clusters.tsv'
-# Comprehensive list from the notebook for robust aliasing
+# Comprehensive list from the notebook for robust aliasing (though current usage is more targeted)
 PANGO_TARGET_LIST_FOR_ALIASING = [
     'B.1.1.7', 'B.1.617.2', 'BA.1', 'BA.2', 'BA.4', 'BA.5', 'XBB', 'XBB.1.5', 
     'XBB.1.16', 'XBB.1.9', 'BA.2.86', 'KP.3', 'LP.8', 'XEC'
@@ -92,8 +93,6 @@ def fetch_sequences_from_covspectrum(strain_ids: List[str], batch_size: int = 10
         except requests.exceptions.HTTPError as e:
             print(f"  HTTP Error for batch {i//batch_size + 1}: {e}")
             print(f"  Response content: {e.response.text[:500]}...") # Show some of the error
-            # Depending on policy, could stop all or just skip this batch.
-            # For now, let's try to continue with other batches if possible, but signal overall failure.
             return None # Indicate overall failure
         except requests.exceptions.RequestException as e:
             print(f"  Request Error for batch {i//batch_size + 1}: {e}")
@@ -105,12 +104,62 @@ def fetch_sequences_from_covspectrum(strain_ids: List[str], batch_size: int = 10
     print("Sequence fetching complete.")
     return "".join(all_fasta_content)
 
+def detect_outliers_iqr(date_series: pd.Series, factor: float = 1.5) -> pd.Series:
+    """
+    Detects outliers in a pandas Series of datetime objects using IQR method.
+    Returns a boolean Series where True indicates an outlier.
+    Assumes date_series contains already parsed datetime objects and NAs are handled before.
+    """
+    if date_series.empty:
+        return pd.Series([False] * len(date_series), index=date_series.index, dtype=bool)
+
+    Q1 = date_series.quantile(0.25)
+    Q3 = date_series.quantile(0.75)
+    IQR = Q3 - Q1
+
+    # If IQR is zero (e.g., many identical dates), no outliers by this method.
+    if IQR == pd.Timedelta(0):
+        return pd.Series([False] * len(date_series), index=date_series.index, dtype=bool)
+
+    lower_bound = Q1 - factor * IQR
+    upper_bound = Q3 + factor * IQR
+    
+    outliers_mask = (date_series < lower_bound) | (date_series > upper_bound)
+    return outliers_mask
+
+def detect_outliers_zscore(date_series: pd.Series, threshold: float = 2.0) -> pd.Series:
+    """
+    Detects outliers in a pandas Series of datetime objects using Z-score method.
+    Returns a boolean Series where True indicates an outlier.
+    Assumes date_series contains already parsed datetime objects and NAs are handled before.
+    """
+    if date_series.empty or date_series.nunique() < 2: # Z-score needs variance, min 2 unique values
+        return pd.Series([False] * len(date_series), index=date_series.index, dtype=bool)
+
+    # Convert dates to days since the minimum date in the series for Z-score calculation
+    numeric_dates = (date_series - date_series.min()).dt.days
+    
+    # Re-check for unique values after conversion to numeric, in case of precision issues or identical relative days
+    if numeric_dates.nunique() < 2:
+         return pd.Series([False] * len(date_series), index=date_series.index, dtype=bool)
+
+    z_scores = zscore(numeric_dates)
+    
+    # zscore might produce nan if std is 0 (e.g., if all numeric_dates are somehow identical despite nunique check).
+    # np.nan_to_num converts NaNs to 0.0, which means they won't be flagged as outliers.
+    z_scores = np.nan_to_num(z_scores, nan=0.0) 
+
+    outliers_mask = np.abs(z_scores) > threshold
+    return pd.Series(outliers_mask, index=date_series.index)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Process SARS-CoV-2 cluster data, identify seed samples, and fetch their sequences.")
     parser.add_argument("--state", required=True, type=str, help="US state to filter data for (e.g., 'Washington', 'California'). Corresponds to 'region' column.")
     parser.add_argument("--pango", required=True, type=str, help="Pango lineage to filter data for (e.g., 'B.1.1.7', 'BA.1'). This will be matched against regularized lineage names.")
     parser.add_argument("--input_file", type=str, help="Optional path to the input TSV file. If not provided, the script will attempt to use/download 'hardcoded_clusters.tsv'.")
     parser.add_argument("--output_folder", required=True, type=str, help="Path to the folder where output files (seed IDs, FASTA sequences, downloaded TSV) will be saved.")
+    parser.add_argument("--outlier_method", type=str, choices=['none', 'iqr', 'zscore'], default='none', help="Method for 'earliest_date' outlier detection: 'none' (default), 'iqr', or 'zscore'.")
     
     args = parser.parse_args()
 
@@ -151,7 +200,6 @@ def main():
     # --- 3. Load and process data ---
     print(f"Loading data from {input_tsv_path}...")
     try:
-        # The notebook file had .gz, the URL is plain .tsv
         compression = 'gzip' if str(input_tsv_path).endswith('.gz') else None
         df = pd.read_csv(input_tsv_path, sep='\t', compression=compression)
     except Exception as e:
@@ -166,11 +214,8 @@ def main():
         print(f"Error: 'annotation_2' column not found in the input TSV. Available columns: {df.columns.tolist()}")
         exit(1)
 
-    # Ensure the user-provided pango lineage is part of the aliasing process
-    # to handle cases where it might be a direct base variant itself.
-    #extended_target_list = list(set(PANGO_TARGET_LIST_FOR_ALIASING + [args.pango]))
-    extended_target_list = [args.pango]
-    
+    # Regularize only for the target pango lineage and its sublineages
+    extended_target_list = [args.pango] 
     try:
         replace_map = make_variant_base_map(extended_target_list)
     except Exception as e:
@@ -179,10 +224,7 @@ def main():
         exit(1)
 
     df['pango_regularized'] = df['annotation_2'].map(replace_map)
-    # For lineages not in replace_map (e.g. not covered by target_list or its sublineages),
-    # pango_regularized will be NaN. We can fill them with original annotation_2 if needed,
-    # or rely on filtering to remove them. Let's fill with original.
-    df['pango_regularized'].fillna(df['annotation_2'], inplace=True)
+    df['pango_regularized'].fillna(df['annotation_2'], inplace=True) # Keep original if not in map
     print(f"Pango lineage regularization complete. New column 'pango_regularized' created.")
 
     # --- 5. Filter data by state and pango lineage ---
@@ -192,7 +234,7 @@ def main():
         exit(1)
         
     original_row_count = len(df)
-    df_filtered = df[(df['region'] == args.state) & (df['pango_regularized'] == args.pango)].copy() # Use .copy() to avoid SettingWithCopyWarning
+    df_filtered = df[(df['region'] == args.state) & (df['pango_regularized'] == args.pango)].copy()
 
     print(f"Filtered from {original_row_count} to {len(df_filtered)} rows based on state and Pango lineage.")
     if df_filtered.empty:
@@ -207,7 +249,6 @@ def main():
 
     df_filtered['earliest_date'] = pd.to_datetime(df_filtered['earliest_date'], errors='coerce')
     
-    # Drop rows where date conversion failed
     rows_before_nat_drop = len(df_filtered)
     df_filtered.dropna(subset=['earliest_date'], inplace=True)
     if len(df_filtered) < rows_before_nat_drop:
@@ -217,36 +258,49 @@ def main():
         print("No valid 'earliest_date' entries after initial parsing and NaT drop. Exiting.")
         exit(0)
 
-    # Outlier detection using IQR
     min_date_orig = df_filtered['earliest_date'].min()
     max_date_orig = df_filtered['earliest_date'].max()
     print(f"Original date range for filtered data: {min_date_orig.strftime('%Y-%m-%d')} to {max_date_orig.strftime('%Y-%m-%d')}")
 
-    Q1 = df_filtered['earliest_date'].quantile(0.25)
-    Q3 = df_filtered['earliest_date'].quantile(0.75)
-    IQR = Q3 - Q1
-    
-    lower_bound = Q1 - 1.5 * IQR
-    upper_bound = Q3 + 1.5 * IQR
+    outliers_mask = pd.Series([False] * len(df_filtered), index=df_filtered.index, dtype=bool) 
 
-    outliers_mask = (df_filtered['earliest_date'] < lower_bound) | (df_filtered['earliest_date'] > upper_bound)
-    outliers_df = df_filtered[outliers_mask]
+    if args.outlier_method == 'iqr':
+        print("Using IQR method for outlier detection (factor=1.5).")
+        outliers_mask = detect_outliers_iqr(df_filtered['earliest_date'], factor=1.5)
+    elif args.outlier_method == 'zscore':
+        print("Using Z-score method for outlier detection (threshold=2.0).")
+        outliers_mask = detect_outliers_zscore(df_filtered['earliest_date'], threshold=2.0)
+    elif args.outlier_method == 'none':
+        print("No outlier removal method selected.")
+    # else: # Not strictly needed due to argparse 'choices'
 
-    if not outliers_df.empty:
-        print(f"Identified {len(outliers_df)} date outliers outside range [{lower_bound.strftime('%Y-%m-%d')}, {upper_bound.strftime('%Y-%m-%d')}].")
+    if args.outlier_method != 'none' and outliers_mask.any():
+        outliers_df = df_filtered[outliers_mask]
+        print(f"Identified {len(outliers_df)} date outliers using {args.outlier_method} method.")
+        
+        # For IQR, we can report the bounds that were used.
+        if args.outlier_method == 'iqr':
+            Q1_report = df_filtered['earliest_date'].quantile(0.25)
+            Q3_report = df_filtered['earliest_date'].quantile(0.75)
+            IQR_report = Q3_report - Q1_report
+            if IQR_report > pd.Timedelta(0): # Avoid issues if IQR is 0
+                 lower_bound_report = Q1_report - 1.5 * IQR_report
+                 upper_bound_report = Q3_report + 1.5 * IQR_report
+                 print(f"  (IQR method bounds: {lower_bound_report.strftime('%Y-%m-%d')} to {upper_bound_report.strftime('%Y-%m-%d')})")
+
         outlier_dates_str = ", ".join(sorted(outliers_df['earliest_date'].dt.strftime('%Y-%m-%d').unique()))
         print(f"Outlier dates being pruned: {outlier_dates_str}")
-        df_filtered = df_filtered[~outliers_mask].copy() # Use .copy()
-    else:
-        print("No date outliers detected based on IQR method.")
+        df_filtered = df_filtered[~outliers_mask].copy()
+    elif args.outlier_method != 'none': # If a method was chosen but found no outliers
+        print(f"No date outliers detected using {args.outlier_method} method.")
 
-    if df_filtered.empty:
+    if df_filtered.empty: # Check if all data was pruned
         print("All data removed after outlier pruning. Exiting.")
         exit(0)
     
     min_date_new = df_filtered['earliest_date'].min()
     max_date_new = df_filtered['earliest_date'].max()
-    print(f"Date range after pruning: {min_date_new.strftime('%Y-%m-%d')} to {max_date_new.strftime('%Y-%m-%d')}")
+    print(f"Date range after potential pruning: {min_date_new.strftime('%Y-%m-%d')} to {max_date_new.strftime('%Y-%m-%d')}")
 
     # --- 7. Identify Seed Samples and Save IDs ---
     print("Identifying seed strains from 'samples' column...")
@@ -254,7 +308,6 @@ def main():
         print(f"Error: 'samples' column not found. Needed to extract seed strains. Available columns: {df_filtered.columns.tolist()}")
         exit(1)
 
-    # Extract strain_seed (first part of the first sample entry)
     try:
         df_filtered['strain_seed'] = df_filtered['samples'].str.split(',', n=1, expand=True)[0].str.split('|', n=1, expand=True)[0]
     except Exception as e:
