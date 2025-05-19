@@ -359,22 +359,26 @@ def compute_entropy(args):
     return
 
 # ====================================
-def create_aug_metadata_dict(metadata_cols, pid, pid_df=None):
+def create_aug_metadata_dict(metadata_cols, pid, pid_df=None, standardized_replacements=None):
     temp_dict = {}
     if len(metadata_cols) > 0:
         for col in metadata_cols:
             # Standardize pid_df access, ensuring pid_df is a Series for a single pid
             # or handle cases where pid_df might be None or col not present
+            if standardized_replacements is not None:
+                real_col = standardized_replacements[col]
+            else:
+                real_col = col
             col_value = "NA" # Default
             if pid_df is not None:
-                if col == "pid": # pid itself is not usually in persontrait_df by that name
+                if real_col == "pid": # pid itself is not usually in persontrait_df by that name
                     col_value = pid
-                elif col in pid_df.index: # Check if column exists for this pid_df (Series)
-                    val_from_df = pid_df[col]
+                elif real_col in pid_df.index: # Check if column exists for this pid_df (Series)
+                    val_from_df = pid_df[real_col]
                     if col in ["sex", "gender"]:
                         if pd.isna(val_from_df): col_value = "NA"
                         elif val_from_df == 1: col_value = "male"
-                        elif val_from_df == 0: col_value = "female"
+                        elif val_from_df == 2: col_value = "female"
                         else: col_value = str(val_from_df) # Or "unknown"
                     else:
                         col_value = str(val_from_df) if not pd.isna(val_from_df) else "NA"
@@ -478,11 +482,20 @@ def generate_sequences(args):
     if augment_metadata:
         # Standardize known column renames
         standardized_aug_cols = []
+        standardized_replacements = {}
         for col in aug_metadata_columns:
-            if col == "gender": standardized_aug_cols.append("sex")
-            elif col == "home_latitude": standardized_aug_cols.append("latitude")
-            elif col == "home_longitude": standardized_aug_cols.append("longitude")
-            else: standardized_aug_cols.append(col)
+            if col == "gender": 
+                standardized_aug_cols.append("sex")
+                standardized_replacements["sex"]="gender"
+            elif col == "home_latitude": 
+                standardized_aug_cols.append("latitude")
+                standardized_replacements["latitude"] = "home_latitude"
+            elif col == "home_longitude": 
+                standardized_aug_cols.append("longitude")
+                standardized_replacements["longitude"] = "home_longitude"
+            else: 
+                standardized_aug_cols.append(col)
+                standardized_replacements[col] = col
         
         aug_metadata_str = "\t".join(standardized_aug_cols)
         meta_line += "\t" + aug_metadata_str
@@ -508,7 +521,7 @@ def generate_sequences(args):
         aug_metadata_dict_ref = {} # Initialize for reference
         if augment_metadata:
              # For reference, PID is typically not applicable unless you have specific metadata for it
-            aug_metadata_dict_ref = create_aug_metadata_dict(standardized_aug_cols, pid="reference_strain") # Pass standardized
+            aug_metadata_dict_ref = create_aug_metadata_dict(standardized_aug_cols, pid="reference_strain", standardized_replacements=standardized_replacements) # Pass standardized
         
         add_to_fasta(str(align_ref[0].seq), infection, seq_file, args.compression_type)
         write_metadata(metadata_file, infection, line_keys, args.compression_type, 
@@ -747,11 +760,12 @@ def generate_sequences(args):
         if augment_metadata:
             try:
                 pid_df_series = persontrait_df.loc[pid] # This should be a Series
+                
                 aug_metadata_dict_current = create_aug_metadata_dict(
-                    standardized_aug_cols, pid, pid_df_series # Pass standardized
+                    standardized_aug_cols, pid, pid_df_series, standardized_replacements # Pass standardized
                 )
             except KeyError: # pid not in persontrait_df
-                 aug_metadata_dict_current = create_aug_metadata_dict(standardized_aug_cols, pid) # Will fill with NA
+                 aug_metadata_dict_current = create_aug_metadata_dict(standardized_aug_cols, pid, standardized_replacements=standardized_replacements) # Will fill with NA
 
 
         add_to_fasta(new_seq_str, infection, seq_file, args.compression_type)
@@ -982,3 +996,4 @@ if __name__ == '__main__':
     time_hr=(float)(time_s)/3600.0
     print(f"   Execution time (s): {time_s:.2f}, (hr): {time_hr:.2f}")
     print("   --- good termination ---")
+
