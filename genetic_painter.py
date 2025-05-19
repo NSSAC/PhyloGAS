@@ -566,11 +566,18 @@ def generate_sequences(args):
     if N <= M :
         for i, pid_val in enumerate(seed_pids):
             temp_seed_seqs[pid_val] = np.array(list(align_seed_records[i].seq))
-    else: # N > M, cycle through align_seed_records
-        align_str_list = [np.array(list(r.seq)) for r in align_seed_records]
-        cycled_seqs = list(islice(cycle(align_str_list), N))
+    else: # set temp_seed_seqs to first N sequences
         for i, pid_val in enumerate(seed_pids):
-            temp_seed_seqs[pid_val] = cycled_seqs[i]
+            if i < M:
+                temp_seed_seqs[pid_val] = np.array(list(align_seed_records[i].seq))
+            else:
+                break
+    #else: # N > M, cycle through align_seed_records
+    #    align_str_list = [np.array(list(r.seq)) for r in align_seed_records]
+    #    cycled_seqs = list(islice(cycle(align_str_list), N))
+    #    for i, pid_val in enumerate(seed_pids):
+    #        temp_seed_seqs[pid_val] = cycled_seqs[i]
+            
     current_sequences.update(temp_seed_seqs)
 
 
@@ -617,22 +624,49 @@ def generate_sequences(args):
     # --- END: TICK-BASED FILTERING ---
 
     
-    if seq_limit and seq_limit > 0 : # Ensure positive limit
-        transitions_to_paint_df = transitions_to_paint_df.iloc[:seq_limit]
+    if args.limit and args.limit > 0 : # Check if args.limit is set and positive
+        if len(transitions_to_paint_df) > args.limit:
+            transitions_to_paint_df = transitions_to_paint_df.iloc[:args.limit]
+            print(f"  After applying --limit {args.limit}: {len(transitions_to_paint_df)} transitions")
+        else:
+            print(f"  Number of transitions ({len(transitions_to_paint_df)}) is already within --limit {args.limit}.")
 
-    transitions_to_paint_df["date"] = pd.to_datetime(start_date) + transitions_to_paint_df["tick"].map(pd.offsets.Day)
+    if not transitions_to_paint_df.empty:
+        transitions_to_paint_df["date"] = pd.to_datetime(start_date) + transitions_to_paint_df["tick"].map(pd.offsets.Day)
+    elif not current_sequences: # No seeds initialized AND no transitions from other sources
+        print("  No seed sequences initialized and no transitions to process. Exiting.")
+        seq_file.close()
+        metadata_file.close()
+        print("Done generating sequences (no work performed).")
+        return
+    else: # Seeds might be initialized, but no subsequent transitions in the filtered range
+        print("  No transitions to process after filtering (seeds may have been initialized).")
+        # The script might still write out the initial seed sequences if any were processed
+        # Or it might just end if the loop below doesn't run.
+        # Decide if you want to write just seeds if no transmissions. For now, it will proceed.
     
     thresh_np = np.array(thresh) # Convert list to numpy array for determine_change
 
-    # This assumes current_sequences is not empty. If it could be, add a check.
-    if not current_sequences:
-        if not transitions_to_paint_df.empty:
-             print("Warning: No seed sequences available, but there are transmission events. This might lead to errors.")
-        # If truly no sequences to start with and no seeds, cannot proceed if there are transmissions.
-        # This case should ideally be caught by earlier logic (e.g., seed FASTA empty).
-        example_sequence_length = prob_matrix.shape[1] # Fallback if no sequences
-    else:
-        example_sequence_length = len(next(iter(current_sequences.values())))
+    # prob_matrix is loaded by load_thresholds_and_dfs and should always be available here.
+    # If prob_matrix loading failed, the script would have exited earlier.
+    if prob_matrix.size == 0: # Should not happen if load_thresholds_and_dfs succeeded
+        print("Error: prob_matrix is empty. Cannot determine sequence length. Exiting.")
+        # Close files if open
+        if 'seq_file' in locals() and not seq_file.closed: seq_file.close()
+        if 'metadata_file' in locals() and not metadata_file.closed: metadata_file.close()
+        sys.exit(1)
+        
+    example_sequence_length = prob_matrix.shape[1]
+    print(f"  Using sequence length from prob_matrix: {example_sequence_length}")
+
+    # Optional: Sanity check if seeds exist and match this length
+    if current_sequences:
+        first_seed_seq_len = len(next(iter(current_sequences.values())))
+        if first_seed_seq_len != example_sequence_length:
+            print(f"  Warning: Seed sequence length ({first_seed_seq_len}) does not match "
+                  f"prob_matrix length ({example_sequence_length}). Proceeding with prob_matrix length.")
+            # Potentially raise an error here if this is considered a critical mismatch:
+            # sys.exit("Critical error: Seed sequence length and prob_matrix length mismatch.")
 
 
     if not args.proportional:
