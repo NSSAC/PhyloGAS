@@ -92,7 +92,7 @@ def getClas():
     parser.add_argument("--proportional", default=True, action="store_true", dest="proportional", required=False, help="use proportional letter choices")
     parser.add_argument("--neutral", default=False, action="store_false", dest="proportional", required=False, help="use neutral letter choices")
     parser.add_argument("--poor", default=False, action="store_true", dest="poor", required=False, help="use poor mutational model")
-    parser.add_argument("--limit", default=16521, type=int, dest="limit", required=False, help="maximum number of items to process")
+    parser.add_argument("--limit", default=None, type=int, dest="limit", required=False, help="maximum number of items to process")
     tick_group = parser.add_mutually_exclusive_group(required=False)
     tick_group.add_argument("--end_tick", type=int, dest="end_tick",
                             help="End tick for processing the input_graph_csv. Mutually exclusive with --num_ticks.")
