@@ -566,15 +566,18 @@ def generate_sequences(args):
         sys.exit(1)
 
     temp_seed_seqs = {}
-    if N <= M :
-        for i, pid_val in enumerate(seed_pids):
+    seed_seq_dict = {}
+    if N <= M:
+        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
             temp_seed_seqs[pid_val] = np.array(list(align_seed_records[i].seq))
-    else: # set temp_seed_seqs to first N sequences
-        for i, pid_val in enumerate(seed_pids):
+            seed_seq_dict[f"{pid_val}.{tick}"] = align_seed_records[i]
+    else:  # set temp_seed_seqs to first N sequences
+        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
             if i < M:
                 temp_seed_seqs[pid_val] = np.array(list(align_seed_records[i].seq))
+                seed_seq_dict[f"{pid_val}.{tick}"] = align_seed_records[i]
             else:
-                break
+                break  
     #else: # N > M, cycle through align_seed_records
     #    align_str_list = [np.array(list(r.seq)) for r in align_seed_records]
     #    cycled_seqs = list(islice(cycle(align_str_list), N))
@@ -584,10 +587,10 @@ def generate_sequences(args):
     current_sequences.update(temp_seed_seqs)
 
 
-    # Work on on remaining transitions
-    transitions_to_paint_df = transitions_to_paint[~seed_transitions_mask][ # Renamed
-        ["pid", "contact_pid", "tick"] # Removed exit_state as it's already filtered
-    ]
+    # uncomment to keep seed sequences out
+    #ransitions_to_paint_df = transitions_to_paint[~seed_transitions_mask][ # Renamed
+    #    ["pid", "contact_pid", "tick"] # Removed exit_state as it's already filtered
+    #]
 
  # --- START: TICK-BASED FILTERING ---
     print(f"  Initial number of transitions to paint: {len(transitions_to_paint_df)}")
@@ -704,17 +707,27 @@ def generate_sequences(args):
         ["pid", "contact_pid", "date", "tick"] 
     ].itertuples():
         loop_counter += 1
+        infection_id=f"{pid}.{tick}"
+        cur_strain_id=f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_obj.year}"
+
         if loop_counter % 1000 == 0:
             print(f"    Processed {loop_counter} graph edges; Decorated {infection_counter} infections.")
-            
-        if contact_pid not in current_sequences:
-            print(f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}.")
-            # Optionally, assign a default/random sequence or skip adding this pid to fasta
-            continue 
-            
-        seq_to_change_arr = current_sequences[contact_pid] # This is a NumPy array of chars
 
-        if use_poor_mut_model: # This overrides other mutation models
+        #check infection_id if seed sequence
+        seed_fasta = seed_seq_dict.get(infection_id, None)
+            
+        if seed_fasta == None:
+            if contact_pid not in current_sequences:
+                print(f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}.")
+                # Optionally, assign a default/random sequence or skip adding this pid to fasta
+                continue 
+                
+            seq_to_change_arr = current_sequences[contact_pid] # This is a NumPy array of chars
+
+        if seed_fasta is not None: #seed sequence doesn't change
+            new_seq_arr = np.array(list(seed_fasta.seq))
+            cur_strain_id = seed_fasta.id
+        elif use_poor_mut_model: # This overrides other mutation models
             new_seq_str = poor_mut_model(seq_to_change_arr) # poor_mut_model expects array, returns string
             new_seq_arr = np.array(list(new_seq_str))
         elif args.rate_limit:
@@ -786,7 +799,6 @@ def generate_sequences(args):
         new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
 
         infection = InfectionRecord()
-        cur_strain_id=f"{country}/{divisionAbbr}-EHip-{pid}.{tick}/{date_obj.year}"
         infection.fromEpihiper(
             "ncov",
             region, country, division, division, # Assuming divisionExposure is same as division
