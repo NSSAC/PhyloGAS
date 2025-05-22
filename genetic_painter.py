@@ -591,7 +591,7 @@ def generate_sequences(args):
     #transitions_to_paint_df = transitions_to_paint[~seed_transitions_mask][ # Renamed
     #    ["pid", "contact_pid", "tick"] # Removed exit_state as it's already filtered
     #]
-    transitions_to_paint_df = transitions_to_paint["pid", "contact_pid", "tick"]
+    transitions_to_paint_df = transitions_to_paint[["pid", "contact_pid", "tick"]]
 
  # --- START: TICK-BASED FILTERING ---
     print(f"  Initial number of transitions to paint: {len(transitions_to_paint_df)}")
