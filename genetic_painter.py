@@ -717,7 +717,7 @@ def generate_sequences(args):
         #check infection_id if seed sequence
         seed_fasta = seed_seq_dict.get(infection_id, None)
             
-        if seed_fasta == None:
+        if seed_fasta is None:
             if contact_pid not in current_sequences:
                 print(f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}.")
                 # Optionally, assign a default/random sequence or skip adding this pid to fasta
