@@ -477,6 +477,8 @@ def generate_sequences(args):
         metadata_file = open(metadata_file_to_write, 'w')
 
     line_keys=["virus","region","country","division","divisionExposure","date","strain"]
+    custom_sim_keys = ["sim_pid", "sim_tick"]
+    line_keys += custom_sim_keys
     meta_line = "\t".join(line_keys)
 
     if augment_metadata:
@@ -791,6 +793,7 @@ def generate_sequences(args):
             date_obj.strftime("%Y-%m-%d"),
             cur_strain_id
         )
+        infection.populate_sim_details(pid, tick)
 
         aug_metadata_dict_current = {} # Initialize for current infection
         if augment_metadata:
@@ -963,8 +966,12 @@ class InfectionRecord:
             "nextcladePangoLineage": None, "nextstrainClade": None,
             "originatingLab": None, "pangoLineage": None, "region": None,
             "regionExposure": None, "samplingStrategy": None, "sex": None,
-            "sraAccession": None, "strainold": None, "submittingLab": None, "year": None
+            "sraAccession": None, "strainold": None, "submittingLab": None, "year": None,
+            "sim_pid": None, "sim_tick": None 
         }
+    def populate_sim_details(self, sim_pid, sim_tick):
+        self.inf_dict["sim_pid"] = sim_pid
+        self.inf_dict["sim_tick"] = sim_tick
 
     def get(self,key,default=None):
         # Ensure that if default is None, we actually return None string if not present,
