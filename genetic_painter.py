@@ -519,7 +519,7 @@ def generate_sequences(args):
         region_ref=ref_location_dict['region']
         date_ref=ref_location_dict['date']
         #f"{division_ref}-{divisionAbbr_ref}-1/{date_ref.split('-')[0]}""
-        infection.fromEpihiper("ncov", region_ref, country_ref, division_ref, division_ref, date_ref, align_ref.id)
+        infection.fromEpihiper("ncov", region_ref, country_ref, division_ref, division_ref, date_ref, align_ref[0].id)
 
         aug_metadata_dict_ref = {} # Initialize for reference
         if augment_metadata:
