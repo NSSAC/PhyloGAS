@@ -68,8 +68,8 @@ def filter_fasta_by_metadata(metadata_df, fasta_path, output_path):
     output_path (str): The path to the output filtered FASTA file.
     """
     ids_to_keep = set(metadata_df['strain'])
-    with open(output_path, 'w') as output_handle:
-        for record in AlignIO.read(fasta_path, "fasta"):
+    with open(output_path, 'w') as output_handle, lzma.open(fasta_path, "rt") as fasta_handle:
+        for record in AlignIO.read(fasta_handle, "fasta"):
             if record.id in ids_to_keep:
                 AlignIO.write(record, output_handle, "fasta")
 
@@ -103,7 +103,7 @@ def main():
         parser.print_help()
         parser.exit()
     
-    metadata_df = read_metadata(args.file_path)
+    metadata_df = read_metadata(args.metadata_path)
     sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, args.time_range_days)
     
    
