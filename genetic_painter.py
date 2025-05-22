@@ -516,7 +516,8 @@ def generate_sequences(args):
         divisionAbbr_ref=ref_location_dict['divisionAbbr']
         region_ref=ref_location_dict['region']
         date_ref=ref_location_dict['date']
-        infection.fromEpihiper("ncov", region_ref, country_ref, division_ref, division_ref, date_ref, f"{division_ref}-{divisionAbbr_ref}-1/{date_ref.split('-')[0]}")
+        #f"{division_ref}-{divisionAbbr_ref}-1/{date_ref.split('-')[0]}""
+        infection.fromEpihiper("ncov", region_ref, country_ref, division_ref, division_ref, date_ref, align_ref.id)
 
         aug_metadata_dict_ref = {} # Initialize for reference
         if augment_metadata:
@@ -536,7 +537,7 @@ def generate_sequences(args):
     region = location_dict["region"]
 
     loop_counter=0
-    strain_id = 0 # Moved initialization here
+    infection_counter = 0 # Moved initialization here
 
     paint_this = (lambda state: state == args.input_graph_painted_state)
     if args.input_graph_painted_prefix:
@@ -697,12 +698,12 @@ def generate_sequences(args):
     max_burst_size = 1000
 
 
-    for _, pid, contact_pid, date_obj in transitions_to_paint_df[ # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date"] 
+    for _, pid, contact_pid, date_obj, tick in transitions_to_paint_df[ # Use date_obj to avoid name clash
+        ["pid", "contact_pid", "date", "tick"] 
     ].itertuples():
         loop_counter += 1
         if loop_counter % 1000 == 0:
-            print(f"    Processed {loop_counter} graph edges; Decorated {strain_id} infections.")
+            print(f"    Processed {loop_counter} graph edges; Decorated {infection_counter} infections.")
             
         if contact_pid not in current_sequences:
             print(f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}.")
@@ -783,11 +784,12 @@ def generate_sequences(args):
         new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
 
         infection = InfectionRecord()
+        cur_strain_id=f"{country}/{divisionAbbr}-EHip-{pid}.{tick}/{date_obj.year}"
         infection.fromEpihiper(
             "ncov",
             region, country, division, division, # Assuming divisionExposure is same as division
             date_obj.strftime("%Y-%m-%d"),
-            f"{country}/{divisionAbbr}-EHip-{strain_id}/{date_obj.year}",
+            cur_strain_id
         )
 
         aug_metadata_dict_current = {} # Initialize for current infection
@@ -808,7 +810,7 @@ def generate_sequences(args):
             aug_metadata_columns=standardized_aug_cols if augment_metadata else None, # Pass standardized
             aug_metadata_dict=aug_metadata_dict_current if augment_metadata else None
         )
-        strain_id += 1
+        infection_counter += 1
 
     seq_file.close()
     metadata_file.close()
