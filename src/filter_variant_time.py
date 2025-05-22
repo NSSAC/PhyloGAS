@@ -87,16 +87,20 @@ def create_reductions(df: pd.DataFrame, output_base: str, num_reductions: int, t
     abbr_state = us.states.lookup(target_state).abbr
     print(f"Original number of {target_state} rows: {target_mask.sum()}")
     
-    for i in range(1, num_reductions + 1):
+    for i in range(0, num_reductions + 1):
         reduction_factor = 2 ** i
         
-        # Apply reduction only to rows matching the target state
-        reduced_target_df = df[target_mask].iloc[::reduction_factor, :]
-        # Print the number of rows after reduction
-        print(f"Reduction {reduction_factor}: {reduced_target_df.shape[0]} rows")
-        
-        # Combine reduced target rows with the rest of the rows
-        combined_df = pd.concat([reduced_target_df, df[~target_mask]])
+        if reduction_factor == 0:#code for no in-state samples
+            combined_df = df[~target_mask]
+            reduction_factor ="complete"
+        else:
+            # Apply reduction only to rows matching the target state
+            reduced_target_df = df[target_mask].iloc[::reduction_factor, :]
+            # Print the number of rows after reduction
+            print(f"Reduction {reduction_factor}: {reduced_target_df.shape[0]} rows")
+            
+            # Combine reduced target rows with the rest of the rows
+            combined_df = pd.concat([reduced_target_df, df[~target_mask]])
         
         if mode == "metadata":
         # Save the combined DataFrame to a file
