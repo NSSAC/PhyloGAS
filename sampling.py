@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import argparse
+import lzma
 from Bio import AlignIO
 
 
