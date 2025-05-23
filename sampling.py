@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 import lzma
 from Bio import AlignIO
+from Bio import SeqIO # Use SeqIO for FASTA parsing/writing of individual records
 
 
 
