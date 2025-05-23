@@ -38,8 +38,20 @@ def sample_metadata_uniform(metadata_df, num_samples, time_range_days=7):
     
     return sampled_metadata
 
+def sample_metadata_true_uniform_records(metadata_df, num_samples_target):
+    """
+    Samples num_samples_target records uniformly at random from the entire metadata_df.
+    Ensures sampling without replacement if num_samples_target <= len(metadata_df).
+    """
+    if num_samples_target <= 0:
+        return pd.DataFrame()
+    if num_samples_target > len(metadata_df):
+        print(f"Warning: Requested {num_samples_target} samples, but only {len(metadata_df)} records available. Returning all records.")
+        return metadata_df.copy() # Or .sample(n=len(metadata_df), replace=False)
+    
+    return metadata_df.sample(n=num_samples_target, replace=False)
 
-def sample_metadata(metadata_df, strategy, num_samples, time_range_days=7):
+def sample_metadata(metadata_df, strategy, num_samples, time_range_days=7, time_bin_days_stratified=7):
     """
     Samples metadata using the specified strategy.
     
@@ -52,8 +64,12 @@ def sample_metadata(metadata_df, strategy, num_samples, time_range_days=7):
     Returns:
     pd.DataFrame: The sampled metadata DataFrame.
     """
-    if strategy == 'uniform':
-        return sample_metadata_uniform(metadata_df, num_samples, time_range_days)
+    if strategy == 'uniform_window': # Original interpretation
+        return sample_metadata_uniform_v2(metadata_df, num_samples, time_range_days)
+    elif strategy == 'uniform_record': # Simple random sample of records
+        return sample_metadata_true_uniform_records(metadata_df, num_samples)
+    elif strategy == 'stratified_temporal': # Samples spread over time bins
+        return sample_metadata_stratified_temporal(metadata_df, num_samples, time_bin_days_stratified)
     else:
         raise ValueError(f"Unknown sampling strategy: {strategy}")
     
@@ -93,7 +109,7 @@ def main():
     parser.add_argument('--metadata_path', required=True, type=str, help='The path to the metadata TSV file.')
     parser.add_argument('--num_samples', type=int, default=500, help='The number of samples to draw per time window.')
     parser.add_argument('--time_range_days', type=int, default=7, help='The time range in days for sampling.')
-    parser.add_argument('--strategy', type=str, default='uniform', help='The sampling strategy to use.')
+    parser.add_argument('--strategy', type=str, default='uniform_record', help='The sampling strategy to use.')
     parser.add_argument('--fasta_path', required=True, type=str, help='The path to the input FASTA file.')
     parser.add_argument('--output_path', required= True, type=str, help='The path to the output directory.')
     
@@ -104,8 +120,10 @@ def main():
         parser.exit()
     
     metadata_df = read_metadata(args.metadata_path)
-    sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, args.time_range_days)
-    
+    #sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, args.time_range_days)
+    sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, 
+                                    args.time_range_days, 
+                                    args.time_bin_days if hasattr(args, 'time_bin_days') else 7)
    
 
     args = parser.parse_args()
