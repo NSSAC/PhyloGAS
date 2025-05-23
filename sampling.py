@@ -80,14 +80,38 @@ def filter_fasta_by_metadata(metadata_df, fasta_path, output_path):
     
     Parameters:
     metadata_df (pd.DataFrame): The metadata DataFrame containing the IDs to filter by.
-    fasta_path (str): The path to the input FASTA file.
-    output_path (str): The path to the output filtered FASTA file.
+    fasta_path (str): The path to the input FASTA file (can be .xz compressed).
+    output_path (str): The path to the output filtered FASTA file (will be plain text).
     """
     ids_to_keep = set(metadata_df['strain'])
-    with open(output_path, 'w') as output_handle, lzma.open(fasta_path, "rt") as fasta_handle:
-        for record in AlignIO.read(fasta_handle, "fasta"):
-            if record.id in ids_to_keep:
-                AlignIO.write(record, output_handle, "fasta")
+    sequences_to_write = []
+
+    # Handle compressed input FASTA
+    if fasta_path.endswith(".xz"):
+        with lzma.open(fasta_path, "rt") as fasta_handle: # "rt" for read text
+            for record in SeqIO.parse(fasta_handle, "fasta"):
+                if record.id in ids_to_keep:
+                    sequences_to_write.append(record)
+    elif fasta_path.endswith(".gz"): # Add .gz support just in case
+        with gzip.open(fasta_path, "rt") as fasta_handle:
+            for record in SeqIO.parse(fasta_handle, "fasta"):
+                if record.id in ids_to_keep:
+                    sequences_to_write.append(record)
+    else: # Plain FASTA
+        with open(fasta_path, "rt") as fasta_handle:
+            for record in SeqIO.parse(fasta_handle, "fasta"):
+                if record.id in ids_to_keep:
+                    sequences_to_write.append(record)
+    
+    # Write the collected sequences to the output file
+    # Output will be plain FASTA. If you want it compressed, open output_handle accordingly.
+    with open(output_path, 'w') as output_handle:
+        if sequences_to_write: # Check if there's anything to write
+            SeqIO.write(sequences_to_write, output_handle, "fasta")
+        else:
+            print(f"Warning: No sequences found in {fasta_path} matching IDs in the sampled metadata.")
+
+    print(f"Filtered FASTA saved to {output_path}, containing {len(sequences_to_write)} sequences.")
 
 # Example usage:
 # metadata_df = read_metadata('path_to_metadata.csv')
@@ -126,7 +150,6 @@ def main():
                                     args.time_bin_days if hasattr(args, 'time_bin_days') else 7)
    
 
-    args = parser.parse_args()
     
     metadata_df = read_metadata(args.metadata_path)
     sampled_metadata = sample_metadata(metadata_df, args.strategy, args.num_samples, args.time_range_days)
