@@ -639,7 +639,12 @@ def generate_sequences(args):
             print(f"  Number of transitions ({len(transitions_to_paint_df)}) is already within --limit {args.limit}.")
 
     if not transitions_to_paint_df.empty:
-        transitions_to_paint_df["date"] = pd.to_datetime(start_date) + transitions_to_paint_df["tick"].map(pd.offsets.Day)
+        #transitions_to_paint_df["date"] = pd.to_datetime(start_date) + transitions_to_paint_df["tick"].map(pd.offsets.Day)
+        #the start_tick works in conjunction with the start_date. whatever the start_tick is it will be assigned to the start_date
+        base_date_for_conversion = pd.to_datetime(args.start_date)
+        transitions_to_paint_df["date"] = transitions_to_paint_df["tick"].apply(
+            lambda x: base_date_for_conversion + pd.Timedelta(days=(x - args.start_tick))
+        )
     elif not current_sequences: # No seeds initialized AND no transitions from other sources
         print("  No seed sequences initialized and no transitions to process. Exiting.")
         seq_file.close()
