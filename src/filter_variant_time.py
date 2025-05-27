@@ -7,37 +7,37 @@ import os
 import subprocess
 from pathlib import Path
 import requests
+from typing import Optional, Dict, List # Added for type hinting
 
 # --- Attempt to import functions from seed_seq_prep.py ---
 # Define placeholders for functions and flags
-make_variant_base_map = None
-detect_outliers_iqr = None
-detect_outliers_zscore = None
-detect_outliers_chaining = None
-SSP_PANGO_ALIASOR_AVAILABLE = False  # Flag for pango_aliasor availability via seed_seq_prep
-SEED_SEQ_PREP_IMPORTS_SUCCESSFUL = False
+make_variant_base_map_imported_func: Optional[callable] = None
+detect_outliers_iqr_imported_func: Optional[callable] = None
+detect_outliers_zscore_imported_func: Optional[callable] = None
+detect_outliers_chaining_imported_func: Optional[callable] = None
+SSP_PANGO_ALIASOR_AVAILABLE_FLAG: bool = False
+SEED_SEQ_PREP_IMPORTS_SUCCESSFUL_FLAG: bool = False
 
 try:
     from seed_seq_prep import (
-        make_variant_base_map as ssp_make_variant_base_map_imported,
-        detect_outliers_iqr as ssp_detect_outliers_iqr_imported,
-        detect_outliers_zscore as ssp_detect_outliers_zscore_imported,
-        detect_outliers_chaining as ssp_detect_outliers_chaining_imported,
-        PANGO_ALIASOR_AVAILABLE as ssp_pango_available_flag
+        make_variant_base_map as ssp_make_variant_base_map,
+        detect_outliers_iqr as ssp_detect_outliers_iqr,
+        detect_outliers_zscore as ssp_detect_outliers_zscore,
+        detect_outliers_chaining as ssp_detect_outliers_chaining,
+        PANGO_ALIASOR_AVAILABLE as ssp_pango_available
     )
     # Assign imported functions to module-level names
-    make_variant_base_map = ssp_make_variant_base_map_imported
-    detect_outliers_iqr = ssp_detect_outliers_iqr_imported
-    detect_outliers_zscore = ssp_detect_outliers_zscore_imported
-    detect_outliers_chaining = ssp_detect_outliers_chaining_imported
-    SSP_PANGO_ALIASOR_AVAILABLE = ssp_pango_available_flag
-    SEED_SEQ_PREP_IMPORTS_SUCCESSFUL = True
+    make_variant_base_map_imported_func = ssp_make_variant_base_map
+    detect_outliers_iqr_imported_func = ssp_detect_outliers_iqr
+    detect_outliers_zscore_imported_func = ssp_detect_outliers_zscore
+    detect_outliers_chaining_imported_func = ssp_detect_outliers_chaining
+    SSP_PANGO_ALIASOR_AVAILABLE_FLAG = ssp_pango_available
+    SEED_SEQ_PREP_IMPORTS_SUCCESSFUL_FLAG = True
     print("Successfully imported helper functions from seed_seq_prep.py")
 except ImportError as e:
     print(f"ERROR: Could not import required components from seed_seq_prep.py: {e}")
     print("Ensure seed_seq_prep.py is in the same directory or accessible via PYTHONPATH,")
     print("and that its dependencies (like pango_aliasor) are installed.")
-    # Functions remain None, SSP_PANGO_ALIASOR_AVAILABLE remains False
 
 # --- Constants ---
 DEFAULT_METADATA_URL = "https://hgdownload.soe.ucsc.edu/goldenPath/wuhCor1/UShER_SARS-CoV-2/public-latest.metadata.tsv.gz"
@@ -81,8 +81,8 @@ def id_to_state(strain: str, country: str) -> str:
                 if state is not None:
                     return state.name
         except IndexError:
-            pass # Strain format might be unexpected
-        except Exception: # Catch other potential errors from us.states.lookup
+            pass
+        except Exception:
             pass
     return ""
 
@@ -106,10 +106,9 @@ def process_tsv(input_file: Path,
         print(f"Error: 'pango_lineage_usher' column not found in {input_file}. This column is required for Pango regularization.")
         return None
 
-    # Pango Lineage Regularization (uses imported function)
     try:
-        replace_map = make_variant_base_map([pango_lineage]) # type: ignore
-    except Exception as e: # Catch potential errors from make_variant_base_map if pango_aliasor fails
+        replace_map = make_variant_base_map_imported_func([pango_lineage]) # type: ignore
+    except Exception as e:
         print(f"Error during Pango lineage regularization: {e}")
         return None
 
@@ -128,11 +127,11 @@ def process_tsv(input_file: Path,
     if valid_dates_for_outlier.empty:
         print("No valid dates to perform outlier detection on.")
     elif outlier_method == 'iqr':
-        outliers_mask = detect_outliers_iqr(valid_dates_for_outlier, factor=iqr_factor) # type: ignore
+        outliers_mask = detect_outliers_iqr_imported_func(valid_dates_for_outlier, factor=iqr_factor) # type: ignore
     elif outlier_method == 'zscore':
-        outliers_mask = detect_outliers_zscore(valid_dates_for_outlier, threshold=zscore_threshold) # type: ignore
+        outliers_mask = detect_outliers_zscore_imported_func(valid_dates_for_outlier, threshold=zscore_threshold) # type: ignore
     elif outlier_method == 'chaining':
-        outliers_mask = detect_outliers_chaining(valid_dates_for_outlier, max_gap_weeks=chaining_max_gap_weeks) # type: ignore
+        outliers_mask = detect_outliers_chaining_imported_func(valid_dates_for_outlier, max_gap_weeks=chaining_max_gap_weeks) # type: ignore
     
     if outliers_mask.any():
         num_outliers = outliers_mask.sum()
@@ -167,23 +166,21 @@ def process_tsv(input_file: Path,
 def create_reductions(df: pd.DataFrame,
                       output_path: Path,
                       base_name_prefix: str,
-                      num_reduction_steps: int, # Renamed from num_reductions for clarity
+                      num_reduction_steps: int,
                       target_state: str,
                       input_mat_path: Path,
                       ablate: bool) -> Optional[Path]:
-    """
-    Create reductions of the table, save metadata TSVs, and run matUtils extract.
-    Returns the path to the "complete" reduction .pb file if created.
-    """
     complete_pb_file_path = None
     if 'region' not in df.columns:
         print("Warning: 'region' column not present. Creating it for USA samples.")
-        df['region'] = df.apply(lambda x: id_to_state(x['strain'], x['country']), axis=1)
+        df['region'] = df.apply(lambda x: id_to_state(x['strain'], x['country'] if 'country' in x and pd.notna(x['country']) else ""), axis=1)
 
-    target_pango = df['regularized'].iloc[0] if not df.empty and 'regularized' in df.columns and not df['regularized'].empty else None
+    target_pango_series = df['regularized'] if 'regularized' in df.columns else pd.Series(dtype=str)
+    target_pango = target_pango_series.iloc[0] if not target_pango_series.empty else None
+
     if target_pango is None:
-        print("Warning: Could not determine target Pango lineage from 'regularized' column for precise masking.")
-        target_mask = (df['region'] == target_state) # Less precise mask
+        print("Warning: Could not determine target Pango lineage from 'regularized' column for precise masking during reduction.")
+        target_mask = (df['region'] == target_state)
     else:
         target_mask = (df['region'] == target_state) & (df['regularized'] == target_pango)
     
@@ -210,7 +207,7 @@ def create_reductions(df: pd.DataFrame,
         if reduction_factor_val == "complete":
             reduced_df = current_df_for_reduction[~target_mask]
             num_removed = target_mask.sum()
-        else: # Numerical reduction factor
+        else: 
             target_state_samples = current_df_for_reduction[target_mask]
             other_samples = current_df_for_reduction[~target_mask]
             
@@ -246,7 +243,7 @@ def create_reductions(df: pd.DataFrame,
             "matUtils", "extract",
             "--input-mat", str(input_mat_path.resolve()),
             "--output-directory", str(output_path.resolve()),
-            "--write-mat", output_mat_name, # This is just the basename
+            "--write-mat", output_mat_name,
             "--samples", str(ids_file.resolve())
         ]
         
@@ -265,40 +262,30 @@ def create_reductions(df: pd.DataFrame,
             print(f"  Return code: {e.returncode}\n  STDOUT:\n{e.stdout}\n  STDERR:\n{e.stderr}")
         except FileNotFoundError:
             print("Error: matUtils command not found. Please ensure it is installed and in your PATH.")
-            return None # Stop if matUtils is not found
+            return None
     return complete_pb_file_path
 
 
 def align_simulated_df(sim_df: pd.DataFrame) -> pd.DataFrame:
     aligned_df = pd.DataFrame()
-    # Map simulated_tsv columns to target_tsv columns
-    # This is a basic mapping, can be made more sophisticated
     sim_to_target_map = {
-        'strain': 'strain',
-        'date': 'date',
-        'country': 'country',
-        'region': 'region', # if 'division' is state name in sim_df
-        'pangolin_lineage': 'pangolin_lineage', # Will also be used for pango_lineage_usher if not present
-        # Add other direct mappings if they exist
+        'strain': 'strain', 'date': 'date', 'country': 'country',
+        'region': 'region', 'pangolin_lineage': 'pangolin_lineage',
     }
-    
-    # First, create columns based on direct mapping
     for sim_col, target_col in sim_to_target_map.items():
         if sim_col in sim_df.columns:
             aligned_df[target_col] = sim_df[sim_col]
 
-    # Ensure all TARGET_METADATA_COLUMNS exist in aligned_df
     for col in TARGET_METADATA_COLUMNS:
         if col not in aligned_df.columns:
-            # Special handling for pango_lineage_usher if not directly mapped
             if col == 'pango_lineage_usher' and 'pangolin_lineage' in aligned_df.columns:
                 aligned_df[col] = aligned_df['pangolin_lineage']
             else:
-                aligned_df[col] = np.nan # Default to NaN
+                aligned_df[col] = np.nan
     
     if 'date' in aligned_df.columns:
         aligned_df['date'] = pd.to_datetime(aligned_df['date'], errors='coerce')
-    return aligned_df[TARGET_METADATA_COLUMNS] # Ensure correct order and selection
+    return aligned_df[TARGET_METADATA_COLUMNS]
 
 
 def run_simulation_placement(sim_fasta_path: Path, 
@@ -307,9 +294,7 @@ def run_simulation_placement(sim_fasta_path: Path,
                              base_name_prefix_for_sim: str,
                              abbr_state_for_sim: str):
     print("\n--- Running simulation placement steps ---")
-    
-    # Command 1: faToVcf
-    sim_fasta_stem = sim_fasta_path.stem
+    sim_fasta_stem = sim_fasta_path.stem.replace('.ref', '') # Remove .ref if present from example
     output_vcf_filename = f"{sim_fasta_stem}.vcf"
     output_vcf_path = output_folder / output_vcf_filename
     
@@ -327,17 +312,11 @@ def run_simulation_placement(sim_fasta_path: Path,
         print("Error: faToVcf command not found. Please ensure it is installed and in your PATH.")
         return
 
-    # Command 2: usher
-    # Construct a descriptive output name for the usher output
     usher_output_pb_filename = f"{base_name_prefix_for_sim}_{abbr_state_for_sim}_simulated_{sim_fasta_stem}.pb"
     usher_output_pb_path = output_folder / usher_output_pb_filename
-    
     usher_cmd = [
-        "usher",
-        "-i", str(complete_pb_path.resolve()),
-        "-v", str(output_vcf_path.resolve()),
-        "-o", str(usher_output_pb_path.resolve()),
-        "-T", "30" # Number of threads
+        "usher", "-i", str(complete_pb_path.resolve()), "-v", str(output_vcf_path.resolve()),
+        "-o", str(usher_output_pb_path.resolve()), "-T", "30"
     ]
     print(f"Running usher for simulation placement:\n  Command: {' '.join(usher_cmd)}")
     try:
@@ -371,10 +350,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if not SEED_SEQ_PREP_IMPORTS_SUCCESSFUL:
+    if not SEED_SEQ_PREP_IMPORTS_SUCCESSFUL_FLAG:
         print("Exiting due to failure in importing critical components from seed_seq_prep.py.")
         exit(1)
-    if not SSP_PANGO_ALIASOR_AVAILABLE: # Check the flag imported from seed_seq_prep
+    if not SSP_PANGO_ALIASOR_AVAILABLE_FLAG:
         print("Pango_aliasor library is not available (as per seed_seq_prep.py). Regularization will fail. Exiting.")
         exit(1)
 
@@ -405,48 +384,96 @@ if __name__ == "__main__":
         print("Error: Could not obtain input MAT file. Exiting.")
         exit(1)
 
-    filtered_df = process_tsv(metadata_file_path,
+    filtered_df_main = process_tsv(metadata_file_path,
                               args.pango_lineage,
                               args.outlier_method,
                               args.chaining_max_gap_weeks,
                               args.iqr_factor,
                               args.zscore_threshold)
 
-    if filtered_df is None or filtered_df.empty:
-        print("No data after initial processing and filtering. Exiting.")
+    if filtered_df_main is None or filtered_df_main.empty:
+        print("No data after initial processing of main metadata. Exiting.")
         exit(0)
 
-    print("Mapping strain IDs to states for USA entries...")
-    filtered_df['region'] = filtered_df.apply(lambda x: id_to_state(x['strain'], x['country'] if 'country' in x and pd.notna(x['country']) else ""), axis=1)
+    print("Mapping strain IDs to states for USA entries in main metadata...")
+    filtered_df_main['region'] = filtered_df_main.apply(
+        lambda x: id_to_state(x['strain'], x['country'] if 'country' in x and pd.notna(x['country']) else ""), axis=1
+    )
     
+    # This will be the DataFrame used for reductions and final outputs
+    final_combined_df = filtered_df_main.copy() 
+    sim_data_processed_flag = False
+
     if args.simulated_tsv:
         sim_tsv_path = Path(args.simulated_tsv)
         if sim_tsv_path.exists():
             print(f"Loading simulated data from: {sim_tsv_path}")
             try:
-                sim_df = pd.read_csv(sim_tsv_path, sep='\t', low_memory=False)
-                # Add 'region' to sim_df if 'division' exists and country is USA (example)
-                if 'division' in sim_df.columns and 'country' in sim_df.columns:
-                     sim_df['region'] = sim_df.apply(lambda x: x['division'] if x['country'] == 'USA' else '', axis=1)
+                sim_df_raw = pd.read_csv(sim_tsv_path, sep='\t', low_memory=False)
+                # Pre-process sim_df for 'region' if applicable
+                if 'division' in sim_df_raw.columns and 'country' in sim_df_raw.columns:
+                     sim_df_raw['region'] = sim_df_raw.apply(lambda x: x['division'] if x['country'] == 'USA' else (x['region'] if 'region' in x else ''), axis=1)
+                elif 'region' not in sim_df_raw.columns and 'division' in sim_df_raw.columns: # If no country but division might be region
+                     sim_df_raw['region'] = sim_df_raw['division']
 
-                aligned_sim_df = align_simulated_df(sim_df)
+
+                aligned_sim_df = align_simulated_df(sim_df_raw)
                 
-                if 'date' in filtered_df.columns: filtered_df['date'] = pd.to_datetime(filtered_df['date'], errors='coerce')
+                # Ensure date columns are datetime before concat
+                if 'date' in final_combined_df.columns: final_combined_df['date'] = pd.to_datetime(final_combined_df['date'], errors='coerce')
                 if 'date' in aligned_sim_df.columns: aligned_sim_df['date'] = pd.to_datetime(aligned_sim_df['date'], errors='coerce')
                 
-                if 'regularized' not in aligned_sim_df.columns and 'regularized' in filtered_df.columns:
-                    aligned_sim_df['regularized'] = np.nan
+                if 'regularized' not in aligned_sim_df.columns and 'regularized' in final_combined_df.columns:
+                    aligned_sim_df['regularized'] = np.nan # Or attempt to regularize if 'pango_lineage_usher' exists in sim
 
-                filtered_df = pd.concat([filtered_df, aligned_sim_df], ignore_index=True)
-                filtered_df.sort_values(by='date', inplace=True)
-                print(f"Concatenated simulated data. Total rows now: {len(filtered_df)}")
+                final_combined_df = pd.concat([final_combined_df, aligned_sim_df], ignore_index=True)
+                final_combined_df.sort_values(by='date', inplace=True)
+                print(f"Concatenated simulated data. Total rows now: {len(final_combined_df)}")
+                sim_data_processed_flag = True
             except Exception as e:
                 print(f"Error processing simulated TSV {sim_tsv_path}: {e}")
         else:
             print(f"Warning: Simulated TSV file not found: {sim_tsv_path}")
 
+        # --- Generate sample_dates_us.tsv and sample_regions_us.tsv ---
+        # These files are generated based on the state of final_combined_df *after* sim data is added
+        if sim_data_processed_flag and not final_combined_df.empty:
+            print("Generating sample_dates_us.tsv and sample_regions_us.tsv...")
+            
+            # Filter for USA samples for these specific outputs
+            us_samples_df = final_combined_df[
+                final_combined_df['country'].astype(str).str.upper() == 'USA'
+            ].copy()
+
+            if not us_samples_df.empty:
+                # sample_dates_us.tsv
+                if 'strain' in us_samples_df.columns and 'date' in us_samples_df.columns:
+                    dates_output_df = us_samples_df[['strain', 'date']].copy()
+                    dates_output_df.rename(columns={'strain': 'sample_id'}, inplace=True)
+                    # Ensure date is formatted correctly, handling NaT if any after coercion
+                    dates_output_df['date'] = pd.to_datetime(dates_output_df['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+                    dates_output_df.dropna(subset=['sample_id', 'date'], inplace=True)
+                    dates_output_path = output_folder / "sample_dates_us.tsv"
+                    dates_output_df.to_csv(dates_output_path, sep='\t', index=False)
+                    print(f"Written {len(dates_output_df)} entries to {dates_output_path}")
+
+                # sample_regions_us.tsv
+                if 'strain' in us_samples_df.columns and 'region' in us_samples_df.columns:
+                    regions_output_df = us_samples_df[['strain', 'region']].copy()
+                    regions_output_df.rename(columns={'strain': 'sample_id'}, inplace=True)
+                    regions_output_df['region'] = regions_output_df['region'].astype(str).str.replace(' ', '_')
+                    regions_output_df.dropna(subset=['sample_id', 'region'], inplace=True)
+                    # Remove rows where region might be empty after processing
+                    regions_output_df = regions_output_df[regions_output_df['region'] != ''] 
+                    regions_output_path = output_folder / "sample_regions_us.tsv"
+                    regions_output_df.to_csv(regions_output_path, sep='\t', index=False, header=False) # Example showed no header
+                    print(f"Written {len(regions_output_df)} entries to {regions_output_path}")
+            else:
+                print("No USA samples found in the combined data to generate sample_dates_us.tsv or sample_regions_us.tsv.")
+
+
     complete_pb_tree_path = None
-    base_name_prefix_for_sim = "" # To be used by sim placement if needed
+    base_name_prefix_for_sim = "" 
     abbr_state_for_sim = ""
 
     if args.target_state:
@@ -456,9 +483,9 @@ if __name__ == "__main__":
         try:
             abbr_state_for_sim = us.states.lookup(args.target_state).abbr
         except:
-            abbr_state_for_sim = sanitized_state_for_filename
+            abbr_state_for_sim = sanitized_state_for_filename # Fallback if lookup fails
         
-        complete_pb_tree_path = create_reductions(filtered_df,
+        complete_pb_tree_path = create_reductions(final_combined_df, # Use the potentially augmented df
                                                   output_folder,
                                                   base_name_prefix_for_sim,
                                                   args.num_reduction_steps,
@@ -471,6 +498,12 @@ if __name__ == "__main__":
     if args.sim_fasta and complete_pb_tree_path:
         sim_fasta_file = Path(args.sim_fasta)
         if sim_fasta_file.exists():
+            if not base_name_prefix_for_sim or not abbr_state_for_sim: # Should be set if target_state was given
+                 # Create fallback names if target_state wasn't processed but sim_fasta is still attempted
+                 sanitized_pango = args.pango_lineage.replace("/", "_").replace(".", "")
+                 base_name_prefix_for_sim = f"global_{sanitized_pango}"
+                 abbr_state_for_sim = "global"
+
             run_simulation_placement(sim_fasta_file, 
                                      complete_pb_tree_path, 
                                      output_folder,
@@ -479,6 +512,6 @@ if __name__ == "__main__":
         else:
             print(f"Error: --sim_fasta file not found: {args.sim_fasta}")
     elif args.sim_fasta and not complete_pb_tree_path:
-        print("Warning: --sim_fasta provided, but the 'complete' reduction tree was not generated. Skipping simulation placement.")
+        print("Warning: --sim_fasta provided, but the 'complete' reduction tree was not generated (e.g. no target_state or matUtils error). Skipping simulation placement.")
 
     print("Script finished.")
