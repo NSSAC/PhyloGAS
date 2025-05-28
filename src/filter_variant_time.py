@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 import requests
-from typing import Optional, Dict, List # Added for type hinting
+from typing import Optional, Dict, List 
 
 # --- Attempt to import functions from seed_seq_prep.py ---
 make_variant_base_map_imported_func: Optional[callable] = None
@@ -82,15 +82,36 @@ def id_to_state(strain: str, country: str) -> str:
 
 def process_tsv(input_file: Path,
                 pango_lineage: str,
+                us_only: bool, # Added us_only parameter
                 outlier_method: str = 'chaining',
                 chaining_max_gap_weeks: int = 6,
                 iqr_factor: float = 1.5,
                 zscore_threshold: float = 2.0) -> Optional[pd.DataFrame]:
     print(f"Processing TSV: {input_file} for Pango lineage: {pango_lineage}")
     try:
-        df = pd.read_csv(input_file, sep='\t', low_memory=False)
+        df = pd.read_csv(input_file, sep='\t', compression='gzip', low_memory=False)
+        
+        # --- Filter for USA only if specified ---
+        if us_only:
+            if 'country' in df.columns:
+                original_rows = len(df)
+                df = df[df['country'].astype(str).str.upper() == 'USA'].copy()
+                print(f"  --us_only: Filtered from {original_rows} to {len(df)} USA-only samples.")
+                if df.empty:
+                    print("  --us_only: No USA samples found. Returning empty DataFrame.")
+                    return pd.DataFrame(columns=TARGET_METADATA_COLUMNS) # Return empty with target cols
+            else:
+                print("  --us_only: 'country' column not found. Cannot filter for USA samples. Proceeding with all data.")
+        # --- End of USA filter ---
+
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        df.dropna(subset=['date'], inplace=True)
+        df.dropna(subset=['date'], inplace=True) # Drop rows where date is NaT after coercion
+
+        if df.empty : # Check if df became empty after date processing or initial USA filter
+            print("No valid data after initial loading and date/USA filtering.")
+            return pd.DataFrame(columns=TARGET_METADATA_COLUMNS)
+
+
     except Exception as e:
         print(f"Error reading or processing input TSV {input_file}: {e}")
         return None
@@ -109,8 +130,8 @@ def process_tsv(input_file: Path,
     
     lineage_df = df[df['regularized'] == pango_lineage].copy()
     if lineage_df.empty:
-        print(f"No rows found for Pango lineage '{pango_lineage}' after regularization.")
-        return None
+        print(f"No rows found for Pango lineage '{pango_lineage}' after regularization (and potential USA filtering).")
+        return pd.DataFrame(columns=TARGET_METADATA_COLUMNS)
     print(f"Found {len(lineage_df)} rows for Pango lineage '{pango_lineage}'.")
 
     print(f"Applying '{outlier_method}' outlier detection for dates...")
@@ -135,14 +156,14 @@ def process_tsv(input_file: Path,
 
     if lineage_df.empty:
         print("No data remaining after outlier removal.")
-        return None
+        return pd.DataFrame(columns=TARGET_METADATA_COLUMNS)
 
     earliest_date = lineage_df['date'].min()
     latest_date = lineage_df['date'].max()
     
     if pd.isna(earliest_date) or pd.isna(latest_date):
         print("No valid earliest/latest dates found after outlier processing.")
-        return None
+        return pd.DataFrame(columns=TARGET_METADATA_COLUMNS)
     
     print(f"Effective date range for '{pango_lineage}': {earliest_date.strftime('%Y-%m-%d')} to {latest_date.strftime('%Y-%m-%d')}")
     
@@ -163,9 +184,8 @@ def create_reductions(df: pd.DataFrame,
                       target_state: str,
                       input_mat_path: Path,
                       ablate: bool,
-                      mode: str) -> Optional[Path]: # Added mode
-    complete_pb_file_path = None # This will store the path for the "complete" .pb file
-    # Construct the expected path for complete_pb_file_path early for return, even if not built
+                      mode: str) -> Optional[Path]:
+    complete_pb_file_path = None 
     abbr_state_for_filename = ""
     try:
         abbr_state_for_filename = us.states.lookup(target_state).abbr
@@ -174,7 +194,6 @@ def create_reductions(df: pd.DataFrame,
     
     _complete_pb_filename_base = f"{base_name_prefix}_{abbr_state_for_filename}_reduction_complete"
     potential_complete_pb_path = output_path / f"{_complete_pb_filename_base}.pb"
-
 
     if 'region' not in df.columns:
         print("Warning: 'region' column not present. Creating it for USA samples.")
@@ -235,10 +254,15 @@ def create_reductions(df: pd.DataFrame,
         with open(ids_file, 'w') as f_ids:
             f_ids.write('\n'.join(ids_to_keep))
         
-        output_mat_name = f"{output_filename_base}.pb" # Basename for matUtils
-        current_pb_path = output_path / output_mat_name # Full path for checking/return
+        output_mat_name = f"{output_filename_base}.pb"
+        current_pb_path = output_path / output_mat_name
 
         if mode == 'both':
+            if not input_mat_path or not input_mat_path.exists():
+                print(f"Error: Input MAT file '{input_mat_path}' not available for matUtils. Skipping extract for {label_suffix}.")
+                if reduction_factor_val == "complete": complete_pb_file_path = potential_complete_pb_path
+                continue
+
             matutils_cmd = [
                 "matUtils", "extract",
                 "--input-mat", str(input_mat_path.resolve()),
@@ -246,33 +270,42 @@ def create_reductions(df: pd.DataFrame,
                 "--write-mat", output_mat_name, 
                 "--samples", str(ids_file.resolve())
             ]
-            
-            print(f"Running matUtils extract for reduction '{label_suffix}':")
-            print(f"  Command: {' '.join(matutils_cmd)}")
-            
+            print(f"Running matUtils extract for reduction '{label_suffix}':\n  Command: {' '.join(matutils_cmd)}")
             try:
                 result = subprocess.run(matutils_cmd, capture_output=True, text=True, check=True)
                 print(f"  matUtils STDOUT:\n{result.stdout}")
                 if result.stderr: print(f"  matUtils STDERR:\n{result.stderr}")
                 print(f"  matUtils extract completed. Output tree: {current_pb_path}")
-                if reduction_factor_val == "complete":
-                    complete_pb_file_path = current_pb_path
+                if reduction_factor_val == "complete": complete_pb_file_path = current_pb_path
             except subprocess.CalledProcessError as e:
-                print(f"  Error running matUtils extract for reduction '{label_suffix}':")
-                print(f"  Return code: {e.returncode}\n  STDOUT:\n{e.stdout}\n  STDERR:\n{e.stderr}")
+                print(f"  Error running matUtils extract for reduction '{label_suffix}':\n  Return code: {e.returncode}\n  STDOUT:\n{e.stdout}\n  STDERR:\n{e.stderr}")
+                if reduction_factor_val == "complete": complete_pb_file_path = potential_complete_pb_path 
             except FileNotFoundError:
                 print("Error: matUtils command not found. Please ensure it is installed and in your PATH.")
-                return potential_complete_pb_path if reduction_factor_val == "complete" else None # Return potential path for "complete" if it was this iteration
+                return potential_complete_pb_path if reduction_factor_val == "complete" else None
         elif mode == 'metadata':
             print(f"Mode is 'metadata'. Skipping matUtils extract for reduction '{label_suffix}'.")
-            if reduction_factor_val == "complete":
-                complete_pb_file_path = potential_complete_pb_path # Set the expected path even if not built
+            if reduction_factor_val == "complete": complete_pb_file_path = potential_complete_pb_path
     
     return complete_pb_file_path
 
 
-def align_simulated_df(sim_df: pd.DataFrame) -> pd.DataFrame:
+def align_simulated_df(sim_df: pd.DataFrame, us_only: bool) -> pd.DataFrame:
     aligned_df = pd.DataFrame()
+
+    if us_only:
+        if 'country' in sim_df.columns:
+            original_rows_sim = len(sim_df)
+            sim_df = sim_df[sim_df['country'].astype(str).str.upper() == 'USA'].copy()
+            print(f"  --us_only: Filtered simulated TSV data from {original_rows_sim} to {len(sim_df)} USA-only samples.")
+        else:
+            print("  --us_only: 'country' column not in simulated TSV. Cannot filter simulated data for USA.")
+    
+    if sim_df.empty and us_only : # If became empty after USA filter
+        print("  --us_only: No USA samples remaining in simulated data. Returning empty aligned DataFrame.")
+        return pd.DataFrame(columns=TARGET_METADATA_COLUMNS)
+
+
     sim_to_target_map = {
         'strain': 'strain', 'date': 'date', 'country': 'country',
         'region': 'region', 'pangolin_lineage': 'pangolin_lineage',
@@ -298,14 +331,18 @@ def run_simulation_placement(sim_fasta_path: Path,
                              output_folder: Path,
                              base_name_prefix_for_sim: str,
                              abbr_state_for_sim: str,
-                             mode: str): # Added mode
+                             mode: str):
     print("\n--- Running simulation placement steps ---")
-    if not complete_pb_path.exists() and mode == 'both':
-        print(f"Error: Expected 'complete' reduction tree '{complete_pb_path}' does not exist. Cannot run simulation placement.")
+    
+    # Check for complete_pb_path existence only if mode is 'both'
+    if mode == 'both' and (not complete_pb_path or not complete_pb_path.exists()):
+        print(f"Error: Expected 'complete' reduction tree '{complete_pb_path}' does not exist. Cannot run simulation placement in 'both' mode.")
         return
-    elif not complete_pb_path.exists() and mode == 'metadata':
-        print(f"Mode is 'metadata'. The 'complete' reduction tree '{complete_pb_path}' would be used, but skipping build steps.")
-        # Proceed to log commands but not execute them.
+    elif mode == 'metadata' and (not complete_pb_path): # complete_pb_path might be None if reductions weren't run
+         print(f"Mode is 'metadata'. The 'complete' reduction tree path is conceptual. Skipping build steps.")
+    elif mode == 'metadata' and complete_pb_path and not complete_pb_path.exists():
+         print(f"Mode is 'metadata'. The 'complete' reduction tree '{complete_pb_path}' would be used, but it wasn't built. Skipping build steps.")
+
 
     sim_fasta_stem = sim_fasta_path.stem.replace('.ref', '')
     output_vcf_filename = f"{sim_fasta_stem}.vcf"
@@ -325,22 +362,26 @@ def run_simulation_placement(sim_fasta_path: Path,
         except FileNotFoundError:
             print("Error: faToVcf command not found. Please ensure it is installed and in your PATH.")
             return
-    else: # mode == 'metadata'
+    else: 
         print("  Skipping faToVcf execution due to --mode=metadata.")
-        # To allow usher command to be logged, we need a conceptual VCF path
         if not output_vcf_path.exists():
              print(f"  (Note: VCF file {output_vcf_path} would be generated here in 'both' mode)")
 
-
     usher_output_pb_filename = f"{base_name_prefix_for_sim}_{abbr_state_for_sim}_simulated_{sim_fasta_stem}.pb"
     usher_output_pb_path = output_folder / usher_output_pb_filename
+    # Ensure complete_pb_path is valid before forming command for logging, even in metadata mode
+    resolved_complete_pb_path = str(complete_pb_path.resolve()) if complete_pb_path else "MISSING_COMPLETE_PB_PATH"
+
     usher_cmd = [
-        "usher", "-i", str(complete_pb_path.resolve()), "-v", str(output_vcf_path.resolve()),
+        "usher", "-i", resolved_complete_pb_path, "-v", str(output_vcf_path.resolve()),
         "-o", str(usher_output_pb_path.resolve()), "-T", "30"
     ]
     print(f"Preparing usher for simulation placement:\n  Command: {' '.join(usher_cmd)}")
     if mode == 'both':
-        if not output_vcf_path.exists(): # Check if VCF was actually created
+        if not complete_pb_path or not complete_pb_path.exists(): # Re-check for safety
+            print(f"Error: Input 'complete' tree '{complete_pb_path}' for usher does not exist. Skipping usher.")
+            return
+        if not output_vcf_path.exists():
             print(f"Error: Input VCF file '{output_vcf_path}' for usher does not exist. Skipping usher.")
             return
         try:
@@ -352,7 +393,7 @@ def run_simulation_placement(sim_fasta_path: Path,
             print(f"  Error running usher:\n  Return code: {e.returncode}\n  STDOUT:\n{e.stdout}\n  STDERR:\n{e.stderr}")
         except FileNotFoundError:
             print("Error: usher command not found. Please ensure it is installed and in your PATH.")
-    else: # mode == 'metadata'
+    else: 
         print("  Skipping usher execution due to --mode=metadata.")
 
 
@@ -370,6 +411,8 @@ if __name__ == "__main__":
     parser.add_argument("--reductions", type=int, default=3, dest="num_reduction_steps", help="Number of N-fold reduction steps if --ablate is used (default: 3).")
     parser.add_argument("--ablate", action='store_true', help="Perform N-fold ablations in addition to complete removal.")
     parser.add_argument("--mode", type=str, choices=['metadata', 'both'], default='both', help="Operation mode: 'metadata' (only TSVs) or 'both' (TSVs and trees).")
+    # Use BooleanOptionalAction for --us_only, default is True
+    parser.add_argument("--us_only", default=True, action=argparse.BooleanOptionalAction, help="Filter main and simulated metadata for USA samples only (default: True). Use --no-us-only to include international.")
 
     parser.add_argument("--outlier_method", type=str, choices=['none', 'iqr', 'zscore', 'chaining'], default='chaining', help="Date outlier detection method (default: chaining).")
     parser.add_argument("--chaining_max_gap_weeks", type=int, default=6, help="Max gap for 'chaining' outlier method (default: 6 weeks).")
@@ -400,30 +443,28 @@ if __name__ == "__main__":
         print("Error: Could not obtain input metadata file. Exiting.")
         exit(1)
 
-    input_mat_path: Optional[Path] # Declared here for broader scope
-    if args.mode == 'both' or args.input_mat : # Download/check if mode is 'both' OR if explicitly provided
+    input_mat_path: Optional[Path] = None
+    if args.mode == 'both' or args.input_mat : 
         if args.input_mat:
             input_mat_path = Path(args.input_mat)
             if not input_mat_path.exists():
                 print(f"Error: Provided input_mat '{input_mat_path}' does not exist.")
                 exit(1)
-        else: # input_mat not given, mode must be 'both' to trigger download here
+        else: 
              if args.mode == 'both':
                 input_mat_path = download_file_if_needed(DEFAULT_MAT_URL, output_folder, DEFAULT_MAT_FILENAME)
-             else: # mode is 'metadata' and no input_mat provided
-                input_mat_path = None # Set to None if not needed and not provided
+             else: 
                 print("Mode is 'metadata' and --input_mat not provided. MAT file will not be processed.")
         
         if args.mode == 'both' and (not input_mat_path or not input_mat_path.exists()):
              print("Error: Could not obtain input MAT file required for '--mode both'. Exiting.")
              exit(1)
-    else: # mode is 'metadata' and --input_mat not provided
-        input_mat_path = None
+    else: 
         print("Mode is 'metadata' and --input_mat not provided. MAT file operations will be skipped.")
-
 
     filtered_df_main = process_tsv(metadata_file_path,
                               args.pango_lineage,
+                              args.us_only, # Pass the us_only flag
                               args.outlier_method,
                               args.chaining_max_gap_weeks,
                               args.iqr_factor,
@@ -452,32 +493,41 @@ if __name__ == "__main__":
                 elif 'region' not in sim_df_raw.columns and 'division' in sim_df_raw.columns:
                      sim_df_raw['region'] = sim_df_raw['division']
 
-                aligned_sim_df = align_simulated_df(sim_df_raw)
+                aligned_sim_df = align_simulated_df(sim_df_raw, args.us_only) # Pass us_only to filter sim data
                 
-                if 'date' in final_combined_df.columns: final_combined_df['date'] = pd.to_datetime(final_combined_df['date'], errors='coerce')
-                if 'date' in aligned_sim_df.columns: aligned_sim_df['date'] = pd.to_datetime(aligned_sim_df['date'], errors='coerce')
-                
-                if 'regularized' not in aligned_sim_df.columns and 'regularized' in final_combined_df.columns:
-                    aligned_sim_df['regularized'] = np.nan
+                if not aligned_sim_df.empty:
+                    if 'date' in final_combined_df.columns: final_combined_df['date'] = pd.to_datetime(final_combined_df['date'], errors='coerce')
+                    if 'date' in aligned_sim_df.columns: aligned_sim_df['date'] = pd.to_datetime(aligned_sim_df['date'], errors='coerce')
+                    
+                    if 'regularized' not in aligned_sim_df.columns and 'regularized' in final_combined_df.columns:
+                        aligned_sim_df['regularized'] = np.nan
 
-                final_combined_df = pd.concat([final_combined_df, aligned_sim_df], ignore_index=True)
-                final_combined_df.sort_values(by='date', inplace=True)
-                print(f"Concatenated simulated data. Total rows now: {len(final_combined_df)}")
-                sim_data_processed_flag = True
+                    final_combined_df = pd.concat([final_combined_df, aligned_sim_df], ignore_index=True)
+                    final_combined_df.sort_values(by='date', inplace=True)
+                    print(f"Concatenated simulated data. Total rows now: {len(final_combined_df)}")
+                    sim_data_processed_flag = True
+                else:
+                    print("Simulated data was empty after alignment (and potential USA filtering). Not concatenating.")
+
             except Exception as e:
                 print(f"Error processing simulated TSV {sim_tsv_path}: {e}")
         else:
             print(f"Warning: Simulated TSV file not found: {sim_tsv_path}")
 
-        if sim_data_processed_flag and not final_combined_df.empty:
+        # Generate sample_dates_us.tsv and sample_regions_us.tsv based on final_combined_df
+        # This happens regardless of us_only flag for the main processing, but the content of
+        # final_combined_df will reflect the us_only choice for both main and sim data.
+        # The explicit filter here ensures these two files are *strictly* US.
+        if not final_combined_df.empty: # Check if there's any data at all
             print("Generating sample_dates_us.tsv and sample_regions_us.tsv...")
-            us_samples_df = final_combined_df[
+            
+            us_samples_for_output_files_df = final_combined_df[
                 final_combined_df['country'].astype(str).str.upper() == 'USA'
             ].copy()
 
-            if not us_samples_df.empty:
-                if 'strain' in us_samples_df.columns and 'date' in us_samples_df.columns:
-                    dates_output_df = us_samples_df[['strain', 'date']].copy()
+            if not us_samples_for_output_files_df.empty:
+                if 'strain' in us_samples_for_output_files_df.columns and 'date' in us_samples_for_output_files_df.columns:
+                    dates_output_df = us_samples_for_output_files_df[['strain', 'date']].copy()
                     dates_output_df.rename(columns={'strain': 'sample_id'}, inplace=True)
                     dates_output_df['date'] = pd.to_datetime(dates_output_df['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
                     dates_output_df.dropna(subset=['sample_id', 'date'], inplace=True)
@@ -485,8 +535,8 @@ if __name__ == "__main__":
                     dates_output_df.to_csv(dates_output_path, sep='\t', index=False)
                     print(f"Written {len(dates_output_df)} entries to {dates_output_path}")
 
-                if 'strain' in us_samples_df.columns and 'region' in us_samples_df.columns:
-                    regions_output_df = us_samples_df[['strain', 'region']].copy()
+                if 'strain' in us_samples_for_output_files_df.columns and 'region' in us_samples_for_output_files_df.columns:
+                    regions_output_df = us_samples_for_output_files_df[['strain', 'region']].copy()
                     regions_output_df.rename(columns={'strain': 'sample_id'}, inplace=True)
                     regions_output_df['region'] = regions_output_df['region'].astype(str).str.replace(' ', '_')
                     regions_output_df.dropna(subset=['sample_id', 'region'], inplace=True)
@@ -495,16 +545,19 @@ if __name__ == "__main__":
                     regions_output_df.to_csv(regions_output_path, sep='\t', index=False, header=False)
                     print(f"Written {len(regions_output_df)} entries to {regions_output_path}")
             else:
-                print("No USA samples found in the combined data to generate sample_dates_us.tsv or sample_regions_us.tsv.")
+                print("No USA samples found in the final combined data to generate sample_dates_us.tsv or sample_regions_us.tsv.")
+
 
     complete_pb_tree_path: Optional[Path] = None
     base_name_prefix_for_sim = "" 
     abbr_state_for_sim = ""
 
     if args.target_state:
-        if args.mode == 'both' and (not input_mat_path or not input_mat_path.exists()):
+        if args.mode == 'both' and (not input_mat_path or not input_mat_path.exists()): # Check again before calling create_reductions
             print("Error: --mode is 'both' but input MAT file is not available. Cannot proceed with reductions that build trees.")
-            exit(1)
+            # If we want to allow metadata generation even if MAT is missing for 'both' mode, this exit needs to be reconsidered.
+            # For now, if 'both' is chosen, MAT is expected.
+            if args.mode == 'both': exit(1) 
         
         sanitized_pango = args.pango_lineage.replace("/", "_").replace(".", "")
         sanitized_state_for_filename = args.target_state.replace(" ", "_")
@@ -514,7 +567,6 @@ if __name__ == "__main__":
         except:
             abbr_state_for_sim = sanitized_state_for_filename
         
-        # Pass input_mat_path (can be None if mode is metadata and no explicit path given)
         complete_pb_tree_path = create_reductions(final_combined_df,
                                                   output_folder,
                                                   base_name_prefix_for_sim,
@@ -526,7 +578,7 @@ if __name__ == "__main__":
     else:
         print("No target_state provided. Skipping reductions and matUtils steps.")
 
-    if args.sim_fasta and complete_pb_tree_path: # complete_pb_tree_path will be the *expected* path
+    if args.sim_fasta and complete_pb_tree_path: 
         sim_fasta_file = Path(args.sim_fasta)
         if sim_fasta_file.exists():
             if not base_name_prefix_for_sim or not abbr_state_for_sim:
@@ -543,6 +595,6 @@ if __name__ == "__main__":
         else:
             print(f"Error: --sim_fasta file not found: {args.sim_fasta}")
     elif args.sim_fasta and not complete_pb_tree_path:
-        print("Warning: --sim_fasta provided, but the 'complete' reduction tree path is not available (e.g. no target_state or matUtils error). Skipping simulation placement.")
+        print("Warning: --sim_fasta provided, but the 'complete' reduction tree path is not available. Skipping simulation placement.")
 
     print("Script finished.")
