@@ -89,7 +89,7 @@ def process_tsv(input_file: Path,
                 zscore_threshold: float = 2.0) -> Optional[pd.DataFrame]:
     print(f"Processing TSV: {input_file} for Pango lineage: {pango_lineage}")
     try:
-        df = pd.read_csv(input_file, sep='\t', compression='gzip', low_memory=False)
+        df = pd.read_csv(input_file, sep='\t', low_memory=False)
         
         # --- Filter for USA only if specified ---
         if us_only:
