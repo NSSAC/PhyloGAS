@@ -385,7 +385,6 @@ def create_aug_metadata_dict(metadata_cols, pid, pid_df=None, standardized_repla
     return temp_dict
 
 
-
 # ====================================
 def generate_sequences(args):
 
@@ -424,10 +423,9 @@ def generate_sequences(args):
     start_date = args.start_date
 
     thresh, prob_matrix = load_thresholds_and_dfs(args)
-    
+
     print('reading in the network data....')
     df = pd.read_csv(input_graph_csv)
-    print(df.info())
     if args.compression_type == XZ:
         seq_file = lzma.open(fasta_to_write, 'wb')
         metadata_file = lzma.open(metadata_file_to_write, 'wb')
@@ -650,7 +648,6 @@ def generate_sequences(args):
     assert example_sequence_length == cumulative_probs_matrix.shape[1], "Sequence length must match columns in probability matrix"
     assert len(LETTERS) == cumulative_probs_matrix.shape[0], "Number of global LETTERS must match rows in cumulative probability matrix"
 
-
     if use_poor_mut_model:
         mutational_model = model_registry["poor"]()
     elif args.rate_limit:
@@ -658,62 +655,39 @@ def generate_sequences(args):
     else:
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)
     print(f"Using {mutational_model} for mutations")
+
     for _, pid, contact_pid, date_obj, tick in transitions_to_paint_df[ # Use date_obj to avoid name clash
         ["pid", "contact_pid", "date", "tick"] 
     ].itertuples():
+        infection_id, new_sequence, seed_fasta = process_transmission(
+            pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
+        )
+        if new_sequence is None:
+            continue
+        create_infection_record(
+            new_sequence,
+            pid,
+            tick,
+            date_obj,
+            infection_id,
+            seed_fasta,
+            country,
+            region,
+            division,
+            divisionAbbr,
+            augment_metadata,
+            persontrait_df,
+            standardized_aug_cols,
+            standardized_replacements,
+            metadata_file,
+            line_keys,
+            seq_file,
+            args.compression_type,
+        )
         loop_counter += 1
-        infection_id=f"{pid}.{tick}"
-        cur_strain_id=f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_obj.year}"
-
         if loop_counter % 1000 == 0:
             print(f"    Processed {loop_counter} graph edges; Decorated {infection_counter} infections.")
 
-        # check infection_id if seed sequence
-        seed_fasta = seed_seq_dict.get(infection_id, None)
-
-        if seed_fasta is None:
-            if contact_pid not in current_sequences:
-                print(f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}.")
-                # Optionally, assign a default/random sequence or skip adding this pid to fasta
-                continue 
-
-            seq_to_change_arr = current_sequences[contact_pid] # This is a NumPy array of chars
-
-        if seed_fasta is not None: #seed sequence doesn't change
-            new_seq_arr = np.array(list(seed_fasta.seq))
-            cur_strain_id = seed_fasta.id
-        else:
-            new_seq_arr = mutational_model.mutate(seq_to_change_arr)
-            
-        current_sequences[pid] = new_seq_arr # Store the array
-        new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
-
-        infection = InfectionRecord()
-        infection.fromEpihiper(
-            "ncov",
-            region, country, division, division, # Assuming divisionExposure is same as division
-            date_obj.strftime("%Y-%m-%d"),
-            cur_strain_id
-        )
-        infection.populate_sim_details(pid, tick)
-
-        aug_metadata_dict_current = {} # Initialize for current infection
-        if augment_metadata:
-            try:
-                pid_df_series = persontrait_df.loc[pid] # This should be a Series
-
-                aug_metadata_dict_current = create_aug_metadata_dict(
-                    standardized_aug_cols, pid, pid_df_series, standardized_replacements # Pass standardized
-                )
-            except KeyError: # pid not in persontrait_df
-                aug_metadata_dict_current = create_aug_metadata_dict(standardized_aug_cols, pid, standardized_replacements=standardized_replacements) # Will fill with NA
-
-        add_to_fasta(new_seq_str, infection, seq_file, args.compression_type)
-        write_metadata(
-            metadata_file, infection, line_keys, args.compression_type,
-            aug_metadata_columns=standardized_aug_cols if augment_metadata else None, # Pass standardized
-            aug_metadata_dict=aug_metadata_dict_current if augment_metadata else None
-        )
         infection_counter += 1
 
     seq_file.close()
@@ -721,6 +695,100 @@ def generate_sequences(args):
 
     print("Done generating sequences.")
     return
+
+
+def process_transmission(
+    pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
+):
+    infection_id = f"{pid}.{tick}"
+    # check infection_id if seed sequence
+    seed_fasta = seed_seq_dict.get(infection_id, None)
+
+    if seed_fasta is None:
+        if contact_pid not in current_sequences:
+            print(
+                f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}."
+            )
+            # Optionally, assign a default/random sequence or skip adding this pid to fasta
+            return (None, None, None)
+        
+        seq_to_change_arr = current_sequences[contact_pid]  # This is a NumPy array of chars
+
+    if seed_fasta is not None:  # seed sequence doesn't change
+        new_seq_arr = np.array(list(seed_fasta.seq))
+    else:
+        new_seq_arr = mutational_model.mutate(seq_to_change_arr)
+
+    current_sequences[pid] = new_seq_arr  # Store the array
+    # new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
+    return infection_id, new_seq_arr, seed_fasta
+
+
+def create_infection_record(
+    sequence,
+    pid,
+    tick,
+    date_obj,
+    infection_id,
+    seed_fasta,
+    country,
+    region,
+    division,
+    divisionAbbr,
+    augment_metadata,
+    persontrait_df,
+    standardized_aug_cols,
+    standardized_replacements,
+    metadata_file,
+    line_keys,
+    seq_file,
+    compression_type,
+):
+    new_seq_str = "".join(sequence.tolist())  # Convert to string for FASTA
+    cur_strain_id = f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_obj.year}"
+    if seed_fasta is not None:  # seed sequence doesn't change
+        cur_strain_id = seed_fasta.id
+    infection = InfectionRecord()
+    infection.fromEpihiper(
+        "ncov",
+        region,
+        country,
+        division,
+        division,  # Assuming divisionExposure is same as division
+        date_obj.strftime("%Y-%m-%d"),
+        cur_strain_id,
+    )
+    infection.populate_sim_details(pid, tick)
+
+    aug_metadata_dict_current = {}  # Initialize for current infection
+    if augment_metadata:
+        try:
+            pid_df_series = persontrait_df.loc[pid]  # This should be a Series
+
+            aug_metadata_dict_current = create_aug_metadata_dict(
+                standardized_aug_cols,
+                pid,
+                pid_df_series,
+                standardized_replacements,  # Pass standardized
+            )
+        except KeyError:  # pid not in persontrait_df
+            aug_metadata_dict_current = create_aug_metadata_dict(
+                standardized_aug_cols,
+                pid,
+                standardized_replacements=standardized_replacements,
+            )  # Will fill with NA
+
+    add_to_fasta(new_seq_str, infection, seq_file, compression_type)
+    write_metadata(
+        metadata_file,
+        infection,
+        line_keys,
+        compression_type,
+        aug_metadata_columns=(
+            standardized_aug_cols if augment_metadata else None
+        ),  # Pass standardized
+        aug_metadata_dict=aug_metadata_dict_current if augment_metadata else None,
+    )
 
 
 # ====================================
@@ -732,7 +800,7 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
     # The original code implies N=5 (A,C,G,T, and implicitly N or something else making up the 5th category for p_xm)
     # Let's stick to the paper's likely intention or common practice. If it's DNA/RNA, N=4 (or 5 with N).
     # The provided freq_df here is *after* filtering out '-', so it contains actual characters.
-    
+
     alphabet_size_for_max_entropy = 4 # Assuming ACGT for max entropy reference point
     # If freq_df is empty or sums to zero, handle to avoid division by zero or NaN
     if freq_df.empty or freq_df.sum() == 0:
@@ -740,7 +808,7 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
 
     for p_xi in freq_df: # Iterate over values (frequencies)
         if p_xi > 0: # log(0) is undefined
-             e_act -= p_xi * np.log(p_xi) # Using natural log (nats)
+            e_act -= p_xi * np.log(p_xi) # Using natural log (nats)
 
     # Max entropy for an alphabet of size N is log(N)
     # The original code used p_xm = 1/5.0 ... e_max += p_xm * np.log(p_xm) which is -log(5)
@@ -750,17 +818,17 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
     # This e_max calculation is a bit unusual if freq_df can have more/less than 5 symbols.
     # A more standard H_max = log(len(freq_df.index)) if all symbols in freq_df are equally likely
     # Or H_max = log(alphabet_size_for_max_entropy)
-    
+
     # Replicating original e_max:
     # e_max_val = -np.log(5.0) # This seems to be the intended reference max entropy
     # A more standard approach: if the alphabet is ACGT, max entropy is log(4). If ACGTN, log(5).
     # If freq_df contains only ACGT, then using log(5) as max might be strange.
     # Let's use log of the number of unique characters in the column, or a fixed alphabet like ACGTN.
-    
+
     # For consistency with the original (1 - e_act/e_max) * 100:
     # e_max needs to be negative if e_act is negative (as calculated from p*log(p))
     # So, if p_xm = 1/N, e_max_contrib = (1/N) * log(1/N). Sum N times: N * (1/N) * log(1/N) = log(1/N) = -log(N)
-    
+
     # Consider alphabet size for max entropy. If it's ACGT, then 4. If ACGTN, then 5.
     # The original code used '5' implicitly in p_xm = 1/float(5).
     ref_alphabet_size = 5 
@@ -775,20 +843,11 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
         # If e_act is close to 0 (low diversity, one symbol dominates), ratio is ~0, thresh is ~100.
         # This seems correct: high threshold means high consistency (low entropy).
         thresh = (1 - (e_act / e_max_val)) * 100
-    
+
     if np.isnan(thresh):
         thresh = 0 # If only one symbol in column, e_act can be 0. If e_max_val is also 0 (e.g. 1 symbol alphabet), NaN.
 
     return e_act, max(0, min(100, thresh)) # Clamp threshold 0-100
-
-
-# ====================================
-
-
-# determine_change_old is not used.
-
-# LETTERS is now global
-
 
 
 class InfectionRecord:
