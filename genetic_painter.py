@@ -425,7 +425,15 @@ def generate_sequences(args):
     thresh, prob_matrix = load_thresholds_and_dfs(args)
 
     print('reading in the network data....')
-    df = pd.read_csv(input_graph_csv)
+    begin_time = time.time()
+    try:
+        df = pd.read_csv(input_graph_csv, engine="pyarrow")
+    except ModuleNotFoundError:
+        print("Unable to use pyarrow for reading, fallback to default")
+        df = pd.read_csv(input_graph_csv)
+    end_time = time.time()
+    time_s = end_time - begin_time
+    print(f"Done. Time: {time_s:.2f} s")
     if args.compression_type == XZ:
         seq_file = lzma.open(fasta_to_write, 'wb')
         metadata_file = lzma.open(metadata_file_to_write, 'wb')
