@@ -512,7 +512,9 @@ def generate_sequences(args):
     transitions_to_paint = df[df["exit_state"].map(paint_this)]
     seed_transitions_mask = transitions_to_paint["contact_pid"] == -1 # Use mask for efficiency
 
-    seed_df = transitions_to_paint[seed_transitions_mask] # Renamed from 'seed' to 'seed_df'
+    seed_df = transitions_to_paint[
+        seed_transitions_mask
+    ].copy()  # Renamed from 'seed' to 'seed_df'
 
     if args.seed_fasta == None:
         align_seed_records = list(AlignIO.read(args.align_fasta, 'fasta')) # Read once
@@ -550,10 +552,6 @@ def generate_sequences(args):
 
     current_sequences.update(temp_seed_seqs)
 
-    # uncomment to keep seed sequences out
-    # transitions_to_paint_df = transitions_to_paint[~seed_transitions_mask][ # Renamed
-    #    ["pid", "contact_pid", "tick"] # Removed exit_state as it's already filtered
-    # ]
     transitions_to_paint_df = transitions_to_paint[["pid", "contact_pid", "tick"]]
 
     # --- START: TICK-BASED FILTERING ---
@@ -664,10 +662,49 @@ def generate_sequences(args):
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)
     print(f"Using {mutational_model} for mutations")
 
+    # Get seeds after filtering
+    seed_mask = transitions_to_paint_df["contact_pid"] == -1
+
+    seed_df = transitions_to_paint_df[seed_mask]
+    transitions_to_paint_df = transitions_to_paint_df[~seed_mask]
+
+    # Dump the seed sequences
+    for (
+        _,
+        pid,
+        contact_pid,
+        date_obj,
+        tick,
+    ) in seed_df[  # Use date_obj to avoid name clash
+        ["pid", "contact_pid", "date", "tick"]
+    ].itertuples():
+        infection_id = f"{pid}.{tick}"
+        seed_fasta = seed_seq_dict.get(infection_id)
+        create_infection_record(
+            current_sequences[pid],
+            pid,
+            tick,
+            date_obj,
+            infection_id,
+            seed_fasta,
+            country,
+            region,
+            division,
+            divisionAbbr,
+            augment_metadata,
+            persontrait_df,
+            standardized_aug_cols,
+            standardized_replacements,
+            metadata_file,
+            line_keys,
+            seq_file,
+            args.compression_type,
+        )
+
     for _, pid, contact_pid, date_obj, tick in transitions_to_paint_df[ # Use date_obj to avoid name clash
         ["pid", "contact_pid", "date", "tick"] 
     ].itertuples():
-        infection_id, new_sequence, seed_fasta = process_transmission(
+        new_sequence = process_transmission(
             pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
         )
         if new_sequence is None:
@@ -677,8 +714,8 @@ def generate_sequences(args):
             pid,
             tick,
             date_obj,
-            infection_id,
-            seed_fasta,
+            f"{pid}.{tick}",  # infection_id
+            None,  # Not a seed
             country,
             region,
             division,
@@ -708,28 +745,12 @@ def generate_sequences(args):
 def process_transmission(
     pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
 ):
-    infection_id = f"{pid}.{tick}"
-    # check infection_id if seed sequence
-    seed_fasta = seed_seq_dict.get(infection_id, None)
-
-    if seed_fasta is None:
-        if contact_pid not in current_sequences:
-            print(
-                f"Warning: contact_pid {contact_pid} not found in current_sequences. Skipping mutation for pid {pid}."
-            )
-            # Optionally, assign a default/random sequence or skip adding this pid to fasta
-            return (None, None, None)
-        
-        seq_to_change_arr = current_sequences[contact_pid]  # This is a NumPy array of chars
-
-    if seed_fasta is not None:  # seed sequence doesn't change
-        new_seq_arr = np.array(list(seed_fasta.seq))
-    else:
-        new_seq_arr = mutational_model.mutate(seq_to_change_arr)
+    seq_to_change_arr = current_sequences[contact_pid]
+    new_seq_arr = mutational_model.mutate(seq_to_change_arr)
 
     current_sequences[pid] = new_seq_arr  # Store the array
     # new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
-    return infection_id, new_seq_arr, seed_fasta
+    return new_seq_arr
 
 
 def create_infection_record(
@@ -934,8 +955,87 @@ def add_to_fasta(seq_str, infection_record, seq_file, compression_type):
         seq_file.write(seq_line)
 
 
-# find_seq is not used.
-# dfs_edges_with_ticks is not used.
+def worker(
+    task_queue, processed_set, current_sequences, result_queue, lock, mutational_model
+):
+    import queue
+
+    while True:
+        try:
+            pid, contact_pid, tick = task_queue.get(timeout=1)
+        except queue.Empty:
+            break
+
+        # Wait until contact_pid is processed
+        while True:
+            with lock:
+                if contact_pid in processed_set:
+                    break
+            time.sleep(0.05)  # Wait a bit before checking again
+
+        # Process and save
+        result = process_transmission(
+            pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
+        )
+
+        with lock:
+            processed_set.add(pid)
+
+        result_queue.put(result)
+
+
+def process_parallel_multiprocess(dataframe):
+    import multiprocessing
+    from multiprocessing import Manager, Queue, Process, Lock
+
+    manager = Manager()
+    processed_set = manager.set()
+    task_queue = manager.Queue()
+    result_queue = Queue()
+    lock = Lock()
+
+    for (
+        _,
+        pid,
+        contact_pid,
+        date_obj,
+        tick,
+    ) in transitions_to_paint_df[  # Use date_obj to avoid name clash
+        ["pid", "contact_pid", "date", "tick"]
+    ].itertuples():
+        infection_id, new_sequence, seed_fasta = process_transmission(
+            pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
+        )
+        if new_sequence is None:
+            continue
+
+    seq_file.close()
+    metadata_file.close()
+
+    # Assume all contact_pid-only entries should be processed first
+    for pid, contact_pid in pairs:
+        if pid == contact_pid:
+            processed_set.add(contact_pid)
+
+    for pair in pairs:
+        task_queue.put(pair)
+
+    # Start workers
+    workers = [
+        Process(target=worker, args=(task_queue, processed_set, result_queue, lock))
+        for _ in range(num_workers)
+    ]
+    for w in workers:
+        w.start()
+
+    # Start saver
+    saver_proc = Process(target=saver, args=(result_queue,))
+    saver_proc.start()
+
+    for w in workers:
+        w.join()
+
+    saver_proc.join()
 
 
 if __name__ == '__main__':
