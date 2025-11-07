@@ -26,30 +26,22 @@ try:
         for b in base_variants:
             if b not in lineage_base_map:
                 lineage_base_map[b] = b
-                
         return lineage_base_map
 
 except ImportError:
     print("CRITICAL ERROR: The 'pango_aliasor' library is not installed.")
     print("Please install it, e.g., using 'pip install git+ssh://git@github.com:aswarren/pango_aliasor.git'.")
-    print("The script cannot continue without this library.")
-    # Define a dummy function so the script can be parsed, but exit if called.
     def make_variant_base_map(base_variants: List[str], recombinant: bool = False) -> Dict[str, str]:
         raise ImportError("pango_aliasor not found, function unusable.")
-    # It's better to exit early in main if this is the case.
     PANGO_ALIASOR_AVAILABLE = False
 else:
     PANGO_ALIASOR_AVAILABLE = True
 
-
-# --- Constants ---
 COVSPECTRUM_API_URL = 'https://lapis.cov-spectrum.org/open/v2/sample/alignedNucleotideSequences'
 DEFAULT_TSV_URL = 'https://clustertracker.gi.ucsc.edu/data/hardcoded_clusters.tsv'
 DEFAULT_TSV_BASENAME = 'hardcoded_clusters.tsv'
 
-
 def download_file(url: str, dest_path: Path) -> bool:
-    """Downloads a file from a URL to a destination path."""
     print(f"Downloading {url} to {dest_path}...")
     try:
         response = requests.get(url, stream=True)
@@ -72,14 +64,12 @@ def fetch_sequences_from_covspectrum(strain_ids: List[str], batch_size: int = 10
     """
     all_fasta_content = []
     print(f"Fetching sequences for {len(strain_ids)} strains from CovSpectrum (batch size: {batch_size})...")
-    
     for i in range(0, len(strain_ids), batch_size):
         batch_ids = strain_ids[i:i + batch_size]
         payload = {"strain": batch_ids}
-        
         print(f"  Fetching batch {i//batch_size + 1}/{(len(strain_ids) - 1)//batch_size + 1} ({len(batch_ids)} strains)...")
         try:
-            response = requests.post(COVSPECTRUM_API_URL, json=payload, timeout=120) # Increased timeout
+            response = requests.post(COVSPECTRUM_API_URL, json=payload, timeout=120)
             response.raise_for_status()
             fasta_data = response.text
             # Check if response is empty or indicates an issue (though API omits not found strains)
@@ -96,7 +86,6 @@ def fetch_sequences_from_covspectrum(strain_ids: List[str], batch_size: int = 10
         except Exception as e:
             print(f"  An unexpected error occurred during API call for batch {i//batch_size + 1}: {e}")
             return None
-
     print("Sequence fetching complete.")
     return "".join(all_fasta_content)
 
@@ -186,17 +175,54 @@ def detect_outliers_chaining(date_series: pd.Series, max_gap_weeks: int = 6) -> 
     outlier_series_sorted_index = pd.Series(df_sorted['is_outlier'].values, index=df_sorted.index)
     return outlier_series_sorted_index.reindex(date_series.index)
 
+
+def generate_schedule_file(df: pd.DataFrame, output_path: Path, state: str, pango: str):
+    """Generates an importation schedule CSV from the final processed DataFrame."""
+    if df.empty:
+        print(f"Cannot generate schedule for {pango} in {state}: No data remains.")
+        return
+
+    df_schedule = df.copy()
+    min_date = df_schedule['earliest_date'].min()
+    
+    # Create tick column (days since first appearance of this variant in this context)
+    df_schedule['tick'] = (df_schedule['earliest_date'] - min_date).dt.days
+    
+    # Group by day to count clusters and sum samples
+    grouped = df_schedule.groupby(['tick', 'earliest_date', 'pango_regularized'])
+    
+    # Count clusters (.size()) and sum samples (.sum())
+    result = grouped.size().reset_index(name='clusters')
+    result['sample_count'] = grouped['sample_count'].sum().values
+    
+    # Rename columns to match notebook output
+    result = result.rename(columns={'earliest_date': 'date', 'pango_regularized': 'variant'})
+    
+    pango_sanitized = pango.replace('.', '_').replace('/', '_')
+    state_sanitized = state.replace(' ', '_')
+    schedule_filename = f"{state_sanitized}_{pango_sanitized}_schedule.csv"
+    schedule_filepath = output_path / schedule_filename
+    
+    result.to_csv(schedule_filepath, index=False)
+    print(f"Importation schedule for {pango} saved to: {schedule_filepath.resolve()}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Process SARS-CoV-2 cluster data, identify seed samples, and fetch their sequences.")
-    parser.add_argument("--state", required=True, type=str, help="US state to filter data for (e.g., 'Washington', 'California'). Corresponds to 'region' column.")
-    parser.add_argument("--pango", required=True, type=str, help="Pango lineage to filter data for (e.g., 'B.1.1.7', 'BA.1'). This will be matched against regularized lineage names.")
-    parser.add_argument("--input_file", type=str, help="Optional path to the input TSV file. If not provided, the script will attempt to use/download 'hardcoded_clusters.tsv'.")
-    parser.add_argument("--output_folder", required=True, type=str, help="Path to the folder where output files (seed IDs, FASTA sequences, downloaded TSV) will be saved.")
-    parser.add_argument("--outlier_method", type=str, choices=['none', 'iqr', 'zscore', 'chaining'], default='none', help="Method for 'earliest_date' outlier detection: 'none' (default), 'iqr', 'zscore', or 'chaining'.")
-    parser.add_argument("--chaining_max_gap_weeks", type=int, default=6, help="Max gap in weeks for 'chaining' outlier method (default: 6).")
+    parser.add_argument("--state", required=True, type=str, help="US state to filter data for.")
+    parser.add_argument("--pango", required=True, type=str, help="Comma-separated list of Pango lineages to process.")
+    parser.add_argument("--input_file", type=str, help="Optional path to the input TSV file.")
+    parser.add_argument("--output_folder", required=True, type=str, help="Path for output files.")
+    parser.add_argument("--outlier_method", type=str, choices=['none', 'iqr', 'zscore', 'chaining'], default='none', help="Method for date outlier detection.")
+    parser.add_argument("--chaining_max_gap_weeks", type=int, default=6, help="Max gap in weeks for 'chaining' outlier method.")
+    parser.add_argument("--no_download", action='store_true', help="If specified, only generate seed strain ID files and skip downloading sequences.")
+    parser.add_argument("--generate_schedule", action='store_true', help="If specified, generate an importation schedule CSV for each variant.")
+    parser.add_argument("--rescue_cluster_size", type=int, default=2, help="Minimum sample_count above which to rescue a potential outlier cluster (default: 2).")
+    parser.add_argument("--rescue_cluster_days", type=int, default=365, help="Maximum time span in days within a cluster to be considered for rescue (default: 21).")
     
     args = parser.parse_args()
-
+    pango_lineages = [p.strip() for p in args.pango.split(',')]
+    print(f"Processing for {len(pango_lineages)} Pango lineage(s): {pango_lineages}")
     if not PANGO_ALIASOR_AVAILABLE:
         print("Exiting due to missing 'pango_aliasor' library.")
         exit(1)
@@ -234,156 +260,104 @@ def main():
     # --- 3. Load and process data ---
     print(f"Loading data from {input_tsv_path}...")
     try:
-        # The notebook file had .gz, the URL is plain .tsv
-        compression = 'gzip' if str(input_tsv_path).endswith('.gz') else None
-        df = pd.read_csv(input_tsv_path, sep='\t', compression=compression)
-    except Exception as e:
-        print(f"Error reading TSV file '{input_tsv_path}': {e}")
-        exit(1)
-    
+        df = pd.read_csv(input_tsv_path, sep='\t', compression=('gzip' if str(input_tsv_path).endswith('.gz') else None))
+    except Exception as e: print(f"Error reading TSV file '{input_tsv_path}': {e}"); exit(1)
     print(f"Loaded {len(df)} rows from TSV.")
-
-    # --- 4. Pango Lineage Regularization ---
-    print("Regularizing Pango lineages using 'annotation_2' column...")
-    if 'annotation_2' not in df.columns:
-        print(f"Error: 'annotation_2' column not found in the input TSV. Available columns: {df.columns.tolist()}")
-        exit(1)
-
-    extended_target_list = [args.pango] # Regularize based on the target pango
+    
+    if 'annotation_2' not in df.columns: print("Error: 'annotation_2' column not found."); exit(1)
     try:
-        replace_map = make_variant_base_map(extended_target_list)
-    except Exception as e:
-        print(f"Error during pango_aliasor processing: {e}")
-        print("This might be due to an issue with the pango_aliasor library or its data.")
-        exit(1)
+        replace_map = make_variant_base_map(pango_lineages)
+        df['pango_regularized'] = df['annotation_2'].map(replace_map)
+        df['pango_regularized'].fillna(df['annotation_2'], inplace=True)
+    except Exception as e: print(f"Error during pango_aliasor processing: {e}"); exit(1)
+    
+    if 'region' not in df.columns: print("Error: 'region' column not found."); exit(1)
+    df_filtered_initial = df[(df['region'] == args.state) & (df['pango_regularized'].isin(pango_lineages))].copy()
+    if df_filtered_initial.empty: print("No data found for state and specified Pango lineages. Exiting."); exit(0)
 
-    df['pango_regularized'] = df['annotation_2'].map(replace_map)
-    df['pango_regularized'].fillna(df['annotation_2'], inplace=True) # Keep original if not in map
-    print(f"Pango lineage regularization complete. New column 'pango_regularized' created.")
+    # --- Loop through each Pango lineage for specific processing ---
+    for pango in pango_lineages:
+        print(f"\n{'='*20} Processing: {pango} {'='*20}")
 
-    # --- 5. Filter data by state and pango lineage ---
-    print(f"Filtering data for state: '{args.state}' and Pango lineage (regularized): '{args.pango}'...")
-    if 'region' not in df.columns:
-        print(f"Error: 'region' column not found in the input TSV. Needed for state filtering. Available columns: {df.columns.tolist()}")
-        exit(1)
+        df_variant = df_filtered_initial[df_filtered_initial['pango_regularized'] == pango].copy()
+        if df_variant.empty: print(f"No data for lineage {pango}. Skipping."); continue
+
+        df_variant['earliest_date'] = pd.to_datetime(df_variant['earliest_date'], errors='coerce')
+        df_variant.dropna(subset=['earliest_date'], inplace=True)
+        if df_variant.empty: print(f"No valid 'earliest_date' entries for {pango}. Skipping."); continue
+
+        min_date_orig, max_date_orig = df_variant['earliest_date'].min(), df_variant['earliest_date'].max()
+        print(f"Original date range for {pango}: {min_date_orig.strftime('%Y-%m-%d')} to {max_date_orig.strftime('%Y-%m-%d')}")
+
+        # --- Refined Outlier Pruning ---
+        if args.outlier_method != 'none':
+            outliers_mask = pd.Series(False, index=df_variant.index, dtype=bool)
+            if args.outlier_method == 'iqr': outliers_mask = detect_outliers_iqr(df_variant['earliest_date'])
+            elif args.outlier_method == 'zscore': outliers_mask = detect_outliers_zscore(df_variant['earliest_date'])
+            elif args.outlier_method == 'chaining': outliers_mask = detect_outliers_chaining(df_variant['earliest_date'], args.chaining_max_gap_weeks)
+
+            potential_outliers = df_variant[outliers_mask]
+            if not potential_outliers.empty:
+                print(f"Identified {len(potential_outliers)} potential date outliers for {pango} using {args.outlier_method} method. Checking for rescue candidates...")
+                
+                final_outliers_indices = []
+                for idx, row in potential_outliers.iterrows():
+                    is_singlet = row['sample_count'] < args.rescue_cluster_size
+                    if is_singlet:
+                        print(f"  - Pruning singlet cluster outlier (size {row['sample_count']}) with date {row['earliest_date'].strftime('%Y-%m-%d')}.")
+                        final_outliers_indices.append(idx)
+                        continue
+                    
+                    # Check internal time span for multi-sample clusters
+                    sample_dates = [pd.to_datetime(s.split('|')[-1]) for s in row['samples'].split(',')]
+                    internal_span = max(sample_dates) - min(sample_dates)
+                    
+                    if internal_span <= pd.Timedelta(days=args.rescue_cluster_days):
+                        print(f"  - Rescuing potential outlier (size {row['sample_count']}, span {internal_span.days} days) with date {row['earliest_date'].strftime('%Y-%m-%d')}. Evidence of sustained transmission.")
+                    else:
+                        print(f"  - Pruning multi-sample cluster outlier (size {row['sample_count']}, span {internal_span.days} days > {args.rescue_cluster_days} days) with date {row['earliest_date'].strftime('%Y-%m-%d')}.")
+                        final_outliers_indices.append(idx)
+                
+                if final_outliers_indices:
+                    df_variant.drop(final_outliers_indices, inplace=True)
+            else:
+                print(f"No date outliers detected for {pango} using {args.outlier_method} method.")
+
+        if df_variant.empty: print(f"All data for {pango} removed after outlier pruning. Skipping."); continue
         
-    original_row_count = len(df)
-    df_filtered = df[(df['region'] == args.state) & (df['pango_regularized'] == args.pango)].copy() # Use .copy()
-
-    print(f"Filtered from {original_row_count} to {len(df_filtered)} rows based on state and Pango lineage.")
-    if df_filtered.empty:
-        print(f"No data found for state '{args.state}' and Pango lineage '{args.pango}'. Exiting.")
-        exit(0)
-
-    # --- 6. Date Handling and Outlier Pruning ---
-    print("Processing 'earliest_date' column...")
-    if 'earliest_date' not in df_filtered.columns:
-        print(f"Error: 'earliest_date' column not found. Available columns: {df_filtered.columns.tolist()}")
-        exit(1)
-
-    df_filtered['earliest_date'] = pd.to_datetime(df_filtered['earliest_date'], errors='coerce')
-    
-    rows_before_nat_drop = len(df_filtered)
-    df_filtered.dropna(subset=['earliest_date'], inplace=True)
-    if len(df_filtered) < rows_before_nat_drop:
-        print(f"Dropped {rows_before_nat_drop - len(df_filtered)} rows due to unparseable 'earliest_date' values.")
-
-    if df_filtered.empty:
-        print("No valid 'earliest_date' entries after initial parsing and NaT drop. Exiting.")
-        exit(0)
-
-    min_date_orig = df_filtered['earliest_date'].min()
-    max_date_orig = df_filtered['earliest_date'].max()
-    print(f"Original date range for filtered data: {min_date_orig.strftime('%Y-%m-%d')} to {max_date_orig.strftime('%Y-%m-%d')}")
-
-    outliers_mask = pd.Series(False, index=df_filtered.index, dtype=bool) # Initialize to no outliers
-
-    if args.outlier_method == 'iqr':
-        print("Using IQR method for outlier detection (factor=1.5).")
-        outliers_mask = detect_outliers_iqr(df_filtered['earliest_date'], factor=1.5)
-    elif args.outlier_method == 'zscore':
-        print("Using Z-score method for outlier detection (threshold=2.0).")
-        outliers_mask = detect_outliers_zscore(df_filtered['earliest_date'], threshold=2.0)
-    elif args.outlier_method == 'chaining':
-        print(f"Using chaining method for outlier detection (max_gap_weeks={args.chaining_max_gap_weeks}).")
-        outliers_mask = detect_outliers_chaining(df_filtered['earliest_date'], max_gap_weeks=args.chaining_max_gap_weeks)
-    elif args.outlier_method == 'none':
-        print("No outlier removal method selected.")
-
-    if args.outlier_method != 'none' and outliers_mask.any():
-        outliers_df = df_filtered[outliers_mask]
-        print(f"Identified {len(outliers_df)} date outliers using {args.outlier_method} method.")
+        # --- Continue with processing the pruned df_variant ---
+        min_date_new, max_date_new = df_variant['earliest_date'].min(), df_variant['earliest_date'].max()
+        print(f"Date range for {pango} after pruning: {min_date_new.strftime('%Y-%m-%d')} to {max_date_new.strftime('%Y-%m-%d')}")
         
-        # Report bounds for IQR method (based on distribution before these outliers were removed)
-        if args.outlier_method == 'iqr':
-            Q1_orig_dist = df_filtered['earliest_date'].quantile(0.25)
-            Q3_orig_dist = df_filtered['earliest_date'].quantile(0.75)
-            if pd.notna(Q1_orig_dist) and pd.notna(Q3_orig_dist): # Check if quantiles are valid
-                IQR_orig_dist = Q3_orig_dist - Q1_orig_dist
-                if IQR_orig_dist > pd.Timedelta(0): 
-                    lower_bound_applied = Q1_orig_dist - 1.5 * IQR_orig_dist
-                    upper_bound_applied = Q3_orig_dist + 1.5 * IQR_orig_dist
-                    print(f"  (IQR method decision bounds: {lower_bound_applied.strftime('%Y-%m-%d')} to {upper_bound_applied.strftime('%Y-%m-%d')})")
-
-        outlier_dates_str = ", ".join(sorted(outliers_df['earliest_date'].dt.strftime('%Y-%m-%d').unique()))
-        print(f"Outlier dates being pruned: {outlier_dates_str}")
-        df_filtered = df_filtered[~outliers_mask].copy() # Use .copy()
-    elif args.outlier_method != 'none': # A method was chosen, but no outliers found
-        print(f"No date outliers detected using {args.outlier_method} method.")
-
-    if df_filtered.empty: # Check if all data was pruned
-        print("All data removed after outlier pruning. Exiting.")
-        exit(0)
-    
-    min_date_new = df_filtered['earliest_date'].min()
-    max_date_new = df_filtered['earliest_date'].max()
-    print(f"Date range after potential pruning: {min_date_new.strftime('%Y-%m-%d')} to {max_date_new.strftime('%Y-%m-%d')}")
-
-    # --- 7. Identify Seed Samples and Save IDs ---
-    print("Identifying seed strains from 'samples' column...")
-    if 'samples' not in df_filtered.columns:
-        print(f"Error: 'samples' column not found. Available columns: {df_filtered.columns.tolist()}")
-        exit(1)
-
-    # Extract strain_seed (first part of the first sample entry)
-    try:
-        df_filtered['strain_seed'] = df_filtered['samples'].str.split(',', n=1, expand=True)[0].str.split('|', n=1, expand=True)[0]
-    except Exception as e:
-        print(f"Error processing 'samples' column to extract strain_seed: {e}")
-        print("Ensure the 'samples' column format is as expected (e.g., 'strain|genbank|date,...').")
-        exit(1)
+        # --- Generate Schedule (if requested) ---
+        if args.generate_schedule:
+            generate_schedule_file(df_variant, output_folder_path, args.state, pango)
+            
+        # --- Identify and Save Seed Strains ---
+        df_variant['strain_seed'] = df_variant['samples'].str.split(',', n=1, expand=True)[0].str.split('|', n=1, expand=True)[0]
+        unique_strain_seeds = df_variant['strain_seed'].dropna().unique().tolist()
+        if not unique_strain_seeds: print(f"No seed strains identified for {pango}. Skipping."); continue
         
-    unique_strain_seeds = df_filtered['strain_seed'].dropna().unique().tolist()
+        pango_sanitized = pango.replace('.', '_').replace('/', '_')
+        seed_ids_filename = f"{args.state.replace(' ', '_')}_{pango_sanitized}_seed_strains.txt"
+        seed_ids_filepath = output_folder_path / seed_ids_filename
+        with open(seed_ids_filepath, 'w') as f: f.write('\n'.join(unique_strain_seeds))
+        print(f"Identified {len(unique_strain_seeds)} unique seed strains for {pango}, IDs saved to: {seed_ids_filepath.resolve()}")
+        
+        # --- Fetch Sequences (Conditional) ---
+        if not args.no_download:
+            fasta_sequences = fetch_sequences_from_covspectrum(unique_strain_seeds)
+            if fasta_sequences and fasta_sequences.strip():
+                fasta_filename = f"{args.state.replace(' ', '_')}_{pango_sanitized}_seed_sequences.fasta"
+                fasta_filepath = output_folder_path / fasta_filename
+                with open(fasta_filepath, 'w') as f: f.write(fasta_sequences)
+                print(f"Fetched sequences for {pango} saved to: {fasta_filepath.resolve()}")
+            else:
+                print(f"Failed to fetch or received empty sequences for {pango}.")
+        else:
+            print(f"Skipping sequence download for {pango} as per --no_download flag.")
 
-    if not unique_strain_seeds:
-        print("No seed strains identified after processing. Exiting.")
-        exit(0)
-    
-    print(f"Identified {len(unique_strain_seeds)} unique seed strains.")
-
-    seed_ids_filename = f"{args.state.replace(' ', '_')}_{args.pango.replace('.', '_')}_seed_strains.txt"
-    seed_ids_filepath = output_folder_path / seed_ids_filename
-    
-    with open(seed_ids_filepath, 'w') as f:
-        for strain_id in unique_strain_seeds:
-            f.write(f"{strain_id}\n")
-    print(f"Seed strain IDs saved to: {seed_ids_filepath.resolve()}")
-
-    # --- 8. Fetch Sequences from CovSpectrum ---
-    fasta_sequences = fetch_sequences_from_covspectrum(unique_strain_seeds)
-
-    if fasta_sequences is None:
-        print("Failed to fetch sequences from CovSpectrum. Output FASTA file will not be created.")
-    elif not fasta_sequences.strip():
-        print("Warning: Fetched sequences from CovSpectrum are empty. Output FASTA file will be empty or not created.")
-    else:
-        fasta_filename = f"{args.state.replace(' ', '_')}_{args.pango.replace('.', '_')}_seed_sequences.fasta"
-        fasta_filepath = output_folder_path / fasta_filename
-        with open(fasta_filepath, 'w') as f:
-            f.write(fasta_sequences)
-        print(f"Fetched sequences saved to: {fasta_filepath.resolve()}")
-
-    print("Script finished.")
+    print("\nScript finished for all specified Pango lineages.")
 
 if __name__ == "__main__":
     main()
