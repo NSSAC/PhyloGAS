@@ -159,7 +159,10 @@ def detect_outliers_chaining(date_series: pd.Series, max_gap_weeks: int = 6) -> 
 # --- End of existing helper functions ---
 
 def generate_schedule_file(df: pd.DataFrame, output_path: Path, state: str):
-    """Generates a single, consolidated importation schedule CSV from the final processed DataFrame."""
+    """
+    Generates a single, consolidated importation schedule CSV.
+    Each row represents a single cluster, preserving the sample_count distribution.
+    """
     if df.empty:
         print(f"Cannot generate schedule for {state}: No data remains after processing all variants.")
         return
@@ -170,19 +173,22 @@ def generate_schedule_file(df: pd.DataFrame, output_path: Path, state: str):
     
     df_schedule['tick'] = (df_schedule['earliest_date'] - min_date).dt.days
     
-    grouped = df_schedule.groupby(['tick', 'earliest_date', 'pango_regularized'])
+    # Add a 'clusters' column with a value of 1 for each row (since each row is a cluster)
+    df_schedule['clusters'] = 1
     
-    result = grouped.size().reset_index(name='clusters')
-    result['sample_count'] = grouped['sample_count'].sum().values
+    # Rename columns for the final output
+    df_schedule = df_schedule.rename(columns={'earliest_date': 'date', 'pango_regularized': 'variant'})
     
-    result = result.rename(columns={'earliest_date': 'date', 'pango_regularized': 'variant'})
+    # Select and order the final columns
+    output_columns = ['tick', 'date', 'variant', 'clusters', 'sample_count']
+    final_schedule_df = df_schedule[output_columns].sort_values(by=['tick', 'variant'])
     
     state_sanitized = state.replace(' ', '_')
     schedule_filename = f"{state_sanitized}_schedule.csv"
     schedule_filepath = output_path / schedule_filename
     
-    result.to_csv(schedule_filepath, index=False)
-    print(f"\nConsolidated importation schedule saved to: {schedule_filepath.resolve()}")
+    final_schedule_df.to_csv(schedule_filepath, index=False)
+    print(f"\nConsolidated importation schedule (one row per cluster) saved to: {schedule_filepath.resolve()}")
 
 
 def main():
