@@ -1,0 +1,23 @@
+# Core data science and numerical libraries
+pandas
+numpy
+scipy
+
+# For making HTTP requests to APIs (Cov-Spectrum, UCSC)
+requests
+
+# For graph creation and component analysis in label_components.py
+networkx
+
+# For machine learning utilities like minmax_scale
+scikit-learn
+
+# For parsing US state names and abbreviations
+us
+
+# For reading YAML configuration files (used in ascertainment_module.py)
+pyyaml
+
+# The specific Pango lineage aliasing tool
+# Installs directly from the specified git repository
+git+ssh://git@github.com:aswarren/pango_aliasor.git

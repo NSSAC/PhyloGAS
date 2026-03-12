@@ -1,2 +1,2 @@
 # PhyloGAS
-## Phylodynamic Genomic Analysis Similars
+## PhyloGeographic Analysis Similars
