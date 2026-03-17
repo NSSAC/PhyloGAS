@@ -441,7 +441,7 @@ def generate_sequences(args):
         seq_file = open(fasta_to_write, 'w')
         metadata_file = open(metadata_file_to_write, 'w')
 
-    line_keys=["virus","region","country","division","divisionExposure","date","strain"]
+    line_keys=["virus","region","country","division","divisionExposure","date","strain","real_strain"]
     custom_sim_keys = ["sim_pid", "sim_tick"]
     line_keys += custom_sim_keys
     meta_line = "\t".join(line_keys)
@@ -775,8 +775,6 @@ def create_infection_record(
 ):
     new_seq_str = "".join(sequence.tolist())  # Convert to string for FASTA
     cur_strain_id = f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_obj.year}"
-    if seed_fasta is not None:  # seed sequence doesn't change
-        cur_strain_id = seed_fasta.id
     infection = InfectionRecord()
     infection.fromEpihiper(
         "ncov",
@@ -787,7 +785,10 @@ def create_infection_record(
         date_obj.strftime("%Y-%m-%d"),
         cur_strain_id,
     )
-    infection.populate_sim_details(pid, tick)
+    fasta_metadata=None
+    if seed_fasta is not None:  # seed sequence doesn't change
+        fasta_metadata = seed_fasta.id
+    infection.populate_sim_details(pid, tick, fasta_metadata)
 
     aug_metadata_dict_current = {}  # Initialize for current infection
     if augment_metadata:
@@ -807,7 +808,7 @@ def create_infection_record(
                 standardized_replacements=standardized_replacements,
             )  # Will fill with NA
 
-    add_to_fasta(new_seq_str, infection, seq_file, compression_type)
+    add_to_fasta(new_seq_str, infection, seq_file, compression_type, fasta_metadata)
     write_metadata(
         metadata_file,
         infection,
@@ -894,12 +895,13 @@ class InfectionRecord:
             "originatingLab": None, "pangoLineage": None, "region": None,
             "regionExposure": None, "samplingStrategy": None, "sex": None,
             "sraAccession": None, "strainold": None, "submittingLab": None, "year": None,
-            "sim_pid": None, "sim_tick": None 
+            "sim_pid": None, "sim_tick": None, "real_strain": None
         }
 
-    def populate_sim_details(self, sim_pid, sim_tick):
+    def populate_sim_details(self, sim_pid, sim_tick, real_strain=None):
         self.inf_dict["sim_pid"] = sim_pid
         self.inf_dict["sim_tick"] = sim_tick
+        self.inf_dict["real_strain"] = real_strain
 
     def get(self,key,default=None):
         # Ensure that if default is None, we actually return None string if not present,
@@ -946,9 +948,12 @@ def write_metadata(metadata_file, infection_record, line_keys, compression_type,
         metadata_file.write(meta_line)
 
 
-def add_to_fasta(seq_str, infection_record, seq_file, compression_type): 
+def add_to_fasta(seq_str, infection_record, seq_file, compression_type, metadata=None): 
     # seq should be a string here
-    seq_line = ">" + str(infection_record.get("strain")) + "\n" + seq_str + "\n"
+    if metadata is not None:
+        seq_line = ">" + str(infection_record.get("strain")) + f" {metadata}" + "\n" + seq_str + "\n"
+    else:
+        seq_line = ">" + str(infection_record.get("strain")) + "\n" + seq_str + "\n"
     if compression_type == XZ:
         seq_file.write(seq_line.encode('utf-8')) # Specify encoding
     else:
