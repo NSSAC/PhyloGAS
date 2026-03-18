@@ -732,7 +732,9 @@ def generate_sequences(args):
         loop_counter += 1
         if loop_counter % 1000 == 0:
             print(f"    Processed {loop_counter} graph edges; Decorated {infection_counter} infections.")
-
+            #if mutational_model has allowed_to_mutate variable
+            if hasattr(mutational_model, "allowed_to_mutate"):
+                print(f"Allowed to mutate {mutational_model.allowed_to_mutate}")
         infection_counter += 1
 
     seq_file.close()

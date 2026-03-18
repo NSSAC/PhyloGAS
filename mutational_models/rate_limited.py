@@ -1,3 +1,4 @@
+import sys
 from .simple import SimpleMutationalModel
 import random
 import numpy as np
@@ -17,6 +18,7 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
     # Min/max burst size for sampling
     min_burst_size = 10
     max_burst_size = 1000
+    allowed_to_mutate = 0
 
     def __init__(self, initial_viral_load, thresholds, cumulative_probs_matrix, letters_to_use):
         self.initial_viral_load = initial_viral_load
@@ -42,6 +44,7 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
         final_change_mask = np.zeros(N, dtype=bool)
     
         if num_potential_mutations > 0:
+            self.allowed_to_mutate+=1
             # --- Weighted Site Selection ---
             # Weights: Higher for more entropy (lower threshold)
             # Ensure weights are non-negative
@@ -76,10 +79,12 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
                         if sequence[site_idx] != '-': # Safeguard
                             final_change_mask[site_idx] = True
             # --- End Weighted Site Selection ---
-
-        new_seq_arr = self.weighted_change(
-            sequence, final_change_mask
-        )
+            else:
+                print("Thresholds all 100, MSA likely perfectly conserved or training error")
+                sys.exit(0)
+            new_seq_arr = self.weighted_change(sequence, final_change_mask)
+        else:
+            new_seq_arr = sequence.copy() # No mutations, return original sequence as array for consistency
         return new_seq_arr
     
     def calculate_replication_cycles(self, initial_virions, target_early_population, burst_size):
