@@ -2,12 +2,13 @@
 
 import argparse
 import sys
+import gzip
 import pandas as pd
 import pyfastx
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Subset a compressed FASTA file using the 'strain' column from a metadata CSV."
+        description="Subset a BGZF compressed FASTA file using the 'strain' column from a metadata CSV."
     )
     parser.add_argument(
         "-m", "--metadata", 
@@ -17,12 +18,12 @@ def parse_args():
     parser.add_argument(
         "-f", "--fasta", 
         required=True, 
-        help="Path to the BGZF compressed FASTA file."
+        help="Path to the input compressed FASTA file."
     )
     parser.add_argument(
         "-o", "--output", 
         required=True, 
-        help="Path to save the output subset FASTA file."
+        help="Path to save the output subset FASTA file (use .gz extension to compress)."
     )
     return parser.parse_args()
 
@@ -37,7 +38,7 @@ def main():
             print("Error: The metadata file must contain a 'strain' column.", file=sys.stderr)
             sys.exit(1)
             
-        # Get unique strains to avoid duplicating effort if there are duplicates in the CSV
+        # Get unique strains to avoid duplicating effort
         target_strains = set(df['strain'].dropna().astype(str).unique())
         print(f"Found {len(target_strains)} unique strains in the metadata.")
         
@@ -45,17 +46,22 @@ def main():
         print(f"Error reading the metadata CSV: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 2. Open the BGZF FASTA file and extract sequences
-    print(f"Indexing/Opening FASTA file: {args.fasta}")
+    # 2. Open the input FASTA file and prepare the output file
+    print(f"Indexing/Opening input FASTA file: {args.fasta}")
     found_count = 0
     missing_strains =[]
 
     try:
-        # pyfastx natively handles bgzf compression and builds a quick sqlite index
+        # pyfastx natively handles bgzf/gzip compression
         fasta = pyfastx.Fasta(args.fasta)
         
         print(f"Extracting sequences to: {args.output}")
-        with open(args.output, 'w') as out_fasta:
+        
+        # Smart open: use gzip if the output filename ends with .gz
+        open_func = gzip.open if args.output.endswith('.gz') else open
+        mode = 'wt' if args.output.endswith('.gz') else 'w'
+        
+        with open_func(args.output, mode) as out_fasta:
             for strain in target_strains:
                 # Check if the strain exists in the FASTA index
                 if strain in fasta:
@@ -68,7 +74,7 @@ def main():
                     missing_strains.append(strain)
                     
     except Exception as e:
-        print(f"Error processing the FASTA file: {e}", file=sys.stderr)
+        print(f"Error processing the FASTA files: {e}", file=sys.stderr)
         sys.exit(1)
 
     # 3. Report the results and missing sequences
