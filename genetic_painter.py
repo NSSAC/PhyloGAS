@@ -39,6 +39,7 @@ import random
 import time
 import lzma
 import json
+from Bio import bgzf
 import gzip # Added for aligned_to_df
 
 import argparse
@@ -57,6 +58,7 @@ BOTH="both"
 
 # Compression types
 XZ="xz"
+BGZF="bgzf"
 PARQUET="parquet" # not currently supported
 
 # Includes ambiguous nucleotides - moved to global scope for broader use
@@ -101,8 +103,9 @@ def getClas():
                         help="Start tick for processing the input_graph_csv. Defaults to 0.")
 
     parser.add_argument("--reference", default=None, type=str, dest="reference", required=False, help="add reference sequence to the output")
-    parser.add_argument("--compression", default=None, type=str, dest="compression_type", required=False, help="add compression method -- None, xz, or parquet",
-                       choices=["None",XZ])
+    parser.add_argument("--compression", default=None, type=str, dest="compression_type", required=False, 
+                        help="add compression method -- None, xz, bgzf, or parquet",
+                        choices=["None", XZ, BGZF]) # Added BGZF here
     parser.add_argument("--persontrait_file", default=None, type=str, dest="persontrait_file", required=False, help="the full path to the persontrait data file with additional data")
     parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
     parser.add_argument("--location", default='{"country":"USA","division":"Virginia","divisionAbbr":"VA","region":"North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
@@ -396,6 +399,10 @@ def generate_sequences(args):
     elif args.compression_type == XZ:
         fasta_to_write = output_file_prefix + ".sequences.fasta.xz"
         metadata_file_to_write = output_file_prefix + ".metadata.tsv.xz"
+    elif args.compression_type == BGZF:
+        # Standard convention for BGZF is still .gz
+        fasta_to_write = output_file_prefix + ".sequences.fasta.gz"
+        metadata_file_to_write = output_file_prefix + ".metadata.tsv.gz"
     else: 
         print("   Warning: Unsupported compression type. Continuing with no compression.")
         fasta_to_write = output_file_prefix + ".sequences.fasta"
@@ -437,6 +444,11 @@ def generate_sequences(args):
     if args.compression_type == XZ:
         seq_file = lzma.open(fasta_to_write, 'wb')
         metadata_file = lzma.open(metadata_file_to_write, 'wb')
+    elif args.compression_type == BGZF:
+        # Use Biopython's BGZF writer for the FASTA
+        seq_file = bgzf.BgzfWriter(fasta_to_write, 'wb')
+        # Standard gzip is fine for the metadata TSV
+        metadata_file = gzip.open(metadata_file_to_write, 'wb') 
     else:
         seq_file = open(fasta_to_write, 'w')
         metadata_file = open(metadata_file_to_write, 'w')
@@ -944,7 +956,7 @@ def write_metadata(metadata_file, infection_record, line_keys, compression_type,
     
     meta_line = "\t".join(values) + "\n"
 
-    if compression_type == XZ:
+    if compression_type in [XZ, BGZF]:
         metadata_file.write(meta_line.encode('utf-8')) # Specify encoding
     else:
         metadata_file.write(meta_line)
@@ -956,7 +968,7 @@ def add_to_fasta(seq_str, infection_record, seq_file, compression_type, metadata
         seq_line = ">" + str(infection_record.get("strain")) + f" {metadata}" + "\n" + seq_str + "\n"
     else:
         seq_line = ">" + str(infection_record.get("strain")) + "\n" + seq_str + "\n"
-    if compression_type == XZ:
+    if compression_type in [XZ, BGZF]:
         seq_file.write(seq_line.encode('utf-8')) # Specify encoding
     else:
         seq_file.write(seq_line)
