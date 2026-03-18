@@ -481,8 +481,8 @@ def generate_sequences(args):
 
     meta_line += "\n"
 
-    if args.compression_type == XZ:
-        metadata_file.write(meta_line.encode())
+    if args.compression_type in [XZ, BGZF]:
+        metadata_file.write(meta_line.encode('utf-8'))
     else:
         metadata_file.write(meta_line)
 
