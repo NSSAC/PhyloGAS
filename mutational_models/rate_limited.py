@@ -20,9 +20,9 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
     max_burst_size = 1000
     allowed_to_mutate = 0
 
-    def __init__(self, initial_viral_load, thresholds, cumulative_probs_matrix, letters_to_use):
+    def __init__(self, initial_viral_load, thresholds, prob_matrix, letters_to_use):
         self.initial_viral_load = initial_viral_load
-        super().__init__(thresholds, cumulative_probs_matrix, letters_to_use)
+        super().__init__(thresholds, prob_matrix, letters_to_use)
 
     def mutate(self, sequence):
         # --- Rate Limiting Logic ---
@@ -86,6 +86,37 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
         else:
             new_seq_arr = sequence.copy() # No mutations, return original sequence as array for consistency
         return new_seq_arr
+    
+    def weighted_change(self, sequence_array, change_mask):
+        output_sequence_array = sequence_array.copy()
+
+        num_to_change = np.sum(change_mask)
+        if num_to_change == 0:
+            return output_sequence_array
+
+        change_indices = np.where(change_mask)[0]
+        original_letters = sequence_array[change_indices]
+        new_letters = np.empty_like(original_letters)
+
+        letter_to_index = {letter: i for i, letter in enumerate(self.letters_to_use)}
+
+        for i, site_idx in enumerate(change_indices):
+            original_letter = original_letters[i]
+            site_probs = self.prob_matrix[:, site_idx].copy()
+
+            original_letter_idx = letter_to_index.get(original_letter)
+            if original_letter_idx is not None:
+                site_probs[original_letter_idx] = 0.0
+
+            sum_probs = np.sum(site_probs)
+            if sum_probs > 0:
+                normalized_probs = site_probs / sum_probs
+                new_letters[i] = random.choices(self.letters_to_use, weights=normalized_probs, k=1)[0]
+            else:
+                new_letters[i] = original_letter
+
+        output_sequence_array[change_indices] = new_letters
+        return output_sequence_array
     
     def calculate_replication_cycles(self, initial_virions, target_early_population, burst_size):
         """Calculates the number of replication cycles to reach target_early_population."""

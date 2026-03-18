@@ -657,7 +657,7 @@ def generate_sequences(args):
     if use_poor_mut_model:
         mutational_model = model_registry["poor"]()
     elif args.rate_limit:
-        mutational_model = model_registry["rate_limited"](args.initial_viral_load, thresh, cumulative_probs_matrix, LETTERS)
+        mutational_model = model_registry["rate_limited"](args.initial_viral_load, thresh, prob_matrix, LETTERS)
     else:
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)
     print(f"Using {mutational_model} for mutations")
@@ -864,7 +864,7 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
     # Consider alphabet size for max entropy. If it's ACGT, then 4. If ACGTN, then 5.
     # The original code used '5' implicitly in p_xm = 1/float(5).
     ref_alphabet_size = 5 
-    e_max_val = -np.log(ref_alphabet_size) # e.g., for ACGTN, all equally likely
+    e_max_val = -np.log(1/float(ref_alphabet_size)) # e.g., for ACGTN, all equally likely
 
     if e_max_val == 0: # Avoid division by zero if, somehow, e_max_val is 0
         thresh = 0
