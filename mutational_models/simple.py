@@ -11,13 +11,10 @@ class SimpleMutationalModel(_MutationalModel):
 
     def mutate(self, sequence):
         change_mask = self.determine_change(self.thresholds, sequence)
-        new_seq = self.weighted_change(
-            sequence, change_mask
-        )
-
+        new_seq = self.weighted_change(sequence, change_mask)
         return new_seq
 
-    def determine_change(self, thresh_array, seq_to_change_array): # Now takes np arrays
+    def determine_change(self, thresh_array, seq_to_change_array):
         comparison_values = np.random.randint(0, 100, len(thresh_array))
         # random_selection is True if val > threshold (i.e. more random than consistent column allows mutation)
         random_selection = comparison_values > thresh_array 
@@ -38,7 +35,6 @@ class SimpleMutationalModel(_MutationalModel):
         if num_to_change == 0:
             return output_sequence_array
 
-        # Get indices of positions to change
         change_indices = np.where(change_mask)[0]
 
         # Generate random numbers only for these positions

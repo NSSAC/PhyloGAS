@@ -1,14 +1,13 @@
 import sys
-from .simple import SimpleMutationalModel
+from .base import _MutationalModel
 import random
 import numpy as np
 import math
 
-class RateLimitedMutationalModel(SimpleMutationalModel):
-
+class RateLimitedMutationalModel(_MutationalModel):
     name = 'rate_limited'
 
-    # --- Rate Limiting constants (can be made CLI args later) ---
+    # --- Rate Limiting constants ---
     mutation_rate_per_cycle = 3.40e-6
     peak_viral_load = 1e6  # Example peak viral load
     # Fraction of peak viral load to define "early" phase, for calculating replication cycles
@@ -22,7 +21,9 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
 
     def __init__(self, initial_viral_load, thresholds, prob_matrix, letters_to_use):
         self.initial_viral_load = initial_viral_load
-        super().__init__(thresholds, prob_matrix, letters_to_use)
+        self.thresholds = thresholds
+        self.prob_matrix = prob_matrix
+        self.letters_to_use = letters_to_use
 
     def mutate(self, sequence):
         # --- Rate Limiting Logic ---
@@ -80,38 +81,45 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
                             final_change_mask[site_idx] = True
             # --- End Weighted Site Selection ---
             else:
-                print("Thresholds all 100, MSA likely perfectly conserved or training error")
-                sys.exit(0)
+                print("\nFATAL ERROR: All site weights are zero. No mutations possible.", file=sys.stderr)
+                print("This is likely because the threshold file contains all 100s due to a conserved MSA.", file=sys.stderr)
+                sys.exit(1)
+                
             new_seq_arr = self.weighted_change(sequence, final_change_mask)
         else:
             new_seq_arr = sequence.copy() # No mutations, return original sequence as array for consistency
         return new_seq_arr
     
     def weighted_change(self, sequence_array, change_mask):
+        """
+        Forces divergence to canonical ACGT bases using the raw probability matrix.
+        """
         output_sequence_array = sequence_array.copy()
-
         num_to_change = np.sum(change_mask)
         if num_to_change == 0:
             return output_sequence_array
 
-        change_indices = np.where(change_mask)[0]
-        original_letters = sequence_array[change_indices]
-        new_letters = np.empty_like(original_letters)
+        canonical_letters = np.array(['A', 'C', 'G', 'T'])
+        canonical_indices = np.array([np.where(self.letters_to_use == char)[0][0] for char in canonical_letters])
+        canonical_char_to_idx = {char: i for i, char in enumerate(canonical_letters)}
 
-        letter_to_index = {letter: i for i, letter in enumerate(self.letters_to_use)}
+        change_indices = np.where(change_mask)[0]
+        original_letters_at_change_sites = sequence_array[change_indices]
+        new_letters = np.empty_like(original_letters_at_change_sites)
 
         for i, site_idx in enumerate(change_indices):
-            original_letter = original_letters[i]
-            site_probs = self.prob_matrix[:, site_idx].copy()
+            original_letter = original_letters_at_change_sites[i]
+            full_site_probs = self.prob_matrix[:, site_idx]
+            acgt_probs = full_site_probs[canonical_indices].copy()
 
-            original_letter_idx = letter_to_index.get(original_letter)
-            if original_letter_idx is not None:
-                site_probs[original_letter_idx] = 0.0
+            original_letter_canonical_idx = canonical_char_to_idx.get(original_letter)
+            if original_letter_canonical_idx is not None:
+                acgt_probs[original_letter_canonical_idx] = 0.0
 
-            sum_probs = np.sum(site_probs)
-            if sum_probs > 0:
-                normalized_probs = site_probs / sum_probs
-                new_letters[i] = random.choices(self.letters_to_use, weights=normalized_probs, k=1)[0]
+            sum_acgt_probs = np.sum(acgt_probs)
+            if sum_acgt_probs > 0:
+                normalized_acgt_probs = acgt_probs / sum_acgt_probs
+                new_letters[i] = random.choices(canonical_letters, weights=normalized_acgt_probs, k=1)[0]
             else:
                 new_letters[i] = original_letter
 
@@ -150,6 +158,5 @@ class RateLimitedMutationalModel(SimpleMutationalModel):
         # Numerator for the exponent term
         term_min = min_frequency**(1.0 - alpha)
         term_max = max_frequency**(1.0 - alpha)
-        
         sampled_value = (u * (term_max - term_min) + term_min)**(1.0 / (1.0 - alpha))
         return max(min_frequency, min(max_frequency, sampled_value)) # Ensure bounds
