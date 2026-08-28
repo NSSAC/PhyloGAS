@@ -1,0 +1,34 @@
+name: phylogas_env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Core Python & Package Managers
+  - python>=3.10
+  - pip
+
+  # Data Science & Math
+  - pandas
+  - numpy
+  - scipy
+  - pyarrow
+
+  # Graph & Visualization
+  - networkx
+  - matplotlib
+  - seaborn
+
+  # Bioinformatics
+  - biopython
+
+  # Utilities
+  - requests
+  - us
+  - snakemake>=7.0
+
+  # Satellite Repositories (Installed via pip)
+  - pip:
+    - git+https://github.com/aswarren/pango_aliasor.git
+    - git+https://github.com/NSSAC/BeyondBaseline.git
+    - git+https://github.com/NSSAC/TwinSampler.git
