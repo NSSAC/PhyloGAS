@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue.svg)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**PhyloGAS** is a comprehensive, digital-twin-based framework for benchmarking public health genomic surveillance strategies. 
+**PhyloGAS** is a digital-twin-based framework for benchmarking public health genomic surveillance strategies. 
 
 Genomic surveillance faces constrained sequencing capacity and ascertainment biases, distorting the continuous global transmission process into fragmented clusters. Because the "ground truth" of an outbreak is rarely known in the real world, quantifying the performance of deployed phylodynamic reconstruction methods remains a significant challenge. 
 
