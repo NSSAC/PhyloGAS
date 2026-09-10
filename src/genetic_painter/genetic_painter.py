@@ -302,40 +302,44 @@ def df_to_entropy(align2):
     thresh_detail_dfs = [] # Renamed from thresh_detail to avoid confusion with list of Series
     entropy_values = []
     for i in range(len(align2.columns)):
-        df1 = align2.iloc[:, i].value_counts(normalize=True)
-
-        # If we have N (unknown) then use the frequencies of others only
-        # (distribute N equally between the other letters and gaps).
-        # special case: If we have only N or N and gap only, then distribute N equally among ACTG.
+        # Get raw counts, including Ns, gaps, and ambiguity codes
+        raw_counts = align2.iloc[:, i].value_counts()
+        total_seqs = raw_counts.sum()
         
-        # Create a copy to avoid SettingWithCopyWarning if df1 is a slice
-        df1_copy = df1.copy()
-
-        if "-" in df1_copy.index:
-            if len(df1_copy) == 1: # Only "-"
-                value = 0.25
-                # Replace df1_copy with a new Series
-                df1_copy = pd.Series([value, value, value, value], index=["A", "C", "G", "T"])
-            else:
-                # Drop "-" and renormalize
-                df1_copy = df1_copy.drop(index="-")
-                if not df1_copy.empty: # Check if anything is left after dropping "-"
-                    df1_copy = df1_copy / df1_copy.sum()
-                else: # If only "-" was present with other non-ACGTN chars that also got dropped
-                      # or if it was all N and -, this case might need refinement based on desired behavior
-                    value = 0.25
-                    df1_copy = pd.Series([value, value, value, value], index=["A", "C", "G", "T"])
-
-
-        df1_copy.name = i # Set name for pd.concat
-        thresh_detail_dfs.append(df1_copy)
-
-        e_act, thresh_val = column_entropy_thresh(df1_copy) # Use df1_copy
-        thresh.append(thresh_val)
+        # 1. Filter down to ONLY canonical bases
+        canonical_bases = ['A', 'C', 'G', 'T']
+        acgt_counts = raw_counts[raw_counts.index.isin(canonical_bases)]
+        
+        # 2. Calculate the "Valid Fraction" multiplier
+        # What percentage of the column is a valid, canonical base?
+        valid_fraction = acgt_counts.sum() / total_seqs if total_seqs > 0 else 0
+        
+        # 3. Normalize the ACGT counts to calculate pure biological entropy
+        if acgt_counts.sum() > 0:
+            acgt_probs = acgt_counts / acgt_counts.sum()
+            e_act, raw_thresh = column_entropy_thresh(acgt_probs)
+        else:
+            # If there are NO canonical bases (e.g., all Ns or gaps)
+            e_act, raw_thresh = 0, 100.0 
+            # Provide a uniform fallback distribution for the prob matrix
+            acgt_probs = pd.Series([0.25, 0.25, 0.25, 0.25], index=["A", "C", "G", "T"])
+            
+        # 4. Scale the weight by the valid fraction
+        # Since weight = 1.0 - (thresh/100), we calculate the base weight, apply the 
+        # valid fraction penalty, and then convert it back into a threshold format.
+        base_weight = max(0.0, 1.0 - (raw_thresh / 100.0))
+        penalized_weight = base_weight * valid_fraction
+        final_thresh = (1.0 - penalized_weight) * 100.0
+        
+        # Store the clean, ACGT-only probability distribution
+        acgt_probs.name = i
+        thresh_detail_dfs.append(acgt_probs)
+        thresh.append(final_thresh)
         entropy_values.append(e_act)
         
     # Create a matrix of probabilities for each letter at each position,
-    # fill missing with 0 and reindex to maintain order
+    # fill missing with 0 and reindex to maintain order.
+    # Because we only passed ACGT probs, all Ns, gaps, etc. will become exactly 0.0!
     prob_matrix_df = pd.concat(thresh_detail_dfs, axis=1).reindex(LETTERS).fillna(0)
     prob_matrix = prob_matrix_df.values # Convert to numpy array
     return thresh, prob_matrix, entropy_values
@@ -846,14 +850,14 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
     # The provided freq_df here is *after* filtering out '-', so it contains actual characters.
 
     alphabet_size_for_max_entropy = 4 # Assuming ACGT for max entropy reference point
+    
     # If freq_df is empty or sums to zero, handle to avoid division by zero or NaN
     if freq_df.empty or freq_df.sum() == 0:
-        return 0, 0 # Or some other default for no information/all gaps
+        return 0, 100 # Default to max conservation (100) if no data
 
     for p_xi in freq_df: # Iterate over values (frequencies)
         if p_xi > 0: # log(0) is undefined
             e_act -= p_xi * np.log(p_xi) # Using natural log (nats)
-
     # Max entropy for an alphabet of size N is log(N)
     # The original code used p_xm = 1/5.0 ... e_max += p_xm * np.log(p_xm) which is -log(5)
     # This implies comparison to a 5-symbol alphabet.
@@ -875,11 +879,12 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
 
     # Consider alphabet size for max entropy. If it's ACGT, then 4. If ACGTN, then 5.
     # The original code used '5' implicitly in p_xm = 1/float(5).
-    ref_alphabet_size = 5 
-    e_max_val = -np.log(1/float(ref_alphabet_size)) # e.g., for ACGTN, all equally likely
+    # Since the input freq_df is now strictly filtered to ACGT, the reference size is 4.
+    ref_alphabet_size = 4 
+    e_max_val = -np.log(1/float(ref_alphabet_size)) # np.log(4)
 
-    if e_max_val == 0: # Avoid division by zero if, somehow, e_max_val is 0
-        thresh = 0
+    if e_max_val == 0: # Avoid division by zero
+        thresh = 100
     else:
         # Normalized entropy: H_norm = e_act / log(num_symbols_in_col)
         # The formula used: (1 - (e_act / e_max_val)) * 100
@@ -889,7 +894,7 @@ def column_entropy_thresh(freq_df): # freq_df is a pandas Series
         thresh = (1 - (e_act / e_max_val)) * 100
 
     if np.isnan(thresh):
-        thresh = 0 # If only one symbol in column, e_act can be 0. If e_max_val is also 0 (e.g. 1 symbol alphabet), NaN.
+        thresh = 100
 
     return e_act, max(0, min(100, thresh)) # Clamp threshold 0-100
 
