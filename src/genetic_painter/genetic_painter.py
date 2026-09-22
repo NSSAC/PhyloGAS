@@ -550,13 +550,13 @@ def generate_sequences(args):
     temp_seed_seqs = {}
     seed_seq_dict = {}
     if N <= M:
-        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
-            temp_seed_seqs[pid_val] = np.array(list(align_seed_records[i].seq))
+        for i, (pid_val, tick, alias_pid_val) in enumerate(zip(seed_df["pid"], seed_df["tick"], seed_df["alias_pid"])):
+            temp_seed_seqs[alias_pid_val] = np.array(list(align_seed_records[i].seq))
             seed_seq_dict[f"{pid_val}.{tick}"] = align_seed_records[i]
     else:  # set temp_seed_seqs to first N sequences
-        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
+        for i, (pid_val, tick, alias_pid_val) in enumerate(zip(seed_df["pid"], seed_df["tick"], seed_df["alias_pid"])):
             if i < M:
-                temp_seed_seqs[pid_val] = np.array(list(align_seed_records[i].seq))
+                temp_seed_seqs[alias_pid_val] = np.array(list(align_seed_records[i].seq))
                 seed_seq_dict[f"{pid_val}.{tick}"] = align_seed_records[i]
             else:
                 break  
@@ -568,7 +568,7 @@ def generate_sequences(args):
 
     current_sequences.update(temp_seed_seqs)
 
-    transitions_to_paint_df = transitions_to_paint[["pid", "contact_pid", "tick"]]
+    transitions_to_paint_df = transitions_to_paint[["pid", "contact_pid", "tick", "alias_pid", "alias_contact"]]
 
     # --- START: TICK-BASED FILTERING ---
     print(f"  Initial number of transitions to paint: {len(transitions_to_paint_df)}")
@@ -692,12 +692,12 @@ def generate_sequences(args):
         date_obj,
         tick,
     ) in seed_df[  # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date", "tick"]
+        ["pid", "contact_pid", "date", "tick", alias_pid]
     ].itertuples():
         infection_id = f"{pid}.{tick}"
         seed_fasta = seed_seq_dict.get(infection_id)
         create_infection_record(
-            current_sequences[pid],
+            current_sequences[alias_pid],
             pid,
             tick,
             date_obj,
@@ -717,11 +717,11 @@ def generate_sequences(args):
             args.compression_type,
         )
 
-    for _, pid, contact_pid, date_obj, tick in transitions_to_paint_df[ # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date", "tick"] 
+    for _, pid, contact_pid, date_obj, tick, alias_pid, alias_contact in transitions_to_paint_df[ # Use date_obj to avoid name clash
+        ["pid", "contact_pid", "date", "tick", "alias_pid", "alias_contact"] 
     ].itertuples():
         new_sequence = process_transmission(
-            pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
+            alias_pid, tick, alias_contact, seed_seq_dict, current_sequences, mutational_model
         )
         if new_sequence is None:
             continue
@@ -761,12 +761,12 @@ def generate_sequences(args):
 
 
 def process_transmission(
-    pid, tick, contact_pid, seed_seq_dict, current_sequences, mutational_model
+    alias_pid, tick, alias_contact, seed_seq_dict, current_sequences, mutational_model
 ):
-    seq_to_change_arr = current_sequences[contact_pid]
+    seq_to_change_arr = current_sequences[alias_contact]
     new_seq_arr = mutational_model.mutate(seq_to_change_arr)
 
-    current_sequences[pid] = new_seq_arr  # Store the array
+    current_sequences[alias_pid] = new_seq_arr  # Store the array
     # new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
     return new_seq_arr
 
