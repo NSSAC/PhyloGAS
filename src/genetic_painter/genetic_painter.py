@@ -733,7 +733,7 @@ def generate_sequences(args):
             print(f"Warning: contact_pid {contact_pid} has no active infection record. Skipping transmission to {pid}.")
             continue
         new_sequence = process_transmission(
-            infection_id, tick, contact_infection_id seed_seq_dict, current_sequences, mutational_model
+            infection_id, tick, contact_infection_id, seed_seq_dict, current_sequences, mutational_model
         )
         if new_sequence is None:
             continue
