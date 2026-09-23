@@ -53,7 +53,7 @@ from mutational_models import registry as model_registry
 __version__ = '0.0.12' # Incremented version
 # Analysis types
 ENTROPY_ANALYSIS="entropy_analysis"
-GEN_SEQUENCE_ANALYSIS="generate_sequence_analysis"
+GEN_SEQUENCE_ANALYSIS="generate_sequence"
 BOTH="both"
 
 # Compression types
