@@ -94,10 +94,15 @@ class RateLimitedMutationalModel(_MutationalModel):
         """
         Forces divergence to canonical ACGT bases using the raw probability matrix.
         """
-        output_sequence_array = sequence_array.copy()
         num_to_change = np.sum(change_mask)
+        
         if num_to_change == 0:
-            return output_sequence_array
+            # MEMORY FIX: Return the original array reference! Do not copy.
+            # This allows millions of identical infections to share the same RAM.
+            return sequence_array
+
+        # Only allocate memory (make a copy) if we actually need to change something
+        output_sequence_array = sequence_array.copy()
 
         canonical_letters = np.array(['A', 'C', 'G', 'T'])
         canonical_indices = np.array([np.where(self.letters_to_use == char)[0][0] for char in canonical_letters])

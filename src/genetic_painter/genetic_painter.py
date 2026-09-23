@@ -543,6 +543,7 @@ def generate_sequences(args):
     M = len(align_seed_records)
 
     current_sequences = {}
+    active_infections = {}
     if M == 0 and N > 0:
         print("Error: No sequences in seed FASTA file, but seed transitions exist. Cannot proceed.")
         sys.exit(1)
@@ -550,14 +551,18 @@ def generate_sequences(args):
     temp_seed_seqs = {}
     seed_seq_dict = {}
     if N <= M:
-        for i, (pid_val, tick, alias_pid_val) in enumerate(zip(seed_df["pid"], seed_df["tick"], seed_df["alias_pid"])):
-            temp_seed_seqs[alias_pid_val] = np.array(list(align_seed_records[i].seq))
-            seed_seq_dict[f"{pid_val}.{tick}"] = align_seed_records[i]
+        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
+            infection_id = f"{pid_val}.{tick}"
+            temp_seed_seqs[infection_id] = np.array(list(align_seed_records[i].seq))
+            seed_seq_dict[infection_id] = align_seed_records[i]
+            active_infections[pid_val] = infection_id
     else:  # set temp_seed_seqs to first N sequences
-        for i, (pid_val, tick, alias_pid_val) in enumerate(zip(seed_df["pid"], seed_df["tick"], seed_df["alias_pid"])):
+        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
             if i < M:
-                temp_seed_seqs[alias_pid_val] = np.array(list(align_seed_records[i].seq))
-                seed_seq_dict[f"{pid_val}.{tick}"] = align_seed_records[i]
+                infection_id = f"{pid_val}.{tick}"
+                temp_seed_seqs[infection_id] = np.array(list(align_seed_records[i].seq))
+                seed_seq_dict[infection_id] = align_seed_records[i]
+                active_infections[pid_val] = infection_id
             else:
                 break  
     # else: # N > M, cycle through align_seed_records
@@ -568,7 +573,7 @@ def generate_sequences(args):
 
     current_sequences.update(temp_seed_seqs)
 
-    transitions_to_paint_df = transitions_to_paint[["pid", "contact_pid", "tick", "alias_pid", "alias_contact"]]
+    transitions_to_paint_df = transitions_to_paint[["pid", "contact_pid", "tick"]]
 
     # --- START: TICK-BASED FILTERING ---
     print(f"  Initial number of transitions to paint: {len(transitions_to_paint_df)}")
@@ -692,12 +697,12 @@ def generate_sequences(args):
         date_obj,
         tick,
     ) in seed_df[  # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date", "tick", alias_pid]
+        ["pid", "contact_pid", "date", "tick"]
     ].itertuples():
         infection_id = f"{pid}.{tick}"
         seed_fasta = seed_seq_dict.get(infection_id)
         create_infection_record(
-            current_sequences[alias_pid],
+            current_sequences[infection_id],
             pid,
             tick,
             date_obj,
@@ -717,20 +722,30 @@ def generate_sequences(args):
             args.compression_type,
         )
 
-    for _, pid, contact_pid, date_obj, tick, alias_pid, alias_contact in transitions_to_paint_df[ # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date", "tick", "alias_pid", "alias_contact"] 
+    for _, pid, contact_pid, date_obj, tick in transitions_to_paint_df[ # Use date_obj to avoid name clash
+        ["pid", "contact_pid", "date", "tick"] 
     ].itertuples():
+        infection_id = f"{pid}.{tick}"
+        contact_infection_id = active_infections.get(contact_pid)
+        if contact_infection_id is None:
+            # Fallback/Safety: If contact_pid wasn't tracked (e.g., edge cases in simulation slices)
+            # Either skip or handle it. Skipping is usually safest.
+            print(f"Warning: contact_pid {contact_pid} has no active infection record. Skipping transmission to {pid}.")
+            continue
         new_sequence = process_transmission(
-            alias_pid, tick, alias_contact, seed_seq_dict, current_sequences, mutational_model
+            infection_id, tick, contact_infection_id seed_seq_dict, current_sequences, mutational_model
         )
         if new_sequence is None:
             continue
+        
+        active_infections[pid] = infection_id
+
         create_infection_record(
             new_sequence,
             pid,
             tick,
             date_obj,
-            f"{pid}.{tick}",  # infection_id
+            infection_id,  # infection_id
             None,  # Not a seed
             country,
             region,
@@ -761,12 +776,12 @@ def generate_sequences(args):
 
 
 def process_transmission(
-    alias_pid, tick, alias_contact, seed_seq_dict, current_sequences, mutational_model
+    infection_id, tick, contact_infection_id, seed_seq_dict, current_sequences, mutational_model
 ):
-    seq_to_change_arr = current_sequences[alias_contact]
+    seq_to_change_arr = current_sequences[contact_infection_id]
     new_seq_arr = mutational_model.mutate(seq_to_change_arr)
 
-    current_sequences[alias_pid] = new_seq_arr  # Store the array
+    current_sequences[infection_id] = new_seq_arr  # Store the array
     # new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
     return new_seq_arr
 
