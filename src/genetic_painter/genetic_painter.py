@@ -48,6 +48,15 @@ import math # Added for rate limiting
 
 from mutational_models import registry as model_registry
 
+# Force line-buffered stdout/stderr so progress is visible in SLURM logs as it
+# happens. Without this, stdout is block-buffered (4-8 KB) when redirected to a
+# file and a long-running job appears to hang with an empty log.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except AttributeError:  # pragma: no cover - Python < 3.7
+    pass
+
 # ====================================
 # Constants.
 __version__ = '0.0.12' # Incremented version
@@ -106,6 +115,15 @@ def getClas():
     parser.add_argument("--compression", default=None, type=str, dest="compression_type", required=False, 
                         help="add compression method -- None, xz, bgzf, or parquet",
                         choices=["None", XZ, BGZF]) # Added BGZF here
+    parser.add_argument("--compression_level", default=1, type=int, dest="compression_level", required=False,
+                        choices=range(0, 10), metavar="[0-9]",
+                        help="Compression level. For xz this is the LZMA preset, for bgzf the zlib level. "
+                             "Default 1. NOTE: the library default (6) is ~40x slower than 1 on this "
+                             "workload for <5%% size benefit and is the usual cause of multi-hour runs.")
+    parser.add_argument("--compression_threads", default=0, type=int, dest="compression_threads", required=False,
+                        help="If >0 and --compression xz, pipe output through the external multi-threaded "
+                             "`xz -T<n>` binary instead of Python's single-threaded lzma module. "
+                             "0 (default) uses in-process lzma.")
     parser.add_argument("--persontrait_file", default=None, type=str, dest="persontrait_file", required=False, help="the full path to the persontrait data file with additional data")
     parser.add_argument("--add_metadata", default=None, type=str, dest="add_metadata", required=False, help="the columns (comma-delimited) from the persontrait_file to include in the metadata output")
     parser.add_argument("--location", default='{"country":"USA","division":"Virginia","divisionAbbr":"VA","region":"North America"}', type=str, dest="location", required=False, help="the location data for the infection record")
@@ -393,6 +411,78 @@ def create_aug_metadata_dict(metadata_cols, pid, pid_df=None, standardized_repla
 
 
 # ====================================
+class _ExternalCompressor:
+    """Writes through an external multi-threaded compressor (e.g. `xz -T8`).
+
+    Python's `lzma` module is single-threaded and releases the GIL only in
+    coarse chunks, so it serialises the whole generation loop. Handing the
+    bytes to a separate `xz` process lets compression overlap with sequence
+    generation and use multiple cores.
+    """
+
+    def __init__(self, path, argv):
+        self._fh = open(path, "wb")
+        self._proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=self._fh)
+        self.closed = False
+
+    def write(self, data):
+        self._proc.stdin.write(data)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        self._proc.stdin.close()
+        rc = self._proc.wait()
+        self._fh.close()
+        if rc != 0:
+            raise RuntimeError(f"external compressor exited with status {rc}")
+
+
+def _open_output_writers(args, fasta_to_write, metadata_file_to_write):
+    """Open the FASTA and metadata handles honouring compression type/level.
+
+    Compression is by far the dominant cost of the generation loop. Measured on
+    29,903 bp SARS-CoV-2 records:
+
+        xz preset 6 (lzma default)   ~243 records/s
+        xz preset 1                ~9,000 records/s
+        xz preset 0               ~10,500 records/s
+        bgzf/gzip level 6            ~186 records/s
+        bgzf/gzip level 1          ~3,100 records/s
+        uncompressed              ~56,000 records/s
+
+    At 5.35M records the library default (preset 6) alone costs ~6 hours of
+    wall time, which is why the job appears to hang. Level 1 costs ~10 minutes
+    for well under 5% extra output size on this highly redundant data.
+    """
+    level = args.compression_level
+    threads = getattr(args, "compression_threads", 0)
+
+    if args.compression_type == XZ:
+        if threads > 0:
+            xz_argv_base = ["xz", f"-T{threads}", f"-{level}", "-c"]
+            print(f"  Compression: external `{' '.join(xz_argv_base)}` (multi-threaded)")
+            seq_file = _ExternalCompressor(fasta_to_write, xz_argv_base)
+            metadata_file = _ExternalCompressor(metadata_file_to_write, xz_argv_base)
+        else:
+            print(f"  Compression: in-process lzma, preset={level}")
+            seq_file = lzma.open(fasta_to_write, 'wb', preset=level)
+            metadata_file = lzma.open(metadata_file_to_write, 'wb', preset=level)
+    elif args.compression_type == BGZF:
+        print(f"  Compression: bgzf/gzip, level={level}")
+        # Use Biopython's BGZF writer for the FASTA
+        seq_file = bgzf.BgzfWriter(fasta_to_write, 'wb', compresslevel=level)
+        # Standard gzip is fine for the metadata TSV
+        metadata_file = gzip.open(metadata_file_to_write, 'wb', compresslevel=level)
+    else:
+        seq_file = open(fasta_to_write, 'w')
+        metadata_file = open(metadata_file_to_write, 'w')
+
+    return seq_file, metadata_file
+
+
+# ====================================
 def generate_sequences(args):
 
     output_file_prefix = args.output_prefix
@@ -413,6 +503,12 @@ def generate_sequences(args):
         metadata_file_to_write = output_file_prefix + ".metadata.tsv"
 
     augment_metadata = False
+    # These are passed to create_infection_record unconditionally, so they must
+    # exist even when metadata augmentation is off or fails to load.
+    persontrait_df = None
+    aug_metadata_columns = []
+    standardized_aug_cols = []
+    standardized_replacements = {}
     if args.persontrait_file and args.add_metadata:
         augment_metadata = True
         aug_metadata_columns = args.add_metadata.split(",")
@@ -437,25 +533,33 @@ def generate_sequences(args):
 
     print('reading in the network data....')
     begin_time = time.time()
+    # Only these columns are ever used. Reading 5 of 5 columns over ~91M rows
+    # wastes several GB; `location_id` in particular is never referenced.
+    # exit_state is read as a dictionary/category: it has ~135 distinct values
+    # over 91M rows, so categorical encoding is ~50x smaller than object dtype.
+    usecols = ["tick", "pid", "exit_state", "contact_pid"]
     try:
-        df = pd.read_csv(input_graph_csv, engine="pyarrow")
-    except ModuleNotFoundError:
-        print("Unable to use pyarrow for reading, fallback to default")
-        df = pd.read_csv(input_graph_csv)
+        df = pd.read_csv(
+            input_graph_csv,
+            engine="pyarrow",
+            usecols=usecols,
+            dtype={"tick": "int32", "pid": "int64",
+                   "contact_pid": "int64", "exit_state": "category"},
+        )
+    except (ImportError, ValueError, TypeError) as exc:
+        print(f"pyarrow read failed ({type(exc).__name__}), falling back to the C engine")
+        df = pd.read_csv(
+            input_graph_csv,
+            usecols=usecols,
+            dtype={"tick": "int32", "pid": "int64",
+                   "contact_pid": "int64", "exit_state": "category"},
+        )
     end_time = time.time()
     time_s = end_time - begin_time
-    print(f"Done. Time: {time_s:.2f} s")
-    if args.compression_type == XZ:
-        seq_file = lzma.open(fasta_to_write, 'wb')
-        metadata_file = lzma.open(metadata_file_to_write, 'wb')
-    elif args.compression_type == BGZF:
-        # Use Biopython's BGZF writer for the FASTA
-        seq_file = bgzf.BgzfWriter(fasta_to_write, 'wb')
-        # Standard gzip is fine for the metadata TSV
-        metadata_file = gzip.open(metadata_file_to_write, 'wb') 
-    else:
-        seq_file = open(fasta_to_write, 'w')
-        metadata_file = open(metadata_file_to_write, 'w')
+    print(f"Done. Time: {time_s:.2f} s  rows={len(df):,}  "
+          f"mem={df.memory_usage(deep=True).sum() / 1e9:.2f} GB")
+
+    seq_file, metadata_file = _open_output_writers(args, fasta_to_write, metadata_file_to_write)
 
     line_keys=["virus","region","country","division","divisionExposure","date","strain","real_strain"]
     custom_sim_keys = ["sim_pid", "sim_tick"]
@@ -521,21 +625,44 @@ def generate_sequences(args):
     loop_counter=0
     infection_counter = 0 # Moved initialization here
 
-    paint_this = (lambda state: state == args.input_graph_painted_state)
-    if args.input_graph_painted_prefix:
-        paint_this = (lambda state: state.startswith(args.input_graph_painted_prefix))
-
-    transitions_to_paint = df[df["exit_state"].map(paint_this)]
+    # Select the painted rows. `exit_state` is categorical, so resolve the
+    # predicate against the ~135 distinct categories and then use a vectorised
+    # isin() rather than calling a Python lambda once per row. On 91M rows this
+    # is ~26x faster (28s -> ~1s).
+    states = df["exit_state"]
+    if hasattr(states, "cat"):
+        categories = states.cat.categories
+        if args.input_graph_painted_prefix:
+            wanted = [c for c in categories if c.startswith(args.input_graph_painted_prefix)]
+        else:
+            wanted = [c for c in categories if c == args.input_graph_painted_state]
+        print(f"  Painting exit_states: {sorted(wanted)}")
+        transitions_to_paint = df[states.isin(wanted)]
+    else:
+        if args.input_graph_painted_prefix:
+            mask = states.str.startswith(args.input_graph_painted_prefix)
+        else:
+            mask = states == args.input_graph_painted_state
+        transitions_to_paint = df[mask]
     seed_transitions_mask = transitions_to_paint["contact_pid"] == -1 # Use mask for efficiency
 
     seed_df = transitions_to_paint[
         seed_transitions_mask
     ].copy()  # Renamed from 'seed' to 'seed_df'
 
-    if args.seed_fasta == None:
-        align_seed_records = list(AlignIO.read(args.align_fasta, 'fasta')) # Read once
+    # Seed sequences do not have to be aligned to each other, and the file is
+    # commonly distributed gzip/xz compressed, so use SeqIO with a
+    # compression-aware handle rather than AlignIO on a bare path.
+    seed_path = args.align_fasta if args.seed_fasta is None else args.seed_fasta
+    if seed_path.endswith('.gz'):
+        _seed_open = gzip.open
+    elif seed_path.endswith('.xz'):
+        _seed_open = lzma.open
     else:
-        align_seed_records = list(AlignIO.read(args.seed_fasta, 'fasta')) # Read once
+        _seed_open = open
+    with _seed_open(seed_path, 'rt') as _seed_handle:
+        align_seed_records = list(SeqIO.parse(_seed_handle, 'fasta'))  # Read once
+    print(f"  Loaded {len(align_seed_records):,} seed sequences from {seed_path}")
 
     # Assign seed sequences
     seed_pids = seed_df["pid"].tolist()
@@ -550,26 +677,56 @@ def generate_sequences(args):
 
     temp_seed_seqs = {}
     seed_seq_dict = {}
-    if N <= M:
-        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
-            infection_id = f"{pid_val}.{tick}"
-            temp_seed_seqs[infection_id] = np.array(list(align_seed_records[i].seq))
-            seed_seq_dict[infection_id] = align_seed_records[i]
-            active_infections[pid_val] = infection_id
-    else:  # set temp_seed_seqs to first N sequences
-        for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
-            if i < M:
-                infection_id = f"{pid_val}.{tick}"
-                temp_seed_seqs[infection_id] = np.array(list(align_seed_records[i].seq))
-                seed_seq_dict[infection_id] = align_seed_records[i]
-                active_infections[pid_val] = infection_id
-            else:
-                break  
-    # else: # N > M, cycle through align_seed_records
-    #    align_str_list = [np.array(list(r.seq)) for r in align_seed_records]
-    #    cycled_seqs = list(islice(cycle(align_str_list), N))
-    #    for i, pid_val in enumerate(seed_pids):
-    #        temp_seed_seqs[pid_val] = cycled_seqs[i]
+    # Sequences are stored as 1-byte ASCII ('S1') rather than numpy's default
+    # 4-byte UCS-4 ('<U1'). This cuts resident memory per genome from 117 KB to
+    # 29 KB and makes the FASTA conversion ~190x faster (tobytes() vs
+    # ''.join(tolist())).
+    #
+    # NOTE: only the genome is pre-allocated here. active_infections is
+    # deliberately NOT populated: an importation must not become the pid's
+    # "current" infection until the main loop reaches its tick. Setting it here
+    # made re-importations resolve to the wrong genome (see the main loop).
+    for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
+        if i >= M:
+            break
+        infection_id = f"{pid_val}.{tick}"
+        temp_seed_seqs[infection_id] = np.frombuffer(
+            str(align_seed_records[i].seq).encode('ascii'), dtype='S1'
+        )
+        seed_seq_dict[infection_id] = align_seed_records[i]
+
+    # Loudly report any importation that could not be given a genome. Each one
+    # is silently dropped from the output AND orphans every downstream
+    # transmission chain it would have founded, so this is a data-loss event
+    # rather than a cosmetic warning.
+    dropped_importations = max(0, N - M)
+    if N > M:
+        dropped = seed_df.iloc[M:]
+        n_dropped = dropped_importations
+        first_tick = int(dropped["tick"].min())
+        last_tick = int(dropped["tick"].max())
+        kept_last_tick = int(seed_df.iloc[M - 1]["tick"]) if M > 0 else None
+        banner = "!" * 78
+        print(banner, file=sys.stderr)
+        print(f"WARNING: {n_dropped:,} of {N:,} importations have NO seed sequence "
+              f"and will be DROPPED.", file=sys.stderr)
+        print(f"  Seed FASTA supplied : {M:,} sequences ({seed_path})", file=sys.stderr)
+        print(f"  Importations needed : {N:,}", file=sys.stderr)
+        print(f"  Shortfall           : {n_dropped:,} ({n_dropped / N * 100:.1f}% of importations)",
+              file=sys.stderr)
+        print(f"  Dropped ticks       : {first_tick}-{last_tick}"
+              + (f" (seeds run out after tick {kept_last_tick})" if kept_last_tick is not None else ""),
+              file=sys.stderr)
+        print("  Consequence: these importations are absent from the output, and every",
+              file=sys.stderr)
+        print("  transmission descending from them is skipped (see the 'Skipped' count at",
+              file=sys.stderr)
+        print("  the end of the run). Importations are consumed in tick order, so the loss",
+              file=sys.stderr)
+        print("  is concentrated at the END of the simulated period.", file=sys.stderr)
+        print("  Fix: supply at least as many seed sequences as importations via --seed_fasta.",
+              file=sys.stderr)
+        print(banner, file=sys.stderr)
 
     current_sequences.update(temp_seed_seqs)
 
@@ -619,13 +776,28 @@ def generate_sequences(args):
         else:
             print(f"  Number of transitions ({len(transitions_to_paint_df)}) is already within --limit {args.limit}.")
 
+    # The tick -> date mapping only has as many distinct values as there are
+    # ticks (300 here), so build a small lookup table instead of constructing
+    # millions of Timestamp objects. The previous per-row .apply() cost ~62s on
+    # 8M rows and is replaced by a dict lookup in the main loop.
+    base_date_for_conversion = pd.to_datetime(args.start_date)
+    tick_to_date = {}
+    tick_to_datestr = {}
+    tick_to_year = {}
+    if not transitions_to_paint_df.empty or not seed_df.empty:
+        all_ticks = set()
+        if not transitions_to_paint_df.empty:
+            all_ticks.update(transitions_to_paint_df["tick"].unique().tolist())
+        if not seed_df.empty:
+            all_ticks.update(seed_df["tick"].unique().tolist())
+        for t in all_ticks:
+            d = base_date_for_conversion + pd.Timedelta(days=(int(t) - args.start_tick))
+            tick_to_date[int(t)] = d
+            tick_to_datestr[int(t)] = d.strftime("%Y-%m-%d")
+            tick_to_year[int(t)] = d.year
+
     if not transitions_to_paint_df.empty:
-        # transitions_to_paint_df["date"] = pd.to_datetime(start_date) + transitions_to_paint_df["tick"].map(pd.offsets.Day)
-        # the start_tick works in conjunction with the start_date. whatever the start_tick is it will be assigned to the start_date
-        base_date_for_conversion = pd.to_datetime(args.start_date)
-        transitions_to_paint_df["date"] = transitions_to_paint_df["tick"].apply(
-            lambda x: base_date_for_conversion + pd.Timedelta(days=(x - args.start_tick))
-        )
+        pass
     elif not current_sequences: # No seeds initialized AND no transitions from other sources
         print("  No seed sequences initialized and no transitions to process. Exiting.")
         seq_file.close()
@@ -683,70 +855,86 @@ def generate_sequences(args):
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)
     print(f"Using {mutational_model} for mutations")
 
-    # Get seeds after filtering
-    seed_mask = transitions_to_paint_df["contact_pid"] == -1
+    missing_contact_count = 0
+    reimportation_count = 0
+    total_transmissions = len(transitions_to_paint_df)
+    loop_begin_time = time.time()
+    # Report roughly every 1% of the work, clamped to a sane range, so the log
+    # shows progress promptly on small runs without flooding on large ones.
+    progress_interval = min(100000, max(1000, total_transmissions // 100))
+    print(f"  Painting {total_transmissions:,} infection events "
+          f"(progress every {progress_interval:,})")
 
-    seed_df = transitions_to_paint_df[seed_mask]
-    transitions_to_paint_df = transitions_to_paint_df[~seed_mask]
+    # IMPORTANT: seeds and transmissions are walked in a SINGLE chronological
+    # pass.
+    #
+    # Previously the seed rows (contact_pid == -1) were all assigned up front
+    # and emitted in their own loop, then the transmission loop ran separately.
+    # That silently broke re-importations: a pid can acquire an imported genome
+    # at tick T2 *after* already having been infected by contact at T1 < T2.
+    # Pre-seeding set active_infections[pid] = "pid.T2", but the transmission
+    # loop then overwrote it with "pid.T1" when it processed the earlier event,
+    # so anyone that pid infected after T2 inherited the *T1* genome instead of
+    # the newly imported one - producing children that look wildly divergent
+    # from their recorded parent.
+    #
+    # Walking every painted row in tick order and applying seeds at the moment
+    # they occur keeps active_infections consistent with simulation time.
+    # EpiHiper emits rows in non-decreasing tick order; sort defensively with a
+    # stable kind so ties keep their original within-tick order.
+    ordered_events = transitions_to_paint_df.sort_values(
+        "tick", kind="stable"
+    )[["pid", "contact_pid", "tick"]]
 
-    # Dump the seed sequences
-    for (
-        _,
-        pid,
-        contact_pid,
-        date_obj,
-        tick,
-    ) in seed_df[  # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date", "tick"]
-    ].itertuples():
+    for _, pid, contact_pid, tick in ordered_events.itertuples():
         infection_id = f"{pid}.{tick}"
-        seed_fasta = seed_seq_dict.get(infection_id)
-        create_infection_record(
-            current_sequences[infection_id],
-            pid,
-            tick,
-            date_obj,
-            infection_id,
-            seed_fasta,
-            country,
-            region,
-            division,
-            divisionAbbr,
-            augment_metadata,
-            persontrait_df,
-            standardized_aug_cols,
-            standardized_replacements,
-            metadata_file,
-            line_keys,
-            seq_file,
-            args.compression_type,
-        )
+        is_seed = contact_pid == -1
 
-    for _, pid, contact_pid, date_obj, tick in transitions_to_paint_df[ # Use date_obj to avoid name clash
-        ["pid", "contact_pid", "date", "tick"] 
-    ].itertuples():
-        infection_id = f"{pid}.{tick}"
-        contact_infection_id = active_infections.get(contact_pid)
-        if contact_infection_id is None:
-            # Fallback/Safety: If contact_pid wasn't tracked (e.g., edge cases in simulation slices)
-            # Either skip or handle it. Skipping is usually safest.
-            print(f"Warning: contact_pid {contact_pid} has no active infection record. Skipping transmission to {pid}.")
-            continue
-        new_sequence = process_transmission(
-            infection_id, tick, contact_infection_id, seed_seq_dict, current_sequences, mutational_model
-        )
-        if new_sequence is None:
-            continue
-        
+        if is_seed:
+            # An importation: the genome comes from the seed FASTA, not from a
+            # parent. Only emit it if a seed sequence was actually allocated.
+            new_sequence = current_sequences.get(infection_id)
+            if new_sequence is None:
+                continue
+            seed_fasta = seed_seq_dict.get(infection_id)
+            if active_infections.get(pid) is not None:
+                reimportation_count += 1
+        else:
+            seed_fasta = None
+            contact_infection_id = active_infections.get(contact_pid)
+            if contact_infection_id is None:
+                # Fallback/Safety: the infector has no tracked genome. With a
+                # prefix filter that captures a whole variant this should be 0;
+                # a non-zero count means the painted subgraph is not closed.
+                # Counted rather than printed per-event: an unthrottled print
+                # here is itself a major slowdown and log-size problem.
+                missing_contact_count += 1
+                continue
+            parent_sequence = current_sequences.get(contact_infection_id)
+            if parent_sequence is None:
+                missing_contact_count += 1
+                continue
+
+            new_sequence = mutational_model.mutate(parent_sequence)
+
+        # A pid can be infected more than once (1.06M of 4.11M pids in the
+        # example data, up to 7 times). Its previous infection's genome can
+        # never be referenced again, so drop it to bound memory.
+        previous_infection_id = active_infections.get(pid)
+        if previous_infection_id is not None and previous_infection_id != infection_id:
+            current_sequences.pop(previous_infection_id, None)
+
+        current_sequences[infection_id] = new_sequence
         active_infections[pid] = infection_id
 
         create_infection_record(
             new_sequence,
             pid,
             tick,
-            date_obj,
+            tick_to_datestr[int(tick)],
+            tick_to_year[int(tick)],
             infection_id,  # infection_id
-            None,  # Not a seed
+            seed_fasta,    # non-None only for importations
             country,
             region,
             division,
@@ -761,16 +949,44 @@ def generate_sequences(args):
             args.compression_type,
         )
         loop_counter += 1
-        if loop_counter % 1000 == 0:
-            print(f"    Processed {loop_counter} graph edges; Decorated {infection_counter} infections.")
-            #if mutational_model has allowed_to_mutate variable
+        if loop_counter % progress_interval == 0:
+            elapsed = time.time() - loop_begin_time
+            rate = loop_counter / elapsed if elapsed > 0 else 0.0
+            remaining = total_transmissions - loop_counter
+            eta_h = (remaining / rate / 3600.0) if rate > 0 else float('nan')
+            msg = (f"    {loop_counter:,}/{total_transmissions:,} edges "
+                   f"({100.0 * loop_counter / total_transmissions:5.1f}%)  "
+                   f"{rate:,.0f} rec/s  elapsed {elapsed / 60:6.1f} min  ETA {eta_h:5.2f} h  "
+                   f"live_seqs={len(current_sequences):,}")
             if hasattr(mutational_model, "allowed_to_mutate"):
-                print(f"Allowed to mutate {mutational_model.allowed_to_mutate}")
+                msg += f"  mutated={mutational_model.allowed_to_mutate:,}"
+            if missing_contact_count:
+                msg += f"  skipped={missing_contact_count:,}"
+            print(msg)
         infection_counter += 1
 
     seq_file.close()
     metadata_file.close()
 
+    total_elapsed = time.time() - loop_begin_time
+    print(f"  Wrote {loop_counter:,} records in {total_elapsed / 60:.1f} min "
+          f"({loop_counter / total_elapsed if total_elapsed > 0 else 0:,.0f} rec/s)")
+    if reimportation_count:
+        print(f"  Handled {reimportation_count:,} re-importations (a pid receiving an "
+              f"imported genome after an earlier infection).")
+    if dropped_importations:
+        print(f"  Dropped {dropped_importations:,} importations that had no seed sequence "
+              f"(seed FASTA supplied {M:,} for {N:,} importations).", file=sys.stderr)
+    if missing_contact_count:
+        print(f"  Skipped {missing_contact_count:,} transmissions whose infector had no "
+              f"tracked genome.", file=sys.stderr)
+        if dropped_importations:
+            print(f"    This is expected here: the {dropped_importations:,} dropped "
+                  f"importations above orphaned their descendant chains.", file=sys.stderr)
+        else:
+            print(f"    Expect 0 when the painted states form a closed subgraph; a non-zero "
+                  f"value means some infectors were filtered out by the painted-state "
+                  f"selection.", file=sys.stderr)
     print("Done generating sequences.")
     return
 
@@ -778,11 +994,12 @@ def generate_sequences(args):
 def process_transmission(
     infection_id, tick, contact_infection_id, seed_seq_dict, current_sequences, mutational_model
 ):
+    """Kept for API compatibility; the main loop now inlines this so it can
+    also evict the infector's superseded genome."""
     seq_to_change_arr = current_sequences[contact_infection_id]
     new_seq_arr = mutational_model.mutate(seq_to_change_arr)
 
     current_sequences[infection_id] = new_seq_arr  # Store the array
-    # new_seq_str = "".join(new_seq_arr.tolist()) # Convert to string for FASTA
     return new_seq_arr
 
 
@@ -790,7 +1007,8 @@ def create_infection_record(
     sequence,
     pid,
     tick,
-    date_obj,
+    date_str,
+    date_year,
     infection_id,
     seed_fasta,
     country,
@@ -806,8 +1024,13 @@ def create_infection_record(
     seq_file,
     compression_type,
 ):
-    new_seq_str = "".join(sequence.tolist())  # Convert to string for FASTA
-    cur_strain_id = f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_obj.year}"
+    # 'S1' arrays convert via tobytes() in ~2.7 us; the old
+    # "".join(sequence.tolist()) path on '<U1' took ~486 us per record.
+    if sequence.dtype.kind == 'S':
+        new_seq_str = sequence.tobytes().decode('ascii')
+    else:
+        new_seq_str = "".join(sequence.tolist())
+    cur_strain_id = f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_year}"
     infection = InfectionRecord()
     infection.fromEpihiper(
         "ncov",
@@ -815,7 +1038,7 @@ def create_infection_record(
         country,
         division,
         division,  # Assuming divisionExposure is same as division
-        date_obj.strftime("%Y-%m-%d"),
+        date_str,
         cur_strain_id,
     )
     fasta_metadata=None

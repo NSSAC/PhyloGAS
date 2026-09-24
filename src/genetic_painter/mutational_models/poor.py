@@ -1,22 +1,28 @@
 from .base import _MutationalModel
 import numpy as np
-import random
+
 
 class PoorMutationalModel(_MutationalModel):
     name = 'poor'
-    
-    def mutate(self, sequence):
-        new_seq_list = [] # Build as list then join
-        for nucleotide_char in sequence: # Iterate over chars in array
-            # Original logic: change_val = np.random.randint(1, 2) -- this is always 1. So always try to change.
-            # Assuming intent was 50% chance to change:
-            if random.random() < 0.5: # 50% chance to enter this block
-                # Original new_nucleotide = np.random.randint(1, 5) maps to ACGT, 5 was '-'
-                # Let's use ACGT directly for simplicity.
-                # Not clear if '-' was intended. If so, np.random.choice(['A','C','G','T','-'])
-                new_nucleotide_char = random.choice(['A', 'C', 'G', 'T'])
-                new_seq_list.append(new_nucleotide_char)
-            else:
-                new_seq_list.append(nucleotide_char) # Keep original
 
-        return np.array("".join(new_seq_list))
+    # Deliberately unrealistic null model: every site has an independent 50%
+    # chance of being replaced by a uniformly random canonical base.
+    _ACGT = np.array(['A', 'C', 'G', 'T'])
+    _ACGT_BYTES = _ACGT.astype('S1')
+
+    def mutate(self, sequence):
+        n = len(sequence)
+        change_mask = np.random.random(n) < 0.5
+        num_to_change = int(change_mask.sum())
+        if num_to_change == 0:
+            return sequence
+
+        # Previously this built a Python list per site and returned
+        # np.array("".join(...)), a 0-d string array, which broke the caller's
+        # per-base indexing and FASTA conversion. Stay in numpy and preserve
+        # the input dtype instead.
+        output = sequence.copy()
+        picks = np.random.randint(0, 4, num_to_change)
+        alphabet = self._ACGT_BYTES if sequence.dtype.kind == 'S' else self._ACGT
+        output[change_mask] = alphabet[picks]
+        return output
