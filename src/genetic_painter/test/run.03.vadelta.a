@@ -1,7 +1,11 @@
+#!/bin/bash
 
+set -euo pipefail
 
-
-code="../src/genetic_painter.py"
+# NOTE: this path is relative to the directory you submit from (the `test/`
+# directory), and it must point at the package layout, not the old flat one.
+# The previous value "../src/genetic_painter.py" no longer exists.
+code="../src/genetic_painter/genetic_painter.py"
 
 ## Define output directory
 output_dir="run.03.vadelta.output"
@@ -17,19 +21,40 @@ random_number_seed=43
 
 ### Output files to be written.
 threshold_file="${output_dir}/run.03.threshold.file"
+# np.save() appends .npy, so this writes run.03.base.threshold.df.npy, which is
+# what run.03.vadelta.b and .both read back.
 base_threshold_df="${output_dir}/run.03.base.threshold.df"
 
 # Fasta file of genomic sequences.
 align_fasta="/project/bii_nssac/biocomplexity/synth_biosrv/clean_va_delta_sequences.fasta"
 
-# build the command as a single string for display, but run via eval
-cmd="python ${code} \
-    --analysis_type ${analysis_type} \
-    --random_number_seed ${random_number_seed} \
-    --threshold_file ${threshold_file} \
-    --align_fasta ${align_fasta} \
-    --base_threshold_df ${base_threshold_df}"
+# Fail early and clearly rather than part way through reading the MSA.
+[[ -r "${align_fasta}" ]] \
+    || { echo "ERROR: cannot read required input: ${align_fasta}" >&2; exit 1; }
 
-printf 'Running: %s\n' "$(printf '%q ' $cmd)"
-eval "$cmd"
+# NOTE: no compression/threading flags here. This step only reads the MSA and
+# writes three small text/npy files; it is CPU-light (~30 s for a
+# 16,525 x 29,903 alignment) and is unaffected by the painting optimisations.
 
+# Build as an array so paths cannot be word-split; `-u` keeps progress visible
+# in SLURM logs. The previous `eval "$cmd"` form would have broken on any path
+# containing a space.
+cmd=(
+    python -u "${code}"
+    --analysis_type      "${analysis_type}"
+    --random_number_seed "${random_number_seed}"
+    --threshold_file     "${threshold_file}"
+    --align_fasta        "${align_fasta}"
+    --base_threshold_df  "${base_threshold_df}"
+)
+
+printf 'Running: %s\n' "${cmd[*]}"
+"${cmd[@]}"
+
+# Confirm the artefacts the painting step depends on were actually produced.
+for f in "${threshold_file}" "${base_threshold_df}.npy"; do
+    [[ -s "${f}" ]] || { echo "ERROR: expected output missing or empty: ${f}" >&2; exit 1; }
+done
+echo "Entropy analysis complete:"
+echo "  ${threshold_file}"
+echo "  ${base_threshold_df}.npy"

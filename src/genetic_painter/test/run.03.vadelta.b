@@ -1,11 +1,19 @@
 #!/bin/bash
 
-code="../src/genetic_painter.py"
+set -euo pipefail
+
+# NOTE: this path is relative to the directory you submit from (the `test/`
+# directory), and it must point at the package layout, not the old flat one.
+# The previous value "../src/genetic_painter.py" no longer exists.
+code="../src/genetic_painter/genetic_painter.py"
 
 ## Inputs for both analyses.
 
 ### Analysis type.
-analysis_type="generate_sequence_analysis"
+# NOTE: the valid choice is "generate_sequence". The older
+# "generate_sequence_analysis" spelling was removed in commit 8de18a5
+# ("simplify mode") and argparse now rejects it outright.
+analysis_type="generate_sequence"
 
 random_number_seed=43 # Using the seed from your script
 
@@ -27,10 +35,24 @@ input_graph_csv="/project/bii_nssac/epihiper-simulations/pipeline-jc/run/2025012
 #input_graph_csv="/project/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-Cov2-Biosurveillance-Simulation/data/dendrogram/epihiper_exp7_dendrogram.csv"
 
 #output file prefix - updated to reflect new parameters
-output_prefix="/project/bii_nssac/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-Cov2-Biosurveillance-Simulation/test/run.03.vadelta.output/run_03_vadelta_2026_09_10_128to428" # hold.filehanged to distinguish from previous runs
+output_prefix="/project/bii_nssac/biocomplexity/vdh_genomics/synthetic_biosurveillance/PhyloGAS/test/run.03.vadelta.output/run_03_vadelta_2026_09_10_128to428" # hold.filehanged to distinguish from previous runs
 
 # Compress to xz format
 compression_type="xz"
+
+# --- Compression tuning -----------------------------------------------------
+# This is the single biggest lever on runtime. Measured on 29,903 bp records:
+#     preset 6 (the lzma default)  ~243 rec/s   <-- caused the original 8.68 h run
+#     preset 1                   ~9,000 rec/s
+# On this highly redundant data preset 1 still achieves ~320x compression
+# (preset 6 reaches ~1500x, so files are a few x larger but written ~37x faster).
+compression_level=1
+
+# Pipe through the external multi-threaded `xz` binary instead of Python's
+# single-threaded lzma module. Should match the -c value in the SBATCH header.
+# Set to 0 to use in-process lzma.
+compression_threads=8
+# ---------------------------------------------------------------------------
 
 # Persontrait file
 #persontrait_file="/project/biocomplexity/vdh_genomics/synthetic_biosurveillance/SARS-Cov2-Biosurveillance-Simulation/data/merged_population_files/va_merged_person.csv"
@@ -70,32 +92,59 @@ num_ticks_val=300
 location_val='{"country":"USA","division":"Virginia","divisionAbbr":"VA","region":"North America"}'
 reference_location_val='{"country":"China","division":"Wuhan","divisionAbbr":"Hu","region":"Asia","date":"2019-12-26"}'
 
+# This script only paints; it does not train. Fail early and clearly if the
+# entropy outputs from run.03.vadelta.a are missing.
+for f in "${threshold_file}" "${seed_fasta}" "${input_graph_csv}" "${persontrait_file}" "${reference}"; do
+    [[ -r "${f}" ]] || { echo "ERROR: cannot read required input: ${f}" >&2; exit 1; }
+done
+[[ -s "${base_threshold_df}" || -s "${base_threshold_df}.npy" ]] \
+    || { echo "ERROR: probability matrix not found: ${base_threshold_df}[.npy]" >&2
+         echo "       Run run.03.vadelta.a first to generate it." >&2; exit 1; }
+mkdir -p "$(dirname "${output_prefix}")"
 
 ## Execute.
-command="python ${code}                                           \
-    --analysis_type          ${analysis_type}            \
-    --random_number_seed     ${random_number_seed}       \
-    --threshold_file         \"${threshold_file}\"           \
-    --base_threshold_df      \"${base_threshold_df}\"        \
-    --start_date             ${start_date}               \
-    --input_graph_csv        \"${input_graph_csv}\"          \
-    --seed_fasta             \"${seed_fasta}\"              \
-    --output_prefix          \"${output_prefix}\"            \
-    --compression            ${compression_type}         \
-    --persontrait_file       \"${persontrait_file}\"         \
-    --add_metadata           \"${add_metadata}\"             \
-    --input_graph_painted_prefix \"${input_graph_painted_prefix}\" \
-    --proportional                                       \
-    --reference              \"${reference}\"                \
-    --location               '${location_val}'             \
-    --reference_location     '${reference_location_val}'     \
-    ${enable_rate_limit}                                 \
-    --initial_viral_load     ${initial_viral_load_val}    \
-    --start_tick             ${start_tick_val}            \
-    --num_ticks              ${num_ticks_val}"
+# Built as an array rather than a string so that paths containing spaces cannot
+# be word-split and `eval` is not required.
+command=(
+    python -u "${code}"
+    --analysis_type              "${analysis_type}"
+    --random_number_seed         "${random_number_seed}"
+    --threshold_file             "${threshold_file}"
+    --base_threshold_df          "${base_threshold_df}"
+    --start_date                 "${start_date}"
+    --input_graph_csv            "${input_graph_csv}"
+    --seed_fasta                 "${seed_fasta}"
+    --output_prefix              "${output_prefix}"
+    --compression                "${compression_type}"
+    --compression_level          "${compression_level}"
+    --compression_threads        "${compression_threads}"
+    --persontrait_file           "${persontrait_file}"
+    --add_metadata               "${add_metadata}"
+    --input_graph_painted_prefix "${input_graph_painted_prefix}"
+    --proportional
+    --reference                  "${reference}"
+    --location                   "${location_val}"
+    --reference_location         "${reference_location_val}"
+    ${enable_rate_limit}
+    --initial_viral_load         "${initial_viral_load_val}"
+    --start_tick                 "${start_tick_val}"
+    --num_ticks                  "${num_ticks_val}"
+)
 
-echo "Executing command: ${command}"
-eval "${command}" # Using eval to correctly interpret quotes within the command string
+echo "Executing command: ${command[*]}"
+"${command[@]}"
+
+# Verify the FASTA and metadata agree. A mismatch means the run was truncated
+# (e.g. killed by the time limit) even though earlier steps looked fine.
+fasta_out="${output_prefix}.sequences.fasta.xz"
+meta_out="${output_prefix}.metadata.tsv.xz"
+if [[ -s "${fasta_out}" && -s "${meta_out}" ]]; then
+    n_fasta=$(xz -dc "${fasta_out}" | grep -c '^>' || true)
+    n_meta=$(( $(xz -dc "${meta_out}" | wc -l) - 1 ))
+    echo "Output check: ${n_fasta} FASTA records, ${n_meta} metadata rows"
+    [[ "${n_fasta}" -eq "${n_meta}" ]] \
+        || echo "WARNING: FASTA/metadata row count mismatch - output may be truncated." >&2
+fi
 
 # To disable rate limiting, you could set:
 # enable_rate_limit=""
