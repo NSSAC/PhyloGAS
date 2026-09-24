@@ -1,0 +1,35 @@
+
+
+
+code="../src/genetic_painter.py"
+
+## Define output directory
+output_dir="run.03.vadelta.output"
+
+## Ensure the directory exists
+mkdir -p "${output_dir}"
+
+## Inputs for both analyses.
+### Analysis type.
+analysis_type="entropy_analysis"
+
+random_number_seed=43
+
+### Output files to be written.
+threshold_file="${output_dir}/run.03.threshold.file"
+base_threshold_df="${output_dir}/run.03.base.threshold.df"
+
+# Fasta file of genomic sequences.
+align_fasta="/project/bii_nssac/biocomplexity/synth_biosrv/clean_va_delta_sequences.fasta"
+
+# build the command as a single string for display, but run via eval
+cmd="python ${code} \
+    --analysis_type ${analysis_type} \
+    --random_number_seed ${random_number_seed} \
+    --threshold_file ${threshold_file} \
+    --align_fasta ${align_fasta} \
+    --base_threshold_df ${base_threshold_df}"
+
+printf 'Running: %s\n' "$(printf '%q ' $cmd)"
+eval "$cmd"
+
