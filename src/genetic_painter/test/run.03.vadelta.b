@@ -2,10 +2,14 @@
 
 set -euo pipefail
 
-# NOTE: this path is relative to the directory you submit from (the `test/`
-# directory), and it must point at the package layout, not the old flat one.
-# The previous value "../src/genetic_painter.py" no longer exists.
-code="../src/genetic_painter/genetic_painter.py"
+# Anchor to this script's own location so the submission directory does not
+# matter. This script lives in src/genetic_painter/test/, so the painter is one
+# level up at src/genetic_painter/genetic_painter.py.
+# The `cd` is required: threshold_file and base_threshold_df (below) are
+# relative to this directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${script_dir}"
+code="${script_dir}/../genetic_painter.py"
 
 ## Inputs for both analyses.
 
@@ -94,7 +98,7 @@ reference_location_val='{"country":"China","division":"Wuhan","divisionAbbr":"Hu
 
 # This script only paints; it does not train. Fail early and clearly if the
 # entropy outputs from run.03.vadelta.a are missing.
-for f in "${threshold_file}" "${seed_fasta}" "${input_graph_csv}" "${persontrait_file}" "${reference}"; do
+for f in "${code}" "${threshold_file}" "${seed_fasta}" "${input_graph_csv}" "${persontrait_file}" "${reference}"; do
     [[ -r "${f}" ]] || { echo "ERROR: cannot read required input: ${f}" >&2; exit 1; }
 done
 [[ -s "${base_threshold_df}" || -s "${base_threshold_df}.npy" ]] \
