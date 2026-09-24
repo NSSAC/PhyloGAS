@@ -8,9 +8,19 @@
 #SBATCH -e vadelta_%j.err        # (Optional) Standard error file
 ### SBATCH --mem=1TB                # Memory request; some systems may require --mem=1000G
 
-set -euo pipefail                # Fail fast: an unset var or failed step should notsilently produce a truncated dataset.
+# Fail fast so a broken step cannot silently produce a truncated dataset.
+# NOTE: `-u` (error on unset variable) is deliberately NOT enabled yet. Conda's
+# activation hooks read variables before assigning them -- e.g.
+#   etc/conda/activate.d/gdal-activate.sh:  export _CONDA_SET_GDAL_DATA=$GDAL_DATA
+# which aborts the job under `-u` with "GDAL_DATA: unbound variable".
+# Those hooks are third-party, so we activate first and tighten afterwards.
+set -eo pipefail
+
 # Run your command/script
 source /project/biocomplexity/asw3xp/miniconda3/bin/activate
+
+# Now that conda's hooks have run, catch our own typos.
+set -u
 
 # Report the resources actually consumed so the next submission can be tuned.
 trap 'echo "=== seff ${SLURM_JOB_ID:-} ==="; seff "${SLURM_JOB_ID:-}" 2>/dev/null || true' EXIT
