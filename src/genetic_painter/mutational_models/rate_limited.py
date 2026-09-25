@@ -13,7 +13,7 @@ class RateLimitedMutationalModel(_MutationalModel):
     # Fraction of peak viral load to define "early" phase, for calculating replication cycles
     rt_early_population_threshold = 0.01 
     # Probability a mutation occurring in "early" phase (defined by cycles) becomes major
-    rt_early_mutation_probability = 0.8 
+    rt_early_mutation_probability = 1.0
     # Min/max burst size for sampling
     min_burst_size = 10
     max_burst_size = 1000
