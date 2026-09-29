@@ -298,7 +298,52 @@ slurm` is the path for sweeps across many replicates.
 
 | Promised | Status |
 |---|---|
-| `phylogas fetch-data` | Stub. Prints the Dataverse URL and exits 2. Needs the Dataverse REST API. |
+| `phylogas fetch-data` | **Implemented.** Downloads the four core population files per state from the six per-state Dataverse deposits, then builds the demographics table. Contact networks are opt-in (`--with-epihiper-inputs`). |
+| `phylogas build-demographics` | **Implemented.** Joins persontrait + person + household + residence_locations + FIPS into the table the painter reads. |
 | `phylogas benchmark` | Missing. Topological F1 / mugration cosine exist in `BeyondBaseline/scripts/scenarios_simulation/mugration_station.py` and should be promoted rather than rewritten. |
 | Docker/Apptainer image | `Dockerfile` not yet written. |
 | `nextstrain_build` rule | Written but untested — needs a local ncov checkout. |
+
+
+---
+
+## Data acquisition
+
+**Old** (manual, or `download_pgcoe_dataverse-v2.sh`)
+```bash
+./download_pgcoe_dataverse-v2.sh va ga
+# then, separately and by hand, build the demographics table
+```
+
+**New**
+```bash
+phylogas fetch-data --states va ga            # download + build demographics
+phylogas fetch-data --states va --dry-run     # show the plan and sizes first
+```
+
+Key differences from the shell script:
+
+| | script | `fetch-data` |
+|---|---|---|
+| contact network (7.9 GB / 6 states) | always | opt-in `--with-epihiper-inputs` |
+| `residence_locations` | **missing** | included (required for coordinates) |
+| decompression | always, `-k` keeps both (~40 GB) | off by default; pandas reads `.xz` |
+| demographics build | not performed | automatic |
+| default state set | all six | from config, or `--states` |
+
+To build the demographics table on its own:
+```bash
+phylogas build-demographics \
+    --persontrait va/va_persontrait_epihiper.txt.xz \
+    --person      va/va_person.csv.xz \
+    --household   va/va_household.csv.xz \
+    --residence   va/va_residence_locations.csv.xz \
+    --fips        data/county_fips.csv \
+    --out         data/va/va_2_4_0_demographics.csv
+```
+
+### Config key rename
+
+`population.persontrait_file` -> `population.demographics_file`, because the
+file is a derived join and never the raw EpiHiper persontrait. The old key is
+still honoured as a fallback.

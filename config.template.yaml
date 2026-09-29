@@ -16,8 +16,16 @@ random_seed: 43
 data_dir: "data"
 results_dir: "results"
 
-# UVA Dataverse deposit holding the synthetic population and EpiHiper runs.
-dataverse_doi: "doi:10.18130/V3/5LSDCY"
+# UVA Dataverse deposits holding the synthetic populations.
+# NOTE: each PGCOE state is a SEPARATE deposit; there is no single DOI covering
+# all of them. `phylogas fetch-data` selects by state.
+dataverse_doi:
+  va: "doi:10.18130/V3/5LSDCY"
+  ca: "doi:10.18130/V3/A7DQWM"
+  ga: "doi:10.18130/V3/4DWNRH"
+  ma: "doi:10.18130/V3/ZB0SGL"
+  mn: "doi:10.18130/V3/SB2PWT"
+  wa: "doi:10.18130/V3/PNGMRJ"
 
 
 # ---------------------------------------------------------------------------
@@ -26,9 +34,41 @@ dataverse_doi: "doi:10.18130/V3/5LSDCY"
 population:
   state: "va"
   state_name: "Virginia"
-  # Per-person demographics, joined into the sequence metadata.
-  persontrait_file: "{data_dir}/va_2_4_0_demographics.csv"
-  household_file: "{data_dir}/va_household.csv"
+
+  # The DERIVED demographics table -- NOT the EpiHiper persontrait file.
+  #
+  # This distinction matters and is a known source of confusion. The raw
+  # `<state>_persontrait_epihiper.txt` from Dataverse:
+  #   * opens with a one-line EpiHiper JSON schema header, and
+  #   * has `county_fips` rather than `county`, and
+  #   * has NO home_latitude / home_longitude at all in the v2.4.0 schema
+  #     (they moved to residence_locations, reached via household.rlid), and
+  #   * has `hispanic` rather than `latino`.
+  #
+  # Build the correct file with:
+  #   phylogas fetch-data --states va          # downloads + builds it
+  # or explicitly:
+  #   phylogas build-demographics \
+  #       --persontrait va/va_persontrait_epihiper.txt.xz \
+  #       --person      va/va_person.csv.xz \
+  #       --household   va/va_household.csv.xz \
+  #       --residence   va/va_residence_locations.csv.xz \
+  #       --fips        {data_dir}/county_fips.csv \
+  #       --out         {data_dir}/va/va_2_4_0_demographics.csv
+  demographics_file: "{data_dir}/va/va_2_4_0_demographics.csv"
+
+  # Raw Dataverse files (consumed by TwinSampler and by build-demographics).
+  # pandas reads .xz natively, so there is no need to decompress them.
+  persontrait_raw: "{data_dir}/va/va_persontrait_epihiper.txt.xz"
+  household_file: "{data_dir}/va/va_household.csv.xz"
+  residence_file: "{data_dir}/va/va_residence_locations.csv.xz"
+  person_file: "{data_dir}/va/va_person.csv.xz"
+
+  # County FIPS -> name lookup (small; committed to the repo).
+  fips_file: "{data_dir}/county_fips.csv"
+
+  # USDA ERS rural-urban continuum codes. NOT on Dataverse; fetch separately
+  # from https://www.ers.usda.gov/data-products/rural-urban-continuum-codes/
   rucc_file: "{data_dir}/Ruralurbancontinuumcodes2023.csv"
 
 
@@ -72,7 +112,7 @@ genetic_painter:
 
   # -- Painting inputs (Mode 2: generation) --------------------------------
   seed_fasta: "{data_dir}/example_data/Virginia_B_1_617_2_seed_sequences.fasta.gz"
-  reference_fasta: "{data_dir}/example_data/reference.fasta"
+  reference_fasta: "{data_dir}/reference/reference.fasta"
   output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"
 
   # Which EpiHiper exit states to paint. A prefix captures every age-group

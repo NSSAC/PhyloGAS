@@ -89,7 +89,8 @@ def cmd_paint(args) -> int:
         ("--compression", pick(gp + "compression", args.compression)),
         ("--compression_level", pick(gp + "compression_level", args.compression_level)),
         ("--compression_threads", pick(gp + "compression_threads", args.compression_threads)),
-        ("--persontrait_file", pick("population.persontrait_file", args.persontrait_file)),
+        ("--persontrait_file", pick("population.demographics_file", args.persontrait_file)
+                               or pick("population.persontrait_file", None)),
         ("--add_metadata", pick(gp + "add_metadata", args.add_metadata)),
         ("--input_graph_painted_prefix", pick(gp + "painted_prefix", args.painted_prefix)),
         ("--initial_viral_load", pick(gp + "initial_viral_load", args.initial_viral_load)),
@@ -206,7 +207,8 @@ def cmd_validate_config(args) -> int:
         ("genetic_painter.reference_fasta", "reference FASTA"),
         ("genetic_painter.seed_fasta", "seed FASTA"),
         ("epihiper.output_csv", "EpiHiper transmission log"),
-        ("population.persontrait_file", "persontrait/demographics"),
+        ("population.demographics_file", "demographics (derived)"),
+        ("population.fips_file", "county FIPS lookup"),
     ]
     missing = 0
     print("\nInput files:")
@@ -230,23 +232,129 @@ def cmd_validate_config(args) -> int:
 # --------------------------------------------------------------------------
 # phylogas fetch-data
 # --------------------------------------------------------------------------
-def cmd_fetch_data(args) -> int:
-    """Download the heavy inputs from the UVA Dataverse."""
-    cfg = _load_config(args) if args.config else None
-    doi = _cfg_or_flag(cfg, "dataverse_doi", args.doi, "doi:10.18130/V3/5LSDCY")
-    dest = Path(_cfg_or_flag(cfg, "data_dir", args.dest, "data"))
-    dest.mkdir(parents=True, exist_ok=True)
+def cmd_build_demographics(args) -> int:
+    """Join the population files into the painter's demographics table.
 
-    print(f"Dataverse DOI : {doi}")
-    print(f"Destination   : {dest.resolve()}")
-    print()
-    print("Automated Dataverse download is not implemented yet.")
-    print("Fetch the files manually from:")
-    print(f"  https://dataverse.lib.virginia.edu/dataset.xhtml?persistentId={doi}")
-    print()
-    print("Then verify placement with:")
-    print(f"  phylogas validate-config --config {args.config or 'config.yaml'}")
-    return 2
+    The file the config calls `demographics_file` is NOT the EpiHiper
+    persontrait file: it is this derived join. See the module docstring of
+    phylogas.popprep.merge_persontrait for why.
+    """
+    from .popprep.merge_persontrait import build_demographics
+
+    build_demographics(
+        persontrait=args.persontrait,
+        person=args.person,
+        fips=args.fips,
+        out=args.out,
+        household=args.household,
+        residence=args.residence,
+    )
+    return 0
+
+
+def cmd_fetch_data(args) -> int:
+    """Download the synthetic population files from the UVA Dataverse."""
+    from . import dataverse as dv
+
+    cfg = _load_config(args) if args.config else None
+    dest_root = Path(_cfg_or_flag(cfg, "data_dir", args.dest, "data"))
+    states = args.states or ([cfg.get("population.state", default="va")] if cfg else ["va"])
+    states = [s.lower() for s in states]
+
+    unknown = [s for s in states if s not in dv.CORE_FILES]
+    if unknown:
+        sys.exit(
+            f"ERROR: no Dataverse deposit registered for: {', '.join(unknown)}\n"
+            f"       Known states: {', '.join(sorted(dv.CORE_FILES))}"
+        )
+
+    plan = dv.file_plan(states, with_epihiper_inputs=args.with_epihiper_inputs)
+    total_mb = sum(mb for _, _, _, mb in plan)
+
+    print(f"Destination : {dest_root.resolve()}")
+    print(f"States      : {', '.join(states)}")
+    for st in states:
+        print(f"  {st}: {dv.STATE_DOIS[st]}")
+    print(f"\nFiles to fetch ({len(plan)}, {total_mb / 1024:.2f} GB compressed):")
+    for st, name, fid, mb in plan:
+        print(f"  {mb:9.1f} MB  {name}")
+    if not args.with_epihiper_inputs:
+        skipped = sum(
+            mb for st in states for _, mb in dv.EPIHIPER_INPUT_FILES.get(st, {}).values()
+        )
+        print(f"\n  (skipping {skipped / 1024:.2f} GB of EpiHiper contact networks;")
+        print( "   nothing in PhyloGAS reads them. Use --with-epihiper-inputs if you")
+        print( "   intend to run the ABM yourself.)")
+
+    if args.dry_run:
+        print("\n--dry-run: nothing downloaded.")
+        return 0
+
+    for st, name, fid, _mb in plan:
+        state_dir = dest_root / st
+        state_dir.mkdir(parents=True, exist_ok=True)
+        target = state_dir / name
+        plain = target.with_suffix("")
+        if plain.exists():
+            print(f"    exists (decompressed), skipping: {plain.name}")
+            continue
+        try:
+            dv.download_file(fid, target)
+        except Exception as exc:
+            print(f"    ERROR downloading {name}: {exc}", file=sys.stderr)
+            return 1
+        if args.decompress:
+            dv.decompress_xz(target, keep=args.keep_compressed)
+
+    # Build the demographics table the pipeline actually reads.
+    if args.build_demographics:
+        fips = args.fips or _find_fips(dest_root)
+        if fips is None:
+            print(
+                "\nWARNING: no county FIPS lookup found; skipping demographics build.\n"
+                "         Pass --fips <county_fips.csv>, or place it at data/county_fips.csv",
+                file=sys.stderr,
+            )
+        else:
+            for st in states:
+                print(f"\nBuilding demographics for {st} ...")
+                d = dest_root / st
+                out = d / f"{st}_2_4_0_demographics.csv"
+                if out.exists():
+                    print(f"  exists, skipping: {out.name}")
+                    continue
+                try:
+                    from .popprep.merge_persontrait import build_demographics
+                    build_demographics(
+                        persontrait=str(_pick(d, f"{st}_persontrait_epihiper.txt")),
+                        person=str(_pick(d, f"{st}_person.csv")),
+                        household=str(_pick(d, f"{st}_household.csv")),
+                        residence=str(_pick(d, f"{st}_residence_locations.csv")),
+                        fips=str(fips),
+                        out=str(out),
+                    )
+                except SystemExit as exc:
+                    print(f"  demographics build failed: {exc}", file=sys.stderr)
+
+    print("\nStill required from elsewhere (see docs/data_acquisition.md):")
+    print("  - Ruralurbancontinuumcodes2023.csv  (USDA ERS)")
+    print("  - EpiHiper simulation replicates    (deposit pending)")
+    print(f"\nVerify with:  phylogas validate-config --config {args.config or 'config.yaml'}")
+    return 0
+
+
+def _pick(d: Path, stem: str) -> Path:
+    """Return the decompressed file if present, else the .xz (pandas reads both)."""
+    plain = d / stem
+    return plain if plain.exists() else d / (stem + ".xz")
+
+
+def _find_fips(root: Path):
+    for cand in (root / "county_fips.csv", root / "Data" / "county_fips.csv",
+                 Path("data/county_fips.csv")):
+        if cand.exists():
+            return cand
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -342,11 +450,38 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_validate_config)
 
     # -- fetch-data -------------------------------------------------------
-    sp = sub.add_parser("fetch-data", help="Download inputs from the UVA Dataverse")
+    sp = sub.add_parser("fetch-data",
+                        help="Download synthetic population files from the UVA Dataverse")
     sp.add_argument("--config", "-c", default=None)
-    sp.add_argument("--doi", default=None)
-    sp.add_argument("--dest", default=None)
+    sp.add_argument("--states", nargs="+", metavar="ST",
+                    help="State codes to fetch (va ca ga ma mn wa). Default: config population.state")
+    sp.add_argument("--dest", default=None, help="Destination root (default: config data_dir)")
+    sp.add_argument("--with-epihiper-inputs", dest="with_epihiper_inputs", action="store_true",
+                    help="Also fetch the EpiHiper contact networks (7.1 GB for all six "
+                         "states). Nothing in PhyloGAS reads these; only needed to run the ABM.")
+    sp.add_argument("--decompress", action="store_true",
+                    help="Decompress .xz after download. Off by default: pandas reads "
+                         ".xz natively and these files expand ~6x.")
+    sp.add_argument("--keep-compressed", dest="keep_compressed", action="store_true",
+                    help="With --decompress, also keep the .xz original.")
+    sp.add_argument("--no-build-demographics", dest="build_demographics",
+                    action="store_false", default=True,
+                    help="Skip building <state>_2_4_0_demographics.csv after download.")
+    sp.add_argument("--fips", default=None, help="county FIPS -> name lookup CSV")
+    sp.add_argument("--dry-run", "-n", dest="dry_run", action="store_true",
+                    help="List what would be downloaded, then stop.")
     sp.set_defaults(func=cmd_fetch_data)
+
+    # -- build-demographics -----------------------------------------------
+    sp = sub.add_parser("build-demographics",
+                        help="Join population files into the painter's demographics table")
+    sp.add_argument("--persontrait", required=True)
+    sp.add_argument("--person", required=True)
+    sp.add_argument("--fips", required=True)
+    sp.add_argument("--out", required=True)
+    sp.add_argument("--household", default=None, help="needed for home_latitude/longitude")
+    sp.add_argument("--residence", default=None, help="needed for home_latitude/longitude")
+    sp.set_defaults(func=cmd_build_demographics)
 
     return p
 

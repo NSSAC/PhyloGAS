@@ -166,6 +166,17 @@ def getClas():
 
 
 # ====================================
+def _open_text_maybe_compressed(path):
+    """Open a text file that may be plain, .gz or .xz."""
+    p = str(path)
+    if p.endswith(".xz"):
+        return lzma.open(p, "rt")
+    if p.endswith(".gz"):
+        return gzip.open(p, "rt")
+    return open(p, "r")
+
+
+# ====================================
 def write_output_entropy(args, thresh, prob_matrix, entropy_values):
 
     # Filename and base filename.
@@ -525,14 +536,53 @@ def generate_sequences(args):
     if args.persontrait_file and args.add_metadata:
         augment_metadata = True
         aug_metadata_columns = args.add_metadata.split(",")
+
+        # This file must be the DERIVED demographics table, not the raw
+        # EpiHiper persontrait file. The v2.4.0 persontrait opens with a JSON
+        # schema line and lacks county/home_latitude/home_longitude/latino
+        # entirely. Build the right file with:
+        #     phylogas build-demographics --persontrait ... --person ... \
+        #         --household ... --residence ... --fips ... --out ...
+        #
+        # Failures here are FATAL rather than a silent downgrade: previously a
+        # bad file disabled augmentation and produced a complete-looking run
+        # whose demographic columns were all empty.
         try:
-            persontrait_df = pd.read_csv(args.persontrait_file).set_index("pid")
+            with _open_text_maybe_compressed(args.persontrait_file) as _fh:
+                _first = _fh.readline().lstrip()
+            _skip = 1 if _first.startswith("{") else 0
+            if _skip:
+                print(f"  Note: {args.persontrait_file} begins with an EpiHiper JSON schema "
+                      f"line; skipping it.")
+                print( "        (This looks like a RAW persontrait file. The painter expects the "
+                       "derived")
+                print( "         demographics table - see `phylogas build-demographics`.)")
+            persontrait_df = pd.read_csv(args.persontrait_file, skiprows=_skip).set_index("pid")
         except FileNotFoundError:
-            print(f"  Error: persontrait_file {args.persontrait_file} not found. Cannot augment metadata.")
-            augment_metadata = False # Turn off augmentation
-        except KeyError: # 'pid' not in columns
-            print(f"  Error: 'pid' column not found in {args.persontrait_file}. Cannot augment metadata.")
-            augment_metadata = False
+            sys.exit(f"  Error: persontrait_file {args.persontrait_file} not found.")
+        except KeyError:
+            sys.exit(
+                f"  Error: no 'pid' column in {args.persontrait_file}.\n"
+                f"         Build the demographics table with `phylogas build-demographics`."
+            )
+
+        # Verify the requested columns actually exist before painting millions
+        # of records. The painter renames a few on the way in.
+        _alias = {"gender": "sex", "home_latitude": "latitude", "home_longitude": "longitude"}
+        _have = set(persontrait_df.columns)
+        _missing = [c for c in aug_metadata_columns
+                    if c not in _have and _alias.get(c, c) not in _have]
+        if _missing:
+            sys.exit(
+                f"  Error: --add_metadata requested columns that are not in\n"
+                f"         {args.persontrait_file}:\n"
+                f"           missing : {', '.join(_missing)}\n"
+                f"           present : {', '.join(sorted(_have)[:12])}\n"
+                f"         If this is a raw EpiHiper persontrait file, build the derived\n"
+                f"         demographics table first:\n"
+                f"           phylogas build-demographics --persontrait <pt> --person <p> \\\n"
+                f"               --household <hh> --residence <rl> --fips <fips> --out <out>"
+            )
     elif args.persontrait_file or args.add_metadata:
         print("   Info: persontrait_file and add_metadata must BOTH be provided to augment metadata. Not augmenting.")
 
