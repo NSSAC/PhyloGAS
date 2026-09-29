@@ -46,7 +46,13 @@ import argparse
 from itertools import islice, cycle
 import math # Added for rate limiting
 
-from mutational_models import registry as model_registry
+# Works both as an installed package (`phylogas.painter.mutational_models`) and
+# when this file is run directly from its own directory, which the existing
+# run.03.vadelta.* scripts still do.
+try:
+    from .mutational_models import registry as model_registry
+except ImportError:
+    from mutational_models import registry as model_registry
 
 # Force line-buffered stdout/stderr so progress is visible in SLURM logs as it
 # happens. Without this, stdout is block-buffered (4-8 KB) when redirected to a
@@ -486,6 +492,13 @@ def _open_output_writers(args, fasta_to_write, metadata_file_to_write):
 def generate_sequences(args):
 
     output_file_prefix = args.output_prefix
+
+    # Create the output directory if the prefix names one that does not exist
+    # yet. Without this the run dies only after loading the network and the
+    # seed FASTA, which can be several minutes of wasted work.
+    _out_parent = os.path.dirname(os.path.abspath(output_file_prefix))
+    if _out_parent:
+        os.makedirs(_out_parent, exist_ok=True)
 
     if args.compression_type is None or args.compression_type == "None":
         fasta_to_write = output_file_prefix + ".sequences.fasta"
