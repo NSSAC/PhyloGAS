@@ -1,0 +1,150 @@
+# ===========================================================================
+# PhyloGAS pipeline configuration
+#
+#   cp config.template.yaml config.yaml
+#   $EDITOR config.yaml
+#   phylogas validate-config --config config.yaml
+#
+# Any string may reference another key with {dotted.path}; references are
+# expanded after loading, so ordering does not matter.
+# ===========================================================================
+
+project_name: "va_delta_wave"
+random_seed: 43
+
+# Where large inputs live, and where outputs are written.
+data_dir: "data"
+results_dir: "results"
+
+# UVA Dataverse deposit holding the synthetic population and EpiHiper runs.
+dataverse_doi: "doi:10.18130/V3/5LSDCY"
+
+
+# ---------------------------------------------------------------------------
+# 1. Digital twin population
+# ---------------------------------------------------------------------------
+population:
+  state: "va"
+  state_name: "Virginia"
+  # Per-person demographics, joined into the sequence metadata.
+  persontrait_file: "{data_dir}/va_2_4_0_demographics.csv"
+  household_file: "{data_dir}/va_household.csv"
+  rucc_file: "{data_dir}/Ruralurbancontinuumcodes2023.csv"
+
+
+# ---------------------------------------------------------------------------
+# 2. Variant of interest
+# ---------------------------------------------------------------------------
+variant:
+  pango: "B.1.617.2"          # Delta
+  label: "delta"
+
+
+# ---------------------------------------------------------------------------
+# 3. Seed acquisition  (phylogas prep-seeds)
+# ---------------------------------------------------------------------------
+seeds:
+  output_folder: "{data_dir}/importations/sequences"
+  # How to drop temporal outliers when choosing importation seeds:
+  #   chaining | iqr | zscore
+  outlier_method: "chaining"
+
+
+# ---------------------------------------------------------------------------
+# 4. EpiHiper agent-based simulation output
+# ---------------------------------------------------------------------------
+epihiper:
+  # Transmission log: tick,pid,exit_state,contact_pid,location_id
+  output_csv: "{data_dir}/example_data/0.25_crossinfection/output.csv.gz"
+
+
+# ---------------------------------------------------------------------------
+# 5. Genetic Painter  (phylogas train / phylogas paint)
+# ---------------------------------------------------------------------------
+genetic_painter:
+  # -- Training inputs (Mode 1: entropy analysis) --------------------------
+  # Real-world MSA the entropy "fitness map" is learned from.
+  align_fasta: "{data_dir}/clean_va_delta_sequences.fasta"
+
+  # -- Fitness map (written by `train`, read by `paint`) -------------------
+  entropy_thresholds: "{data_dir}/example_data/run.03.threshold.file"
+  probability_matrix: "{data_dir}/example_data/run.03.base.threshold.df.npy"
+
+  # -- Painting inputs (Mode 2: generation) --------------------------------
+  seed_fasta: "{data_dir}/example_data/Virginia_B_1_617_2_seed_sequences.fasta.gz"
+  reference_fasta: "{data_dir}/example_data/reference.fasta"
+  output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"
+
+  # Which EpiHiper exit states to paint. A prefix captures every age-group
+  # suffix (E2_a, E2_s, ...). "E2" = variant 2 exposure.
+  painted_prefix: "E2"
+
+  # -- Mutation engine ------------------------------------------------------
+  # rate_limit : biophysical, burst-size + Poisson driven (recommended)
+  # simple     : per-site threshold draw
+  # poor       : 50% random substitution null model
+  mutation_model: "rate_limit"
+  initial_viral_load: 10        # transmission bottleneck
+  proportional: true            # use MSA-derived substitution probabilities
+
+  # -- Time window -----------------------------------------------------------
+  # start_tick maps onto start_date; num_ticks sets the span.
+  start_date: "2021-04-07"
+  start_tick: 128
+  num_ticks: 300
+
+  # -- Metadata --------------------------------------------------------------
+  add_metadata: "gender,county,home_latitude,home_longitude,latino,race,smh_race,age_group"
+  location:
+    country: "USA"
+    division: "Virginia"
+    divisionAbbr: "VA"
+    region: "North America"
+
+  # -- Output compression ----------------------------------------------------
+  # xz level 1 is ~37x faster than the lzma default (level 6) and still
+  # achieves ~320x compression on this highly redundant data. Level 6 costs
+  # roughly 6 hours of extra wall time on a 5.3M-record run.
+  compression: "xz"
+  compression_level: 1
+  compression_threads: 8        # 0 = in-process lzma; >0 uses external `xz -T`
+
+
+# ---------------------------------------------------------------------------
+# 6. Ascertainment simulation  (TwinSampler)
+# ---------------------------------------------------------------------------
+ascertainment:
+  parameters: "{data_dir}/ascertainment_parameters.yaml"
+  schedule_input: "{data_dir}/Virginia_importation_schedule.csv"
+  variant_mode: 2
+  prefix_override: ["A2", "P2", "I2", "dM2", "hM2"]
+  output: "{results_dir}/02_simulated_linelists/linelist.csv"
+
+
+# ---------------------------------------------------------------------------
+# 7. Adaptive sampling  (BeyondBaseline)
+# ---------------------------------------------------------------------------
+sampling:
+  algorithms: ["surs", "lasso_greedy"]
+  batch_size: 400
+  replicates: 5
+  no_replacement: true
+  outdir: "{results_dir}/03_sampled_datasets"
+
+
+# ---------------------------------------------------------------------------
+# 8. Phylodynamic reconstruction  (Nextstrain / TreeTime)
+# ---------------------------------------------------------------------------
+nextstrain:
+  enabled: false
+  snakefile: ""                 # path to the ncov Snakefile
+  configfile: ""
+  outdir: "{results_dir}/04_nextstrain_builds"
+
+
+# ---------------------------------------------------------------------------
+# 9. Benchmarking against ground truth
+# ---------------------------------------------------------------------------
+benchmark:
+  metrics: ["topological_f1", "mugration_cosine"]
+  outdir: "{results_dir}/05_benchmarks"

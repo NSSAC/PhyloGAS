@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phylogas"
+version = "0.1.0"
+description = "PhyloGAS: digital-twin benchmarking framework for genomic surveillance"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "NSSAC / Biocomplexity Institute, University of Virginia" }]
+keywords = ["genomic-surveillance", "phylodynamics", "digital-twin", "epidemiology"]
+
+dependencies = [
+  "pandas>=1.4",
+  "numpy>=1.21",
+  "scipy>=1.8",
+  "biopython>=1.80",
+  "networkx>=2.8",
+  "matplotlib>=3.5",
+  "seaborn>=0.12",
+  "scikit-learn>=1.1",
+  "pyyaml>=6.0",
+  "requests>=2.28",
+]
+
+[project.optional-dependencies]
+# Columnar IO. Strongly recommended: the EpiHiper transmission log is ~91M rows
+# and pyarrow cuts the read from minutes to seconds.
+fast = ["pyarrow>=10.0"]
+# Workflow orchestration for `phylogas run`.
+pipeline = ["snakemake>=7.0"]
+# Random access into BGZF/gzip FASTA, used by the non-streaming subset tool.
+fasta = ["pyfastx>=2.0"]
+dev = ["pytest>=7.0"]
+all = ["pyarrow>=10.0", "snakemake>=7.0", "pyfastx>=2.0", "pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/NSSAC/PhyloGAS"
+Dataverse = "https://dataverse.lib.virginia.edu/dataset.xhtml?persistentId=doi:10.18130/V3/5LSDCY"
+
+[project.scripts]
+phylogas = "phylogas.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["phylogas*"]
+exclude = ["phylogas.painter.test*", "phylogas.painter.analysis*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

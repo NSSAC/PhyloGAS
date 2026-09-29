@@ -37,18 +37,29 @@ cd PhyloGAS
 
 # Create the environment and install all dependencies
 mamba env create -f environment.yml
-
-# Activate the environment
 conda activate phylogas_env
-```
-*(Note: `environment.yml` automatically installs the `twin_sampler` and `BeyondBaseline` libraries directly from GitHub).*
 
-### Option B: Docker / Apptainer (Recommended for Production/HPC)
-For absolute reproducibility without environment conflicts on state or university clusters, use our pre-built container:
-```bash
-# Example Apptainer/Singularity execution
-apptainer pull phylogas.sif docker://nssac/phylogas:latest
+# Install PhyloGAS itself (editable)
+pip install -e .
 ```
+*(`environment.yml` also pulls the `TwinSampler` and `BeyondBaseline` libraries
+directly from GitHub. Those repos each need a `pyproject.toml` for this to work
+- see `docs/salvage_audit.md` if the pip step fails.)*
+
+### Option B: pip only
+```bash
+pip install -e ".[all]"     # or ".[fast]" for just pyarrow
+```
+
+Verify the install:
+```bash
+phylogas --version
+phylogas --help
+```
+
+### Option C: Docker / Apptainer
+> **Status: not yet available.** The `Dockerfile` has not been written and no
+> image is published. Use Option A or B for now.
 
 ---
 
@@ -63,52 +74,81 @@ cp config.template.yaml config.yaml
 vim config.yaml
 ```
 
-**2. Execute the pipeline:**
-Let Snakemake handle the data dependencies, multi-threading, and script orchestration:
+**2. Check your configuration:**
 ```bash
-# Run locally using all available cores
-snakemake --use-conda --cores all
-
-# OR: Run on a SLURM cluster (Snakemake natively handles job submission)
-snakemake --profile slurm_profile
+phylogas validate-config --config config.yaml
 ```
+This expands `{placeholder}` references and reports which declared inputs are
+actually present on disk.
+
+**3. Execute the pipeline:**
+```bash
+# Everything, locally
+phylogas run --config config.yaml --cores all
+
+# Stop after the genetic painter
+phylogas run --config config.yaml --cores all --until paint_only
+
+# On SLURM
+phylogas run --config config.yaml --profile slurm
+
+# See what would run, without running it
+phylogas run --config config.yaml --dry-run
+```
+
+**Or drive a single stage directly:**
+```bash
+phylogas train --config config.yaml        # Stage 1: entropy map from an MSA
+phylogas paint --config config.yaml        # Stage 2: paint the network
+phylogas subset-fasta -m samples.csv.xz -f full.fasta.xz -o subset.fasta.xz
+```
+Any config value can be overridden with a flag, and `--dry-run` prints the
+underlying command:
+```bash
+phylogas paint --config config.yaml --num-ticks 30 --dry-run
+```
+
+Migrating from the older standalone scripts? See **[`command_map.md`](command_map.md)**.
 
 ---
 
 ## ⚙️ Configuration (`config.yaml`)
 
-The pipeline relies on a unified YAML configuration. Here is an example of the configuration structure:
+The pipeline is driven by one YAML file. Start from
+[`config.template.yaml`](config.template.yaml), which is commented throughout and
+is the authoritative reference for every key.
+
+Strings may reference other keys with `{dotted.path}`; references are expanded
+after loading, so ordering does not matter:
 
 ```yaml
-# --- PhyloGAS Main Configuration ---
+project_name: "va_delta_wave"
+data_dir: "data"
+results_dir: "results"
 
-# 1. Project & Dataverse
-project_name: "va_delta_wave_exp7"
-dataverse_doi: "doi:10.18130/V3/5LSDCY"
-data_dir: "data/"  # Dataverse downloads will populate here
-
-# 2. Digital Twin Demographics
 population:
   state: "va"
-  persontrait_file: "data/va_persontrait_epihiper.csv"
-  household_file: "data/va_household.csv"
+  persontrait_file: "{data_dir}/va_2_4_0_demographics.csv"
 
-# 3. The Genetic Engine (Genetic Painter)
 genetic_painter:
-  mutation_model: "rate_limit"     # Options: rate_limit, simple, poor
-  initial_viral_load: 10           # Transmission bottleneck size
-  peak_viral_load: 1e9             # Drives early-phase replication cycles
-  reference_fasta: "data/reference.fasta"
-  entropy_thresholds: "data/run.03.threshold.file"
-  probability_matrix: "data/run.03.base.threshold.df.npy"
+  mutation_model: "rate_limit"      # rate_limit | simple | poor
+  initial_viral_load: 10            # transmission bottleneck
+  entropy_thresholds: "{data_dir}/run.03.threshold.file"
+  probability_matrix: "{data_dir}/run.03.base.threshold.df.npy"
+  output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"
+  start_date: "2021-04-07"
+  start_tick: 128
+  num_ticks: 300
 
-# 4. Surveillance & Sampling
-surveillance:
-  ascertainment_config: "data/ascertainment_parameters.yaml"
+  # xz level 1 is ~37x faster than the lzma default (6) and still reaches
+  # ~320x compression on this data. Level 6 adds hours to a 5M-record run.
+  compression: "xz"
+  compression_level: 1
+  compression_threads: 8
+
+sampling:
+  algorithms: ["surs", "lasso_greedy"]
   batch_size: 400
-  algorithms: 
-    - "surs"
-    - "stratified"
 ```
 
 ---
@@ -125,6 +165,52 @@ results/
 ├── 04_nextstrain_builds/        # Auspice JSONs and inferred trees from the pipeline
 └── 05_benchmarks/               # Final CSVs containing Cosine Similarity & F1-Scores
 ```
+
+---
+
+## 🗂️ Repository Layout
+
+```text
+PhyloGAS/
+├── Snakefile                  # Pipeline DAG
+├── config.template.yaml       # Commented configuration reference
+├── command_map.md             # Old script invocations -> phylogas CLI
+├── pyproject.toml             # Package metadata; defines the `phylogas` command
+├── environment.yml            # Conda environment incl. satellite repos
+├── src/phylogas/
+│   ├── cli.py                 # Unified command line interface
+│   ├── config.py              # YAML loading + {placeholder} expansion
+│   ├── painter/               # The Genetic Painter
+│   │   ├── genetic_painter.py
+│   │   ├── mutational_models/ # rate_limited | simple | poor
+│   │   └── test/              # SLURM submission scripts
+│   ├── seqprep/               # Seed acquisition, FASTA subsetting
+│   └── popprep/               # Demographics assembly
+├── docs/salvage_audit.md      # What was rescued from synthetic_biosurveillance
+└── cfg/                       # EpiHiper experiment configs
+```
+
+---
+
+## ✅ Implementation Status
+
+This project is mid-restructure. What is actually wired up today:
+
+| Stage | Command | Status |
+|---|---|---|
+| 0. Seed acquisition | `phylogas prep-seeds` | Works |
+| 1. Entropy training | `phylogas train` | Works, verified end-to-end |
+| 2. Genetic painting | `phylogas paint` | Works, verified end-to-end |
+| 3. Ascertainment | `simulate_linelist` (TwinSampler) | External; Snakemake rule written, untested here |
+| 4. Adaptive sampling | `scenarios-runner` (BeyondBaseline) | External; requires that repo's `pyproject.toml` |
+| 5. FASTA subsetting | `phylogas subset-fasta` | Works |
+| 6. Nextstrain | rule `nextstrain_build` | Opt-in, untested (needs an ncov checkout) |
+| 7. Benchmarking | `phylogas benchmark` | **Not implemented.** F1 / mugration code lives in BeyondBaseline and should be promoted, not rewritten |
+| — | `phylogas fetch-data` | **Stub.** Prints the Dataverse URL; no API client yet |
+| — | Docker / Apptainer | **Not written** |
+
+Verified working: `phylogas train` → `phylogas paint` via Snakemake produces
+29,010 sequences with matching metadata, and a re-run is correctly a no-op.
 
 ---
 

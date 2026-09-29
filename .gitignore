@@ -1,0 +1,57 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+.env
+
+# OS cruft
+.DS_Store
+
+# --- Run artifacts -------------------------------------------------------
+# Painter / pipeline outputs. These are regenerable and often enormous
+# (a single sequences.fasta.xz can be >100 MB); they must not enter history.
+results/
+experiments/
+**/run.03.vadelta.output/
+*.sequences.fasta*
+*.metadata.tsv*
+*.threshold.file
+*.base.threshold.df.npy
+*_entropy.csv
+
+# SLURM logs
+*.out
+*.err
+slurm-*.out
+
+# Snakemake
+.snakemake/
+
+# --- Large inputs --------------------------------------------------------
+# Fetched from Dataverse by `phylogas fetch-data`, never committed.
+data/example_data/
+data/importations/sequences/
+data/variant_soup*/
+*.fasta.gz
+*.fasta.xz
+*.csv.gz
+*.csv.xz
+*.tsv.gz
+*.fa
+
+# Uncompressed cluster tables. These are Dataverse/UShER-derived inputs, not
+# repo source. `hybrid_synthetic_clusters_delta.tsv` alone is 96 MB - larger
+# than every tracked file in the repo combined. Compress and host externally
+# rather than committing; git cannot ever forget a blob once added.
+data/importations/*.tsv
+data/*.snakemake.log
+
+# Editor / workspace local settings
+*.code-workspace
