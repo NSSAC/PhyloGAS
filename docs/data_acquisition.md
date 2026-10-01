@@ -340,3 +340,40 @@ Two notes from that run:
   but the bundled seed FASTA is Virginia Delta with 3,322 sequences. The
   shortfall warning fires correctly and names the affected tick range. Per-state
   seed sets (via `phylogas prep-seeds`) are needed for full coverage.
+
+
+---
+
+## Switched to Zenodo (2026-10-01)
+
+All six synthetic populations are now mirrored on Zenodo and `phylogas
+fetch-data` downloads from there. Dataverse is no longer contacted.
+
+| state | record | core files |
+|---|---|---|
+| va | [23088534](https://doi.org/10.5281/zenodo.23088534) | 104.0 MB |
+| ca | [23088872](https://doi.org/10.5281/zenodo.23088872) | 455.4 MB |
+| ga | [23088629](https://doi.org/10.5281/zenodo.23088629) | 123.3 MB |
+| ma | [23088723](https://doi.org/10.5281/zenodo.23088723) | 79.1 MB |
+| mn | [23088773](https://doi.org/10.5281/zenodo.23088773) | 74.9 MB |
+| wa | [23088830](https://doi.org/10.5281/zenodo.23088830) | 91.0 MB |
+
+Each record holds all 13 Dataverse files; `fetch-data` pulls the four needed
+to build the demographics table, and `--with-epihiper-inputs` adds the contact
+network and persontrait database.
+
+**Why:** measured 2026-09-30, Dataverse returned 502 on its website, 500 on
+its metadata API, and roughly 50% 503 on its file API. Zenodo has been
+reliable for the ABM replicates throughout.
+
+**Checksums are now real.** The filenames, sizes and MD5s in
+`src/phylogas/sources.py` were harvested from the Zenodo API rather than
+transcribed, so a corrupt or truncated download is always caught.
+
+Verified end to end on Minnesota: four files downloaded and MD5-verified, then
+joined into 5,218,000 demographics rows with 100% coordinate coverage and
+coordinates inside the state bounding box. A re-run verifies the existing
+files and downloads nothing.
+
+The Dataverse DOIs remain in `sources.py` as `DATAVERSE_DOIS` for citation and
+manual fallback.

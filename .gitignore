@@ -46,6 +46,16 @@ data/variant_soup*/
 *.tsv.gz
 *.fa
 
+# Per-state data directories: downloaded by `phylogas fetch-data` or symlinked
+# from a cluster. Large and/or externally owned; never committed.
+data/va/
+data/ca/
+data/ga/
+data/ma/
+data/mn/
+data/wa/
+data/Ruralurbancontinuumcodes2023.csv
+
 # Uncompressed cluster tables. These are Dataverse/UShER-derived inputs, not
 # repo source. `hybrid_synthetic_clusters_delta.tsv` alone is 96 MB - larger
 # than every tracked file in the repo combined. Compress and host externally
@@ -55,3 +65,15 @@ data/*.snakemake.log
 
 # Editor / workspace local settings
 *.code-workspace
+
+# --- One-off data-publishing operations ---------------------------------
+# Scripts and scraped source material used once to mirror the synthetic
+# populations from UVA Dataverse to Zenodo. Operational, not software: they
+# are not imported by the package, have no tests, and are irrelevant to anyone
+# installing PhyloGAS. Kept on disk and copied to the cluster where they run.
+# The provenance of the generated metadata is recorded in
+# docs/mirroring_populations_to_zenodo.md, which IS tracked.
+scripts/zenodo/
+docs/source_material/
+dataverse_html.txt
+zenodo_doi.txt

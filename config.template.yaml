@@ -17,21 +17,18 @@ data_dir: "data"
 results_dir: "results"
 
 # --- Remote data sources ---------------------------------------------------
-# Synthetic populations: UVA Dataverse, one deposit per state (below).
-# EpiHiper simulations:  Zenodo, one record for all states.
+# Everything is fetched from Zenodo. UVA Dataverse proved unreliable
+# (website 502, metadata API 500, file API ~50% 503 as of 2026-09-30), so the
+# synthetic populations were mirrored. Dataverse DOIs are retained in
+# src/phylogas/sources.py for citation.
+#
+# Synthetic populations, one record per state:
+#   va 10.5281/zenodo.23088534    ga 10.5281/zenodo.23088629
+#   ma 10.5281/zenodo.23088723    mn 10.5281/zenodo.23088773
+#   wa 10.5281/zenodo.23088830    ca 10.5281/zenodo.23088872
+#
+# EpiHiper simulation replicates, one record for all states:
 zenodo_doi: "10.5281/zenodo.23067670"
-
-# UVA Dataverse deposits holding the synthetic populations.
-# NOTE: each PGCOE state is a SEPARATE deposit; there is no single DOI covering
-# all of them. `phylogas fetch-data` selects by state.
-dataverse_doi:
-  va: "doi:10.18130/V3/5LSDCY"
-  ca: "doi:10.18130/V3/A7DQWM"
-  ga: "doi:10.18130/V3/4DWNRH"
-  ma: "doi:10.18130/V3/ZB0SGL"
-  mn: "doi:10.18130/V3/SB2PWT"
-  wa: "doi:10.18130/V3/PNGMRJ"
-
 
 # ---------------------------------------------------------------------------
 # 1. Digital twin population

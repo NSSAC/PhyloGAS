@@ -143,6 +143,7 @@ Please do not spend time on these; they are known.
 | Nextstrain rule | Written but untested; needs a local `ncov` checkout. Off by default. |
 | `benchmark compare` | Exercised only with two augur files. The simulated-parsimony side needs `--save-matrices` output from a real run. |
 | RUCC file | Not on Dataverse. Fetch from USDA ERS yourself. |
+| UVA Dataverse | Unstable as of 2026-09-30: website 502, metadata API 500, file API ~50% 503. Downloads usually succeed on retry. If you have the files on a cluster, see [`docs/staging_local_data.md`](docs/staging_local_data.md). |
 | Seed coverage | The bundled seed FASTA is Virginia Delta (3,322 seqs). Other states under-cover -- WA has 3,721 E2 importations. Use `--with-seeds`. |
 | Scale | Largest local test was 5.3M records. Cluster-scale runs are unverified. |
 | Docker/Apptainer | Not built. |

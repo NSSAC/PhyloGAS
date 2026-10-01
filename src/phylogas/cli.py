@@ -224,13 +224,20 @@ def cmd_validate_config(args) -> int:
         if raw is None:
             print(f"  [ -- ] {label:32s} (not configured)")
             continue
-        exists = Path(str(raw)).expanduser().exists()
-        print(f"  [{'okay' if exists else 'MISS'}] {label:32s} {raw}")
-        missing += (not exists)
+        found = cfg.resolve_variant(raw)
+        if found is None:
+            print(f"  [MISS] {label:32s} {raw}")
+            missing += 1
+        elif str(found) != str(Path(str(raw)).expanduser()):
+            # Same file, different compression extension than configured.
+            print(f"  [okay] {label:32s} {found}")
+            print(f"         (config says {raw})")
+        else:
+            print(f"  [okay] {label:32s} {raw}")
 
     if missing:
         print(f"\n{missing} configured input(s) are missing.")
-        print("Run `phylogas fetch-data` for Dataverse-hosted inputs.")
+        print("Run `phylogas fetch-data --with-simulations` to download them from Zenodo.")
         return 1
     print("\nAll configured inputs are present.")
     return 0
@@ -280,18 +287,19 @@ def cmd_fetch_data(args) -> int:
         )
 
     plan = dv.file_plan(states, with_epihiper_inputs=args.with_epihiper_inputs)
-    total_mb = sum(mb for _, _, _, mb in plan)
+    total_mb = sum(mb for *_, mb, _ in plan)
 
     print(f"Destination : {dest_root.resolve()}")
     print(f"States      : {', '.join(states)}")
     for st in states:
-        print(f"  {st}: {dv.STATE_DOIS[st]}")
+        rec = dv.population_record(st)
+        print(f"  {st}: https://doi.org/{rec[1]}")
     print(f"\nFiles to fetch ({len(plan)}, {total_mb / 1024:.2f} GB compressed):")
-    for st, name, fid, mb in plan:
+    for st, name, url, mb, md5 in plan:
         print(f"  {mb:9.1f} MB  {name}")
     if not args.with_epihiper_inputs:
         skipped = sum(
-            mb for st in states for _, mb in dv.EPIHIPER_INPUT_FILES.get(st, {}).values()
+            mb for st in states for mb, _ in dv.EPIHIPER_INPUT_FILES.get(st, {}).values()
         )
         print(f"\n  (skipping {skipped / 1024:.2f} GB of EpiHiper contact networks;")
         print( "   nothing in PhyloGAS reads them. Use --with-epihiper-inputs if you")
@@ -318,7 +326,7 @@ def cmd_fetch_data(args) -> int:
         print("\n--dry-run: nothing downloaded.")
         return 0
 
-    for st, name, fid, _mb in plan:
+    for st, name, url, _mb, md5 in plan:
         state_dir = dest_root / st
         state_dir.mkdir(parents=True, exist_ok=True)
         target = state_dir / name
@@ -327,7 +335,9 @@ def cmd_fetch_data(args) -> int:
             print(f"    exists (decompressed), skipping: {plain.name}")
             continue
         try:
-            dv.download_file(fid, target)
+            dv.download_url(url, target, expect_md5=None if args.no_verify else md5)
+        except SystemExit:
+            raise
         except Exception as exc:
             print(f"    ERROR downloading {name}: {exc}", file=sys.stderr)
             return 1
@@ -569,19 +579,21 @@ def cmd_status(args) -> int:
                 continue
             comp = cfg.get("genetic_painter.compression", default="xz")
             ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
-            path = Path(f"{prefix}.sequences.fasta{ext}")
+            path = cfg.resolve_variant(f"{prefix}.sequences.fasta{ext}")
+            shown = path or Path(f"{prefix}.sequences.fasta{ext}")
         else:
             raw = cfg.get(cfgkey, default=None)
             if raw is None:
                 print(f"  [ -- ] {label:28s} (not configured)")
                 continue
-            path = Path(str(raw)).expanduser()
+            path = cfg.resolve_variant(raw)
+            shown = path or Path(str(raw)).expanduser()
 
-        if path.exists():
+        if path is not None:
             size = path.stat().st_size / 1048576
             print(f"  [okay] {label:28s} {size:8.1f} MB  {path}")
         else:
-            print(f"  [MISS] {label:28s} {path}")
+            print(f"  [MISS] {label:28s} {shown}")
             if first_missing is None:
                 first_missing = nxt.format(state=state, config=cfg_path)
 
@@ -768,8 +780,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="State codes to fetch (va ca ga ma mn wa). Default: config population.state")
     sp.add_argument("--dest", default=None, help="Destination root (default: config data_dir)")
     sp.add_argument("--with-epihiper-inputs", dest="with_epihiper_inputs", action="store_true",
-                    help="Also fetch the EpiHiper contact networks (7.1 GB for all six "
-                         "states). Nothing in PhyloGAS reads these; only needed to run the ABM.")
+                    help="Also fetch the EpiHiper contact networks and persontrait "
+                         "databases. Nothing in PhyloGAS reads these; only needed to "
+                         "run the ABM yourself.")
     sp.add_argument("--decompress", action="store_true",
                     help="Decompress .xz after download. Off by default: pandas reads "
                          ".xz natively and these files expand ~6x.")

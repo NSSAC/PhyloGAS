@@ -115,6 +115,35 @@ class Config:
             node = node[part]
         return node
 
+    @staticmethod
+    def resolve_variant(raw) -> "Path | None":
+        """Find a configured path, tolerating compression-extension drift.
+
+        A config may name ``va_person.csv.xz`` while the file on disk is the
+        decompressed ``va_person.csv`` (or vice versa) -- common when inputs
+        are copied or symlinked from a cluster rather than fetched. Every
+        consumer reads both forms via pandas, so the checkers should too.
+
+        Returns the first existing variant, or None.
+        """
+        if raw is None:
+            return None
+        p = Path(str(raw)).expanduser()
+        if p.exists():
+            return p
+        # configured compressed -> try the decompressed form
+        if p.suffix in (".xz", ".gz", ".bz2", ".zst"):
+            plain = p.with_suffix("")
+            if plain.exists():
+                return plain
+        else:
+            # configured plain -> try the compressed forms
+            for ext in (".xz", ".gz", ".bz2", ".zst"):
+                cand = p.with_suffix(p.suffix + ext)
+                if cand.exists():
+                    return cand
+        return None
+
     def require_path(self, dotted: str) -> Path:
         """Look up a key and assert the file it names exists."""
         raw = self.get(dotted)
