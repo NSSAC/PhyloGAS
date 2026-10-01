@@ -99,6 +99,12 @@ def cmd_paint(args) -> int:
         if value is not None:
             cmd += [flag, str(value)]
 
+    for spec in (args.linelist_filter or []):
+        cmd += ["--linelist_filter", str(spec)]
+    for spec in (_cfg_or_flag(cfg, gp + "linelist_filters", None, []) or []):
+        if spec not in (args.linelist_filter or []):
+            cmd += ["--linelist_filter", str(spec)]
+
     model = pick(gp + "mutation_model", args.mutation_model, "rate_limit")
     if model in ("rate_limit", "rate_limited"):
         cmd.append("--rate_limit")
@@ -123,7 +129,7 @@ def cmd_train(args) -> int:
         "input_graph_csv", "output_prefix", "start_date", "start_tick", "num_ticks",
         "reference", "compression", "compression_level", "compression_threads",
         "persontrait_file", "add_metadata", "painted_prefix", "initial_viral_load",
-        "seed_fasta",
+        "seed_fasta", "linelist_filter",
     ):
         setattr(args, attr, None)
     args.mutation_model = None
@@ -355,6 +361,20 @@ def cmd_fetch_data(args) -> int:
         except Exception as exc:
             print(f"    ERROR downloading {key}: {exc}", file=sys.stderr)
             return 1
+
+    # USDA rural-urban continuum codes. A pinned copy ships in data/; this
+    # refreshes it from the agency.
+    if args.with_rucc:
+        dest_root.mkdir(parents=True, exist_ok=True)
+        target = dest_root / dv.RUCC_FILENAME
+        print(f"\nFetching RUCC codes from USDA ERS ...")
+        try:
+            dv.download_url(dv.RUCC_URL, target, expect_md5=None)
+            print(f"    NOTE: USDA revises this file in place, so no checksum is")
+            print(f"          pinned. Re-running an old analysis against a refreshed")
+            print(f"          file may not reproduce; see data/README.md.")
+        except Exception as exc:
+            print(f"    ERROR fetching RUCC: {exc}", file=sys.stderr)
 
     # Seed sequences (Cov-Spectrum). Public data, so no redistribution
     # constraint; fetched on demand rather than committed.
@@ -661,6 +681,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--persontrait-file", dest="persontrait_file")
     sp.add_argument("--add-metadata", dest="add_metadata")
     sp.add_argument("--painted-prefix", dest="painted_prefix")
+    sp.add_argument("--linelist-filter", dest="linelist_filter", action="append",
+                    default=None, metavar="[LABEL=]FILE",
+                    help="Also write a FASTA/metadata pair restricted to the infections "
+                         "named in FILE. Repeatable: one output per filter, plus the "
+                         "unrestricted set.")
     sp.add_argument("--mutation-model", dest="mutation_model",
                     choices=["rate_limit", "simple", "poor"])
     sp.add_argument("--initial-viral-load", dest="initial_viral_load", type=float)
@@ -796,6 +821,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Also fetch the EpiHiper simulation replicates from Zenodo "
                          "(~0.4-0.6 GB per state). These are the transmission networks "
                          "`phylogas paint` consumes.")
+    sp.add_argument("--with-rucc", dest="with_rucc", action="store_true",
+                    help="Refresh Ruralurbancontinuumcodes2023.csv from USDA ERS. "
+                         "A pinned copy already ships in data/.")
     sp.add_argument("--with-seeds", dest="with_seeds", action="store_true",
                     help="Also fetch per-state seed sequences from Cov-Spectrum. "
                          "Needed for states other than VA: the bundled seed FASTA is "

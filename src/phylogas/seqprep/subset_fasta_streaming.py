@@ -44,22 +44,33 @@ def smart_open(filepath, mode):
 def main():
     args = parse_args()
 
-    # 1. Read the metadata using pandas and extract the target strains
+    # 1. Read the metadata and work out which sequences to keep.
+    #
+    # Accepts either a painter metadata file (has `strain`) or a
+    # TwinSampler/BeyondBaseline linelist or samples file (has `alias_pid`).
+    # The painter writes strain IDs as USA/VA-EHip-{pid}.{tick}/{year}, and now
+    # also emits alias_pid directly, so both can be matched without the caller
+    # having to reformat anything.
     print(f"Reading metadata from: {args.metadata}")
     try:
-        # pandas automatically handles uncompressed, .gz, or .xz CSV files
-        df = pd.read_csv(args.metadata, low_memory=False)
-        if 'strain' not in df.columns:
-            print("Error: The metadata file must contain a 'strain' column.", file=sys.stderr)
-            sys.exit(1)
-            
-        # Get unique strains to avoid duplicating effort
-        target_strains = set(df['strain'].dropna().astype(str).unique())
-        print(f"Found {len(target_strains)} unique strains in the metadata.")
-        
+        df = pd.read_csv(args.metadata, low_memory=False, dtype=str)
+        df.columns = [c.strip() for c in df.columns]
     except Exception as e:
         print(f"Error reading the metadata CSV: {e}", file=sys.stderr)
         sys.exit(1)
+
+    ID_COLUMNS = ("strain", "alias_pid", "infection_id", "sim_pid", "pid")
+    col = next((c for c in ID_COLUMNS if c in df.columns), None)
+    if col is None:
+        print(f"Error: {args.metadata} has none of the recognised identifier columns.\n"
+              f"       Looked for: {', '.join(ID_COLUMNS)}\n"
+              f"       Found: {', '.join(list(df.columns)[:10])}", file=sys.stderr)
+        sys.exit(1)
+
+    values = set(df[col].dropna().astype(str).str.strip().unique())
+    target_strains = values if col == "strain" else set()
+    target_aliases = set() if col == "strain" else values
+    print(f"Found {len(values)} unique identifiers in column '{col}'.")
 
     # 2. Stream through the input FASTA and write to the output FASTA
     print(f"Streaming input FASTA file: {args.fasta}")
@@ -76,8 +87,14 @@ def main():
                 if line.startswith('>'):
                     # Extract the strain ID (up to the first space or newline)
                     header_id = line[1:].strip().split()[0]
-                    
-                    if header_id in target_strains:
+
+                    # Match on the full strain ID, or on the alias_pid embedded
+                    # in it (USA/VA-EHip-{pid}.{tick}/{year}).
+                    hit = header_id in target_strains
+                    if not hit and target_aliases and "EHip-" in header_id:
+                        alias = header_id.split("EHip-")[1].rsplit("/", 1)[0]
+                        hit = alias in target_aliases or alias.split(".")[0] in target_aliases
+                    if hit:
                         keep_sequence = True
                         found_strains.add(header_id)
                         f_out.write(line)
@@ -91,19 +108,25 @@ def main():
         print(f"Error processing the FASTA files: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 3. Report the results and missing sequences
-    missing_strains = target_strains - found_strains
-    
+    # 3. Report the results and anything that could not be matched.
     print("\n--- Summary ---")
+    print(f"Requested identifiers : {len(values)}")
     print(f"Successfully extracted: {len(found_strains)} sequences.")
-    print(f"Missing sequences: {len(missing_strains)}")
 
-    if missing_strains:
-        print("\nWARNING: The following strains were listed in the metadata but missing from the FASTA file:")
-        for missing in sorted(list(missing_strains)):
-            print(f"  - {missing}")
+    n_missing = len(values) - len(found_strains)
+    if n_missing > 0:
+        print(f"Missing sequences     : {n_missing}")
+        if target_strains:
+            missing = sorted(target_strains - found_strains)[:20]
+            print("\nWARNING: listed in the metadata but absent from the FASTA:")
+            for m in missing:
+                print(f"  - {m}")
+            if n_missing > len(missing):
+                print(f"  ... and {n_missing - len(missing)} more")
+        else:
+            print("\nWARNING: some identifiers did not match any sequence header.")
     else:
-        print("\nSuccess: All metadata strains were successfully found in the FASTA file!")
+        print("\nSuccess: every requested identifier was found.")
 
 if __name__ == "__main__":
     main()

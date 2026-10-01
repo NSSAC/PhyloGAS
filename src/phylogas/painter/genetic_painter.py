@@ -38,6 +38,7 @@ from Bio import SeqIO
 import random
 import time
 import lzma
+import re
 import json
 from Bio import bgzf
 import gzip # Added for aligned_to_df
@@ -136,6 +137,15 @@ def getClas():
     parser.add_argument("--reference_location", default='{"country":"China","division":"Wuhan","divisionAbbr":"Hu","region":"Asia","date":"2019-12-26"}', type=str, dest="reference_location", required=False, help="the location data for the reference infection record")
     
     # START ADDED ARGUMENTS FOR RATE LIMITING
+    parser.add_argument("--linelist_filter", "--linelist-filter", dest="linelist_filter",
+                        action="append", default=None, metavar="[LABEL=]FILE",
+                        help="Also write a FASTA/metadata pair containing only the "
+                             "infections named in FILE. Repeatable, so one run can emit "
+                             "the full tree plus any number of sampled subsets (e.g. one "
+                             "per sampling strategy). FILE may be a TwinSampler linelist "
+                             "or a BeyondBaseline samples file; identifiers are read from "
+                             "alias_pid, infection_id, strain, sim_pid or pid. Without "
+                             "this flag a single unrestricted output is written, as before.")
     parser.add_argument("--rate_limit", action="store_true", default=False, dest="rate_limit",
                         help="Enable rate-limiting of mutations based on within-host dynamics and iSNV paper.")
     parser.add_argument("--initial_viral_load", type=float, default=10.0, dest="initial_viral_load",
@@ -500,6 +510,117 @@ def _open_output_writers(args, fasta_to_write, metadata_file_to_write):
 
 
 # ====================================
+class _OutputSet:
+    """One FASTA + metadata pair, optionally restricted to a set of infections.
+
+    The painter always walks the whole transmission tree -- a child's genome is
+    derived from its parent's, so nothing can be skipped during computation.
+    These objects decide only what reaches disk.
+
+    With no --linelist-filter, a single unrestricted set is created and
+    behaviour is exactly as before. Each --linelist-filter file adds another
+    set that writes only the infections named in it, so one pass can emit the
+    full tree plus any number of sampled subsets.
+    """
+
+    def __init__(self, label, prefix, args, keys=None, source=None):
+        self.label = label
+        self.prefix = prefix
+        self.keys = keys            # None => write everything
+        self.source = source
+        self.written = 0
+        fasta, meta = _output_paths(prefix, args.compression_type)
+        self.fasta_path, self.meta_path = fasta, meta
+        self.seq_file, self.metadata_file = _open_output_writers(args, fasta, meta)
+
+    def wants(self, infection_id):
+        return self.keys is None or infection_id in self.keys
+
+    def close(self):
+        for fh in (self.seq_file, self.metadata_file):
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+
+def _output_paths(prefix, compression_type):
+    if compression_type is None or compression_type == "None":
+        return prefix + ".sequences.fasta", prefix + ".metadata.tsv"
+    if compression_type == XZ:
+        return prefix + ".sequences.fasta.xz", prefix + ".metadata.tsv.xz"
+    if compression_type == BGZF:
+        return prefix + ".sequences.fasta.gz", prefix + ".metadata.tsv.gz"
+    return prefix + ".sequences.fasta", prefix + ".metadata.tsv"
+
+
+# Columns that can identify an infection in a filter file, in priority order.
+# alias_pid / infection_id are "{pid}.{tick}" and match exactly. strain is the
+# painter's own ID and is parsed back. A bare pid matches every infection of
+# that person, which is coarser but sometimes what you have.
+_FILTER_KEY_COLUMNS = ("alias_pid", "infection_id", "strain", "sim_pid", "pid")
+
+
+def _read_filter_keys(path):
+    """Read a linelist/samples file and return (infection_ids, pids, column).
+
+    Accepts anything pandas can read, compressed or not. Returns exact
+    infection ids where available, plus a fallback set of bare pids.
+    """
+    df = pd.read_csv(path, dtype=str)
+    df.columns = [c.strip() for c in df.columns]
+    col = next((c for c in _FILTER_KEY_COLUMNS if c in df.columns), None)
+    if col is None:
+        sys.exit(
+            f"  Error: {path} has none of the recognised identifier columns.\n"
+            f"         Looked for: {', '.join(_FILTER_KEY_COLUMNS)}\n"
+            f"         Found: {', '.join(list(df.columns)[:10])}"
+        )
+
+    vals = df[col].dropna().astype(str).str.strip()
+    infection_ids, pids = set(), set()
+    if col == "strain":
+        # USA/VA-EHip-{pid}.{tick}/{year}
+        for v in vals:
+            if "EHip-" in v:
+                infection_ids.add(v.split("EHip-")[1].rsplit("/", 1)[0])
+    elif col in ("alias_pid", "infection_id"):
+        for v in vals:
+            (infection_ids if "." in v else pids).add(v)
+    else:
+        pids.update(v.replace(".0", "") for v in vals)
+    return infection_ids, pids, col
+
+
+def _build_output_sets(args):
+    """Create the output sets implied by --output_prefix and --linelist-filter."""
+    sets = [_OutputSet("all", args.output_prefix, args)]
+
+    for spec in (args.linelist_filter or []):
+        # "label=path" or just "path" (label derived from the filename)
+        if "=" in spec and not os.path.exists(spec):
+            label, path = spec.split("=", 1)
+        else:
+            path = spec
+            label = re.sub(r"(\.csv|\.tsv)?(\.xz|\.gz)?$", "", os.path.basename(path))
+            label = re.sub(r"_samples$", "", label)
+        if not os.path.exists(path):
+            sys.exit(f"  Error: --linelist-filter file not found: {path}")
+
+        ids, pids, col = _read_filter_keys(path)
+        if not ids and not pids:
+            print(f"  Warning: {path} yielded no identifiers; skipping", file=sys.stderr)
+            continue
+        keys = ids if ids else None
+        s = _OutputSet(label, f"{args.output_prefix}.{label}", args, keys=keys, source=path)
+        s.pid_keys = pids if not ids else None
+        sets.append(s)
+        n = len(ids) if ids else len(pids)
+        print(f"  Filter '{label}': {n:,} identifiers from column '{col}' ({path})")
+    return sets
+
+
+# ====================================
 def generate_sequences(args):
 
     output_file_prefix = args.output_prefix
@@ -510,21 +631,6 @@ def generate_sequences(args):
     _out_parent = os.path.dirname(os.path.abspath(output_file_prefix))
     if _out_parent:
         os.makedirs(_out_parent, exist_ok=True)
-
-    if args.compression_type is None or args.compression_type == "None":
-        fasta_to_write = output_file_prefix + ".sequences.fasta"
-        metadata_file_to_write = output_file_prefix + ".metadata.tsv"
-    elif args.compression_type == XZ:
-        fasta_to_write = output_file_prefix + ".sequences.fasta.xz"
-        metadata_file_to_write = output_file_prefix + ".metadata.tsv.xz"
-    elif args.compression_type == BGZF:
-        # Standard convention for BGZF is still .gz
-        fasta_to_write = output_file_prefix + ".sequences.fasta.gz"
-        metadata_file_to_write = output_file_prefix + ".metadata.tsv.gz"
-    else: 
-        print("   Warning: Unsupported compression type. Continuing with no compression.")
-        fasta_to_write = output_file_prefix + ".sequences.fasta"
-        metadata_file_to_write = output_file_prefix + ".metadata.tsv"
 
     augment_metadata = False
     # These are passed to create_infection_record unconditionally, so they must
@@ -622,10 +728,20 @@ def generate_sequences(args):
     print(f"Done. Time: {time_s:.2f} s  rows={len(df):,}  "
           f"mem={df.memory_usage(deep=True).sum() / 1e9:.2f} GB")
 
-    seq_file, metadata_file = _open_output_writers(args, fasta_to_write, metadata_file_to_write)
+    output_sets = _build_output_sets(args)
+    if len(output_sets) > 1:
+        print(f"  Writing {len(output_sets)} output sets "
+              f"({', '.join(o.label for o in output_sets)})")
+    # The unrestricted set keeps the historical variable names so the header
+    # and reference-record code below is unchanged.
+    seq_file = output_sets[0].seq_file
+    metadata_file = output_sets[0].metadata_file
 
     line_keys=["virus","region","country","division","divisionExposure","date","strain","real_strain"]
-    custom_sim_keys = ["sim_pid", "sim_tick"]
+    # alias_pid == infection_id == "{pid}.{tick}". Emitting it directly means
+    # downstream joins against TwinSampler/BeyondBaseline files are a key match
+    # rather than parsing it back out of the strain ID.
+    custom_sim_keys = ["sim_pid", "sim_tick", "alias_pid"]
     line_keys += custom_sim_keys
     meta_line = "\t".join(line_keys)
 
@@ -652,10 +768,12 @@ def generate_sequences(args):
 
     meta_line += "\n"
 
-    if args.compression_type in [XZ, BGZF]:
-        metadata_file.write(meta_line.encode('utf-8'))
-    else:
-        metadata_file.write(meta_line)
+    # Header goes to every output set.
+    for _o in output_sets:
+        if args.compression_type in [XZ, BGZF]:
+            _o.metadata_file.write(meta_line.encode('utf-8'))
+        else:
+            _o.metadata_file.write(meta_line)
 
     ref_location_dict = json.loads(args.reference_location)
     if args.reference is not None:
@@ -863,8 +981,8 @@ def generate_sequences(args):
         pass
     elif not current_sequences: # No seeds initialized AND no transitions from other sources
         print("  No seed sequences initialized and no transitions to process. Exiting.")
-        seq_file.close()
-        metadata_file.close()
+        for _o in output_sets:
+            _o.close()
         print("Done generating sequences (no work performed).")
         return
     else: # Seeds might be initialized, but no subsequent transitions in the filtered range
@@ -878,8 +996,8 @@ def generate_sequences(args):
     if prob_matrix.size == 0: # Should not happen if load_thresholds_and_dfs succeeded
         print("Error: prob_matrix is empty. Cannot determine sequence length. Exiting.")
         # Close files if open
-        if 'seq_file' in locals() and not seq_file.closed: seq_file.close()
-        if 'metadata_file' in locals() and not metadata_file.closed: metadata_file.close()
+        for _o in locals().get("output_sets", []):
+            _o.close()
         sys.exit(1)
 
     example_sequence_length = prob_matrix.shape[1]
@@ -1006,9 +1124,8 @@ def generate_sequences(args):
             persontrait_df,
             standardized_aug_cols,
             standardized_replacements,
-            metadata_file,
+            output_sets,
             line_keys,
-            seq_file,
             args.compression_type,
         )
         loop_counter += 1
@@ -1028,12 +1145,16 @@ def generate_sequences(args):
             print(msg)
         infection_counter += 1
 
-    seq_file.close()
-    metadata_file.close()
+    for _o in output_sets:
+        _o.close()
 
     total_elapsed = time.time() - loop_begin_time
     print(f"  Wrote {loop_counter:,} records in {total_elapsed / 60:.1f} min "
           f"({loop_counter / total_elapsed if total_elapsed > 0 else 0:,.0f} rec/s)")
+    if len(output_sets) > 1:
+        print("  Output sets:")
+        for _o in output_sets:
+            print(f"    {_o.label:20s} {_o.written:>9,} records  {_o.fasta_path}")
     if reimportation_count:
         print(f"  Handled {reimportation_count:,} re-importations (a pid receiving an "
               f"imported genome after an earlier infection).")
@@ -1082,9 +1203,8 @@ def create_infection_record(
     persontrait_df,
     standardized_aug_cols,
     standardized_replacements,
-    metadata_file,
+    output_sets,
     line_keys,
-    seq_file,
     compression_type,
 ):
     # 'S1' arrays convert via tobytes() in ~2.7 us; the old
@@ -1108,6 +1228,7 @@ def create_infection_record(
     if seed_fasta is not None:  # seed sequence doesn't change
         fasta_metadata = seed_fasta.id
     infection.populate_sim_details(pid, tick, fasta_metadata)
+    infection.inf_dict["alias_pid"] = infection_id
 
     aug_metadata_dict_current = {}  # Initialize for current infection
     if augment_metadata:
@@ -1127,17 +1248,24 @@ def create_infection_record(
                 standardized_replacements=standardized_replacements,
             )  # Will fill with NA
 
-    add_to_fasta(new_seq_str, infection, seq_file, compression_type, fasta_metadata)
-    write_metadata(
-        metadata_file,
-        infection,
-        line_keys,
-        compression_type,
-        aug_metadata_columns=(
-            standardized_aug_cols if augment_metadata else None
-        ),  # Pass standardized
-        aug_metadata_dict=aug_metadata_dict_current if augment_metadata else None,
-    )
+    for _o in output_sets:
+        if not _o.wants(infection_id):
+            # A filter keyed on bare pids matches any infection of that person.
+            pid_keys = getattr(_o, "pid_keys", None)
+            if not (pid_keys and str(pid) in pid_keys):
+                continue
+        add_to_fasta(new_seq_str, infection, _o.seq_file, compression_type, fasta_metadata)
+        write_metadata(
+            _o.metadata_file,
+            infection,
+            line_keys,
+            compression_type,
+            aug_metadata_columns=(
+                standardized_aug_cols if augment_metadata else None
+            ),
+            aug_metadata_dict=aug_metadata_dict_current if augment_metadata else None,
+        )
+        _o.written += 1
 
 
 # ====================================
@@ -1215,7 +1343,8 @@ class InfectionRecord:
             "originatingLab": None, "pangoLineage": None, "region": None,
             "regionExposure": None, "samplingStrategy": None, "sex": None,
             "sraAccession": None, "strainold": None, "submittingLab": None, "year": None,
-            "sim_pid": None, "sim_tick": None, "real_strain": None
+            "sim_pid": None, "sim_tick": None, "real_strain": None,
+            "alias_pid": None
         }
 
     def populate_sim_details(self, sim_pid, sim_tick, real_strain=None):

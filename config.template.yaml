@@ -151,6 +151,18 @@ genetic_painter:
   start_tick: 128
   num_ticks: 300
 
+  # -- Output filtering ------------------------------------------------------
+  # By default every painted infection is written. Each entry here adds an
+  # ADDITIONAL output pair restricted to the infections named in that file, so
+  # one pass can emit the full tree plus one FASTA per sampling strategy --
+  # useful for comparing what Nextstrain reconstructs from each.
+  # Identifiers are read from alias_pid, infection_id, strain, sim_pid or pid.
+  #   linelist_filters:
+  #     - "{results_dir}/02_simulated_linelists/linelist.csv"
+  #     - "surs={results_dir}/03_sampled_datasets/surs_samples.csv.xz"
+  #     - "lasso50={results_dir}/03_sampled_datasets/LASSO-Greedy_samples.csv.xz"
+  linelist_filters: []
+
   # -- Metadata --------------------------------------------------------------
   add_metadata: "gender,county,home_latitude,home_longitude,latino,race,smh_race,age_group"
   location:

@@ -54,7 +54,6 @@ data/ga/
 data/ma/
 data/mn/
 data/wa/
-data/Ruralurbancontinuumcodes2023.csv
 
 # Uncompressed cluster tables. These are Dataverse/UShER-derived inputs, not
 # repo source. `hybrid_synthetic_clusters_delta.tsv` alone is 96 MB - larger

@@ -286,6 +286,18 @@ def _stream_to_file(url: str, dest: Path, timeout: int, label: str,
     raise RuntimeError(f"{label}: failed after {attempts} attempts: {last}")
 
 
+# --------------------------------------------------------------------------
+# USDA Economic Research Service: rural-urban continuum codes
+# --------------------------------------------------------------------------
+# A pinned copy ships in data/; this is only for refreshing it. USDA ERS works
+# are US federal government publications and therefore public domain
+# (17 U.S.C. 105). No checksum is pinned because the agency revises the file
+# in place without versioning the URL.
+RUCC_URL = ("https://www.ers.usda.gov/media/5768/"
+            "2023-rural-urban-continuum-codes.csv?v=27068")
+RUCC_FILENAME = "Ruralurbancontinuumcodes2023.csv"
+
+
 def md5sum(path: Path, chunk: int = 1 << 20) -> str:
     import hashlib
 

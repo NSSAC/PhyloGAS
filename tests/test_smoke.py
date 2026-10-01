@@ -12,6 +12,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -265,3 +266,50 @@ def test_resolve_variant_follows_symlinks(tmp_path):
 
     assert Config.resolve_variant(str(link)) == link
     assert Config.resolve_variant(str(link) + ".xz") == link
+
+
+# --------------------------------------------------------------------------
+# painter output filtering
+# --------------------------------------------------------------------------
+def test_filter_key_detection(tmp_path):
+    """--linelist-filter must recognise the identifier column in any of the
+    file shapes it is handed: painter metadata, TwinSampler linelist, or a
+    BeyondBaseline samples file."""
+    from phylogas.painter.genetic_painter import _read_filter_keys
+
+    # BeyondBaseline samples: alias_pid
+    p = tmp_path / "surs_samples.csv"
+    p.write_text("alias_pid,county\n123.45,Fairfax\n678.90,Arlington\n")
+    ids, pids, col = _read_filter_keys(str(p))
+    assert col == "alias_pid" and ids == {"123.45", "678.90"} and not pids
+
+    # painter metadata: strain
+    p = tmp_path / "meta.csv"
+    p.write_text("strain,date\nUSA/VA-EHip-123.45/2021,2021-06-01\n")
+    ids, pids, col = _read_filter_keys(str(p))
+    assert col == "strain" and ids == {"123.45"}
+
+    # bare pids
+    p = tmp_path / "pids.csv"
+    p.write_text("pid,x\n123,1\n456,2\n")
+    ids, pids, col = _read_filter_keys(str(p))
+    assert col == "pid" and pids == {"123", "456"} and not ids
+
+
+def test_output_paths_match_compression():
+    from phylogas.painter.genetic_painter import _output_paths
+
+    assert _output_paths("p", "xz") == ("p.sequences.fasta.xz", "p.metadata.tsv.xz")
+    assert _output_paths("p", "bgzf") == ("p.sequences.fasta.gz", "p.metadata.tsv.gz")
+    assert _output_paths("p", None) == ("p.sequences.fasta", "p.metadata.tsv")
+
+
+def test_rucc_file_present_and_parses():
+    """The pinned USDA RUCC copy must be committed and loadable."""
+    import pandas as pd
+
+    rucc = Path(__file__).resolve().parents[1] / "data" / "Ruralurbancontinuumcodes2023.csv"
+    assert rucc.is_file(), "data/Ruralurbancontinuumcodes2023.csv is missing"
+    df = pd.read_csv(rucc, encoding="latin1")
+    assert {"FIPS", "State", "County_Name", "Attribute", "Value"} <= set(df.columns)
+    assert (df["Attribute"] == "RUCC_2023").any(), "no RUCC_2023 rows"

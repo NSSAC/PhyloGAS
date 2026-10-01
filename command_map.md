@@ -455,3 +455,57 @@ settable via `seeds.insecure_download: true` for unattended runs.
 Verified 2026-09-30: with the flag, UCSC serves a current 254 MB /
 467,045-row table, yielding 3,323 Virginia Delta seed strains (versus 3,320
 from the bundled November-2024 snapshot).
+
+
+---
+
+## Painting a subset of infections
+
+The painter must walk the whole transmission tree -- a child's genome derives
+from its parent's -- but it does not have to *write* all of it.
+
+```bash
+# default: every painted infection, as before
+phylogas paint --config config.yaml
+
+# also emit one FASTA per sampling strategy, in the same pass
+phylogas paint --config config.yaml \
+    --linelist-filter results/02_simulated_linelists/linelist.csv \
+    --linelist-filter surs=runs/surs_samples.csv.xz \
+    --linelist-filter lasso50=runs/LASSO-Greedy_samples.csv.xz
+```
+
+```
+Output sets:
+  all                     29,009 records  out.sequences.fasta.xz
+  linelist                 8,412 records  out.linelist.sequences.fasta.xz
+  surs                       500 records  out.surs.sequences.fasta.xz
+  lasso50                    300 records  out.lasso50.sequences.fasta.xz
+```
+
+`--linelist-filter` is repeatable and accepts `LABEL=FILE` or bare `FILE`
+(label taken from the filename). Identifiers are read from whichever of
+`alias_pid`, `infection_id`, `strain`, `sim_pid` or `pid` the file provides,
+so TwinSampler linelists, BeyondBaseline samples files and painter metadata
+all work unchanged.
+
+Verified: filtered sets are strict subsets of the unfiltered run with
+byte-identical sequences, and an unfiltered run is byte-identical to the
+previous behaviour.
+
+### Post-hoc alternative
+
+```bash
+phylogas subset-fasta -m runs/surs_samples.csv.xz \
+    -f all_infections.fasta.xz -o surs.fasta.xz
+```
+
+Produces exactly the same output as the in-pass filter (verified). Use
+`--linelist-filter` to avoid writing the large FASTA at all; use
+`subset-fasta` to re-cut an existing one without repainting.
+
+### `alias_pid` in metadata
+
+Painter metadata now carries `alias_pid` (`{pid}.{tick}`) alongside `strain`,
+so joins against TwinSampler and BeyondBaseline outputs are a direct key match
+instead of parsing the strain ID.
