@@ -35,16 +35,44 @@ COVSPECTRUM_API_URL = 'https://lapis.cov-spectrum.org/open/v2/sample/alignedNucl
 DEFAULT_TSV_URL = 'https://clustertracker.gi.ucsc.edu/data/hardcoded_clusters.tsv'
 DEFAULT_TSV_BASENAME = 'hardcoded_clusters.tsv'
 
-def download_file(url: str, dest_path: Path) -> bool:
+def download_file(url: str, dest_path: Path, insecure: bool = False) -> bool:
+    """Download a file, optionally skipping TLS certificate verification.
+
+    ``insecure=True`` exists because the clustertracker.gi.ucsc.edu certificate
+    expired on 2025-07-02, which otherwise blocks --seed_mode entirely. It
+    disables verification for this request only.
+    """
     print(f"Downloading {url} to {dest_path}...")
+    if insecure:
+        print("  WARNING: --insecure_download set; TLS certificate verification is OFF")
+        print("           for this request. The transfer is still encrypted, but the")
+        print("           server's identity is NOT authenticated. Only use this with a")
+        print("           host you trust, and prefer --input_file where you can.")
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except Exception:
+            pass
     try:
-        response = requests.get(url, stream=True)
+        response = requests.get(url, stream=True, verify=not insecure)
         response.raise_for_status()
         with open(dest_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         print("Download complete.")
         return True
+    except requests.exceptions.SSLError as e:
+        print(f"Error downloading file: SSL verification failed for {url}")
+        print(f"  {e}")
+        print("\n  NOTE: as of 2025-07-02 the clustertracker.gi.ucsc.edu certificate is")
+        print("  expired. This is an upstream problem, not a PhyloGAS one. Options:")
+        print("    1. Retry with --insecure_download to bypass certificate verification.")
+        print("    2. Supply the cluster TSV yourself:  --input_file <hardcoded_clusters.tsv>")
+        print("       (a copy ships in data/importations/)")
+        print("    3. Use bulk mode instead of --seed_mode, which queries Cov-Spectrum")
+        print("       directly and is unaffected.")
+        if dest_path.exists(): dest_path.unlink()
+        return False
     except requests.exceptions.RequestException as e:
         print(f"Error downloading file: {e}")
         if dest_path.exists(): dest_path.unlink()
@@ -72,18 +100,26 @@ def fetch_sequences_by_strain_id(strain_ids: List[str], batch_size: int = 100) -
     return "".join(all_fasta_content)
 
 
-def fetch_sequences_by_metadata(pango: str, state: str, date_from: Optional[str], date_to: Optional[str], output_filepath: Path):
-    """Fetches sequences directly from CovSpectrum based on metadata query and streams to a file."""
+def fetch_sequences_by_metadata(pango: str, state: str, date_from: Optional[str], date_to: Optional[str], output_filepath: Path, include_sublineages: bool = True):
+    """Fetches sequences directly from CovSpectrum based on metadata query and streams to a file.
+
+    ``include_sublineages`` controls the trailing ``*`` in the LAPIS query.
+    With it, ``B.1.617.2`` matches the whole Delta clade; without it, only
+    sequences assigned to exactly that lineage. The difference is large --
+    for Virginia Delta, 21,034 samples versus 836.
+    """
     date_info = "all dates"
     if date_from and date_to:
         date_info = f"from {date_from} to {date_to}"
-    
-    print(f"\n--- Starting bulk download for {pango} in {state} ({date_info}) ---")
-    
+
+    query_lineage = f'{pango}*' if include_sublineages else pango
+    scope = "including sublineages" if include_sublineages else "exact lineage only"
+    print(f"\n--- Starting bulk download for {query_lineage} in {state} ({date_info}; {scope}) ---")
+
     params = {
         'country': 'USA',
         'division': state,
-        'pangoLineage': f'{pango}*',
+        'pangoLineage': query_lineage,
         'downloadAsFile': 'true'
     }
     # Conditionally add date parameters to the request
@@ -177,7 +213,8 @@ def run_seed_mode(args):
             input_tsv_path = default_tsv_in_output
         else:
             print(f"Input file not provided. Attempting to download from {DEFAULT_TSV_URL}.")
-            if download_file(DEFAULT_TSV_URL, default_tsv_in_output): input_tsv_path = default_tsv_in_output
+            if download_file(DEFAULT_TSV_URL, default_tsv_in_output,
+                             insecure=args.insecure_download): input_tsv_path = default_tsv_in_output
             else: print(f"Error: Failed to download the default input file."); exit(1)
     if not input_tsv_path: print("Error: Could not determine input TSV file path."); exit(1)
     
@@ -187,11 +224,20 @@ def run_seed_mode(args):
     except Exception as e: print(f"Error reading TSV file '{input_tsv_path}': {e}"); exit(1)
     
     if 'annotation_2' not in df.columns: print("Error: 'annotation_2' column not found."); exit(1)
-    try:
-        replace_map = make_variant_base_map(pango_lineages)
-        df['pango_regularized'] = df['annotation_2'].map(replace_map)
-        df['pango_regularized'].fillna(df['annotation_2'], inplace=True)
-    except Exception as e: print(f"Error during pango_aliasor processing: {e}"); exit(1)
+    if args.include_sublineages:
+        # Roll descendant lineages up to their requested ancestor, so that e.g.
+        # AY.44 and AY.103 are both counted as B.1.617.2.
+        try:
+            replace_map = make_variant_base_map(pango_lineages)
+            df['pango_regularized'] = df['annotation_2'].map(replace_map)
+            df['pango_regularized'].fillna(df['annotation_2'], inplace=True)
+        except Exception as e: print(f"Error during pango_aliasor processing: {e}"); exit(1)
+        print("  Sublineages: INCLUDED (descendants rolled up to the requested lineage)")
+    else:
+        # Exact match only: no roll-up, so only clusters annotated with the
+        # requested lineage itself survive the filter below.
+        df['pango_regularized'] = df['annotation_2']
+        print("  Sublineages: EXCLUDED (exact lineage match only)")
     
     if 'region' not in df.columns: print("Error: 'region' column not found."); exit(1)
     df_filtered_initial = df[(df['region'] == args.state) & (df['pango_regularized'].isin(pango_lineages))].copy()
@@ -276,16 +322,32 @@ def run_bulk_mode(args):
             output_filename = f"{state_sanitized}_{pango_sanitized}_{args.date_from}_{args.date_to}.fasta"
         else:
             output_filename = f"{state_sanitized}_{pango_sanitized}_all-dates.fasta"
+        if not args.include_sublineages:
+            output_filename = output_filename.replace(".fasta", "_exact.fasta")
             
         output_filepath = output_folder_path / output_filename
         
-        fetch_sequences_by_metadata(pango, args.state, args.date_from, args.date_to, output_filepath)
+        fetch_sequences_by_metadata(pango, args.state, args.date_from, args.date_to,
+                                    output_filepath, args.include_sublineages)
 
 def main():
     parser = argparse.ArgumentParser(description="Prepare sequence sets from cluster data or by direct metadata query.")
     parser.add_argument("--state", required=True, type=str, help="US state to filter/query for (e.g., 'Virginia').")
     parser.add_argument("--pango", required=True, type=str, help="Comma-separated list of Pango lineages (e.g., 'B.1.1.7,B.1.617.2').")
     parser.add_argument("--output_folder", required=True, type=str, help="Path for output files.")
+    parser.add_argument("--insecure_download", "--insecure-download",
+                        dest="insecure_download", action='store_true',
+                        help="[Seed Mode] Skip TLS certificate verification when fetching the "
+                             "cluster TSV. Workaround for the expired clustertracker.gi.ucsc.edu "
+                             "certificate (upstream, since 2025-07-02).")
+    parser.add_argument("--include_sublineages", "--include-sublineages",
+                        dest="include_sublineages", action='store_true', default=True,
+                        help="Include descendant lineages, i.e. query 'B.1.617.2*' and roll "
+                             "descendants up to the requested ancestor. Default: ON.")
+    parser.add_argument("--no_include_sublineages", "--no-include-sublineages",
+                        dest="include_sublineages", action='store_false',
+                        help="Match the named lineage EXACTLY, excluding descendants. For "
+                             "Virginia Delta this is 836 samples instead of 21,034.")
     parser.add_argument("--seed_mode", action='store_true', help="Enable seed-finding mode, using the cluster tracker file and outlier detection.")
     parser.add_argument("--date_from", type=str, help="[Bulk Mode] Optional start date for query (YYYY-MM-DD).")
     parser.add_argument("--date_to", type=str, help="[Bulk Mode] Optional end date for query (YYYY-MM-DD).")

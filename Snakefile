@@ -247,8 +247,36 @@ if cfg("nextstrain.enabled", False):
 # Compares the inferred tree against the painter's ground truth
 # (topological F1, mugration cosine similarity).
 #
-# NOT YET IMPLEMENTED: the metric code does not exist in this repository. The
-# mugration half lives in BeyondBaseline/scripts/scenarios_simulation/
-# mugration_station.py and should be promoted into a `phylogas benchmark`
-# subcommand rather than reimplemented here. Left as an explicit stub so the
-# gap is visible instead of silently missing.
+if cfg("benchmark.truth_mugration"):
+
+    rule benchmark_mugration:
+        """Score every sampled strategy against the ABM mugration truth.
+
+        The transmission graph is built once and reused across all strategies,
+        so this costs about the same as the old inline version in
+        BeyondBaseline's run_all_scenarios.py.
+        """
+        input:
+            truth=cfg("benchmark.truth_mugration"),
+            infections=cfg("benchmark.infections"),
+            samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
+        output:
+            csv=f"{BENCH_DIR}/Mugration_Metrics.csv",
+        params:
+            glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
+        shell:
+            "phylogas benchmark mugration --truth {input.truth} "
+            "--samples '{params.glob}' --infections {input.infections} "
+            "--out {output.csv}"
+
+
+rule benchmark_sequence:
+    """Parent->child divergence in the painted genomes (sanity + rate check)."""
+    input:
+        painted=PAINTED_FASTA,
+        infections=cfg("benchmark.infections", ""),
+    output:
+        csv=f"{BENCH_DIR}/sequence_divergence.csv",
+    shell:
+        "phylogas benchmark sequence --painted {input.painted} "
+        "--infections {input.infections} --out {output.csv}"

@@ -300,7 +300,7 @@ slurm` is the path for sweeps across many replicates.
 |---|---|
 | `phylogas fetch-data` | **Implemented.** Downloads the four core population files per state from the six per-state Dataverse deposits, then builds the demographics table. Contact networks are opt-in (`--with-epihiper-inputs`). |
 | `phylogas build-demographics` | **Implemented.** Joins persontrait + person + household + residence_locations + FIPS into the table the painter reads. |
-| `phylogas benchmark` | Missing. Topological F1 / mugration cosine exist in `BeyondBaseline/scripts/scenarios_simulation/mugration_station.py` and should be promoted rather than rewritten. |
+| `phylogas benchmark` | **Implemented.** `mugration` / `sequence` / `compare`. Moved from BeyondBaseline; verified bit-identical. |
 | Docker/Apptainer image | `Dockerfile` not yet written. |
 | `nextstrain_build` rule | Written but untested — needs a local ncov checkout. |
 
@@ -347,3 +347,111 @@ phylogas build-demographics \
 `population.persontrait_file` -> `population.demographics_file`, because the
 file is a derived join and never the raw EpiHiper persontrait. The old key is
 still honoured as a fallback.
+
+
+---
+
+## Benchmarking (moved from BeyondBaseline, 2026-09-30)
+
+**Old** — one command, but required ABM truth even for demographic metrics:
+```bash
+python3 run_all_scenarios.py --linelist ... --infections ... \
+    --abm_mugration linelist_mugration.json --save-samples
+```
+
+**New** — selection and scoring separated:
+```bash
+beyond-baseline-sweep --linelist ... --population ... --save-samples --outdir runs/
+phylogas benchmark mugration --truth <abm.json> \
+    --samples 'runs/*_samples.csv.xz' --infections <allevents.csv.xz>
+```
+
+Or both at once:
+```bash
+phylogas compare-strategies --truth <abm.json> --infections <allevents.csv.xz> \
+    --linelist ... --population ... --algorithms surs LASSO-Greedy
+```
+
+| Old | New |
+|---|---|
+| `--abm_mugration` on the sweep | `phylogas benchmark mugration` |
+| `Mugration_Metrics.csv` (BB) | same filename, written by PhyloGAS |
+| *(nothing)* | `phylogas benchmark sequence` — parent->child divergence |
+| *(nothing)* | `phylogas benchmark compare` — parsimony vs augur |
+
+Why: benchmarking needs ABM ground truth; sampling does not. BeyondBaseline
+must stay runnable by a health department on a real linelist. Full migration
+guide in `BeyondBaseline/cste_instructions.txt`.
+
+
+---
+
+## Sublineage scope in seed acquisition
+
+`seq_prep.py` previously hardcoded a trailing `*` on the lineage, so
+`--pango B.1.617.2` silently meant "Delta and every descendant". That is
+usually what you want, but it was not stated and could not be turned off.
+
+Now controlled by `--include-sublineages` / `--no-include-sublineages`,
+**default ON** (preserving the previous behaviour).
+
+```bash
+phylogas prep-seeds --config config.yaml --seed-mode                          # B.1.617.2*
+phylogas prep-seeds --config config.yaml --seed-mode --no-include-sublineages # B.1.617.2 exactly
+```
+
+Config: `variant.include_sublineages: true`
+
+The flag affects both code paths, which implement the scope differently:
+
+| mode | with sublineages | exact only |
+|---|---|---|
+| bulk (Cov-Spectrum query) | `pangoLineage=B.1.617.2*` | `pangoLineage=B.1.617.2` |
+| seed (cluster TSV) | descendants rolled up via `pango_aliasor` | no roll-up |
+
+Measured on Virginia Delta:
+
+| | sublineages ON | exact only |
+|---|---|---|
+| Cov-Spectrum samples | 21,034 | 836 |
+| bulk download, 2021-06-01..15 | 22 seqs | 10 seqs |
+| seed strains (cluster TSV) | 3,320 | 171 |
+
+Bulk-mode output filenames gain an `_exact` suffix when sublineages are
+excluded, so the two variants cannot overwrite each other.
+
+### Seed acquisition during data fetch
+
+```bash
+phylogas fetch-data --states wa --with-simulations --with-seeds
+```
+
+Needed for states other than Virginia: the bundled seed FASTA is Virginia
+Delta (3,322 sequences), and WA alone has 3,721 E2 importations, so the
+painter reports a shortfall.
+
+**Known upstream issue:** `--seed-mode` downloads a cluster TSV from
+`clustertracker.gi.ucsc.edu`, whose TLS certificate expired 2025-07-02
+(`notAfter=Jul  2 23:59:59 2025 GMT`). Three workarounds, in order of
+preference:
+
+```bash
+# 1. local copy -- safest; a snapshot ships in data/importations/
+phylogas prep-seeds --config config.yaml --seed-mode \
+    --input_file data/importations/sarscov2_clusters_2024_11_12_filtered.tsv.gz
+
+# 2. bypass verification -- fetches current data from UCSC
+phylogas prep-seeds --config config.yaml --seed-mode --insecure-download
+
+# 3. bulk mode -- queries Cov-Spectrum directly, unaffected by the cert
+phylogas prep-seeds --config config.yaml
+```
+
+`--insecure-download` disables certificate verification **for that one
+request**. The transfer stays encrypted, but the server's identity is not
+authenticated, so it prints a warning each time. Secure by default; also
+settable via `seeds.insecure_download: true` for unattended runs.
+
+Verified 2026-09-30: with the flag, UCSC serves a current 254 MB /
+467,045-row table, yielding 3,323 Virginia Delta seed strains (versus 3,320
+from the bundled November-2024 snapshot).

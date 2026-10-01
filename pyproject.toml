@@ -23,6 +23,12 @@ dependencies = [
   "scikit-learn>=1.1",
   "pyyaml>=6.0",
   "requests>=2.28",
+  # Sample selection. PhyloGAS orchestrates BeyondBaseline's samplers and
+  # scores their output; `phylogas compare-strategies` shells out to
+  # `beyond-baseline-sweep`.
+  "beyond-baseline @ git+https://github.com/NSSAC/BeyondBaseline.git@main",
+  # Ascertainment / linelist generation.
+  "twin-sampler @ git+https://github.com/NSSAC/TwinSampler.git@main",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +40,7 @@ pipeline = ["snakemake>=7.0"]
 # Random access into BGZF/gzip FASTA, used by the non-streaming subset tool.
 fasta = ["pyfastx>=2.0"]
 dev = ["pytest>=7.0"]
+test = ["pytest>=7.0"]
 all = ["pyarrow>=10.0", "snakemake>=7.0", "pyfastx>=2.0", "pytest>=7.0"]
 
 [project.urls]

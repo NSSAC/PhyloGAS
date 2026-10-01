@@ -26,6 +26,13 @@ PhyloGAS is orchestrated via **Snakemake**. The pipeline consists of five primar
 
 ---
 
+## 🧪 Beta testers
+
+Start with **[`BETA_TESTING.md`](BETA_TESTING.md)** — install, first run,
+known gaps, and what to report.
+
+---
+
 ## 🛠️ Installation
 
 PhyloGAS relies on a master environment file that automatically installs its dependencies, including satellite repositories, via Git URLs. 
@@ -68,31 +75,46 @@ phylogas --help
 PhyloGAS is driven entirely by a configuration file: `config.yaml`.
 
 **1. Configure your run:**
-Copy the template and modify your desired parameters, such as viral load bottlenecks, target variant waves, and sampling algorithms.
 ```bash
 cp config.template.yaml config.yaml
-vim config.yaml
+$EDITOR config.yaml
 ```
 
-**2. Check your configuration:**
+**2. Ask what to do next — at any point:**
 ```bash
-phylogas validate-config --config config.yaml
+phylogas status
 ```
-This expands `{placeholder}` references and reports which declared inputs are
-actually present on disk.
+```text
+PhyloGAS pipeline status
+====================================================
+  [okay] Configuration            config.yaml
+  [MISS] Synthetic population     data/va/va_2_4_0_demographics.csv
+  [okay] Entropy map                   3.4 MB  data/run.03.base.threshold.df.npy
+  [okay] Seed sequences               12.5 MB  data/Virginia_B_1_617_2_seed_sequences.fasta.gz
+  [MISS] EpiHiper output          data/example_data/.../output.csv.gz
+  [MISS] Painted genomes          results/01_synthetic_genomes/va_delta_wave.sequences.fasta.xz
 
-**3. Execute the pipeline:**
+Next step:
+  phylogas fetch-data --states va
+```
+`status` reports every stage and prints the single next command. It is the
+intended entry point — run it whenever you are unsure where you are.
+
+**3. Acquire the data:**
 ```bash
-# Everything, locally
+phylogas fetch-data --states va --dry-run   # preview: what, and how large
+phylogas fetch-data --states va             # download + build demographics
+```
+Downloads the four synthetic-population files for the state (~0.10 GB for VA)
+and joins them into the demographics table the painter reads. The 907 MB
+EpiHiper contact network is **not** fetched by default — nothing in PhyloGAS
+reads it. Add `--with-epihiper-inputs` if you intend to run the ABM yourself.
+
+**4. Execute the pipeline:**
+```bash
 phylogas run --config config.yaml --cores all
-
-# Stop after the genetic painter
 phylogas run --config config.yaml --cores all --until paint_only
-
-# On SLURM
 phylogas run --config config.yaml --profile slurm
-
-# See what would run, without running it
 phylogas run --config config.yaml --dry-run
 ```
 
@@ -177,15 +199,21 @@ PhyloGAS/
 ├── command_map.md             # Old script invocations -> phylogas CLI
 ├── pyproject.toml             # Package metadata; defines the `phylogas` command
 ├── environment.yml            # Conda environment incl. satellite repos
+├── scripts/legacy/            # Superseded scripts, kept for provenance
 ├── src/phylogas/
 │   ├── cli.py                 # Unified command line interface
 │   ├── config.py              # YAML loading + {placeholder} expansion
+│   ├── dataverse.py           # Per-state DOIs + verified file-ID table
 │   ├── painter/               # The Genetic Painter
 │   │   ├── genetic_painter.py
 │   │   ├── mutational_models/ # rate_limited | simple | poor
 │   │   └── test/              # SLURM submission scripts
 │   ├── seqprep/               # Seed acquisition, FASTA subsetting
-│   └── popprep/               # Demographics assembly
+│   ├── popprep/               # Demographics assembly (persontrait join)
+│   └── benchmark/             # Scoring against ABM ground truth
+│       ├── mugration.py       #   parsimony inference on the transmission tree
+│       ├── scoring.py         #   cosine / F1 / pearson / masked MAE
+│       └── runner.py          #   batch drivers
 ├── docs/salvage_audit.md      # What was rescued from synthetic_biosurveillance
 └── cfg/                       # EpiHiper experiment configs
 ```
@@ -198,6 +226,9 @@ This project is mid-restructure. What is actually wired up today:
 
 | Stage | Command | Status |
 |---|---|---|
+| — | `phylogas status` | Works — **start here** |
+| — | `phylogas fetch-data` | Works — verified against live Dataverse |
+| — | `phylogas build-demographics` | Works — verified on 5.2M MN rows |
 | 0. Seed acquisition | `phylogas prep-seeds` | Works |
 | 1. Entropy training | `phylogas train` | Works, verified end-to-end |
 | 2. Genetic painting | `phylogas paint` | Works, verified end-to-end |
@@ -205,8 +236,8 @@ This project is mid-restructure. What is actually wired up today:
 | 4. Adaptive sampling | `scenarios-runner` (BeyondBaseline) | External; requires that repo's `pyproject.toml` |
 | 5. FASTA subsetting | `phylogas subset-fasta` | Works |
 | 6. Nextstrain | rule `nextstrain_build` | Opt-in, untested (needs an ncov checkout) |
-| 7. Benchmarking | `phylogas benchmark` | **Not implemented.** F1 / mugration code lives in BeyondBaseline and should be promoted, not rewritten |
-| — | `phylogas fetch-data` | **Stub.** Prints the Dataverse URL; no API client yet |
+| 7. Benchmarking | `phylogas benchmark` | Works — mugration scoring verified bit-identical to the pre-split implementation |
+| — | `phylogas compare-strategies` | Works — runs a BeyondBaseline sweep, then ranks every strategy |
 | — | Docker / Apptainer | **Not written** |
 
 Verified working: `phylogas train` → `phylogas paint` via Snakemake produces

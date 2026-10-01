@@ -16,6 +16,11 @@ random_seed: 43
 data_dir: "data"
 results_dir: "results"
 
+# --- Remote data sources ---------------------------------------------------
+# Synthetic populations: UVA Dataverse, one deposit per state (below).
+# EpiHiper simulations:  Zenodo, one record for all states.
+zenodo_doi: "10.5281/zenodo.23067670"
+
 # UVA Dataverse deposits holding the synthetic populations.
 # NOTE: each PGCOE state is a SEPARATE deposit; there is no single DOI covering
 # all of them. `phylogas fetch-data` selects by state.
@@ -78,6 +83,11 @@ population:
 variant:
   pango: "B.1.617.2"          # Delta
   label: "delta"
+  # Include descendant lineages? With this ON the CovSpectrum query becomes
+  # "B.1.617.2*" and descendants (AY.44, AY.103, ...) roll up to the requested
+  # ancestor. Turning it off restricts to sequences assigned to exactly this
+  # lineage -- for Virginia Delta that is 836 samples instead of 21,034.
+  include_sublineages: true
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +95,11 @@ variant:
 # ---------------------------------------------------------------------------
 seeds:
   output_folder: "{data_dir}/importations/sequences"
+  # Skip TLS verification when fetching the UCSC cluster TSV. The
+  # clustertracker.gi.ucsc.edu certificate expired 2025-07-02; until it is
+  # renewed, --seed_mode cannot download its input without this. Prefer
+  # --input_file with a local copy where practical.
+  insecure_download: false
   # How to drop temporal outliers when choosing importation seeds:
   #   chaining | iqr | zscore
   outlier_method: "chaining"
@@ -95,7 +110,13 @@ seeds:
 # ---------------------------------------------------------------------------
 epihiper:
   # Transmission log: tick,pid,exit_state,contact_pid,location_id
-  output_csv: "{data_dir}/example_data/0.25_crossinfection/output.csv.gz"
+  #
+  # Published on Zenodo, one replicate per state (~0.4-0.6 GB compressed):
+  #   doi:10.5281/zenodo.23067670   (concept doi:10.5281/zenodo.23067669)
+  # Fetch with:  phylogas fetch-data --states va --with-simulations
+  #
+  # Available: va, ga, ma, mn, wa  (no California replicate published)
+  output_csv: "{data_dir}/{population.state}/{population.state}_replicate_0_output.csv.gz"
 
 
 # ---------------------------------------------------------------------------
@@ -186,5 +207,8 @@ nextstrain:
 # 9. Benchmarking against ground truth
 # ---------------------------------------------------------------------------
 benchmark:
-  metrics: ["topological_f1", "mugration_cosine"]
   outdir: "{results_dir}/05_benchmarks"
+  # ABM ground truth. Written by TwinSampler alongside the linelist.
+  # Leave blank to skip mugration benchmarking.
+  truth_mugration: ""          # e.g. "{results_dir}/02_simulated_linelists/linelist_mugration.json"
+  infections: ""               # e.g. "{results_dir}/02_simulated_linelists/linelist_allevents.csv.xz"

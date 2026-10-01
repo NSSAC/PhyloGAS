@@ -262,3 +262,81 @@ disabled augmentation, and produced a complete-looking run with empty
 demographic columns. It now detects the JSON header, validates the requested
 `--add_metadata` columns up front, and exits with the exact command needed to
 build the right file.
+
+
+---
+
+## EpiHiper simulation replicates (Zenodo, added 2026-09-30)
+
+The transmission networks `phylogas paint` consumes are now published:
+
+**"Phylogeographic Analysis Similars - Agent Based Simulations"**
+`doi:10.5281/zenodo.23067670` (concept `10.5281/zenodo.23067669`), open access.
+
+| state | file | size | md5 (first 12) |
+|---|---|---|---|
+| va | `va_replicate_0_output.csv.gz` | 530.3 MB | `2971f450fde9` |
+| ga | `ga_replicate_0_output.csv.gz` | 583.7 MB | `508eab5b6a04` |
+| ma | `ma_replicate_0_output.csv.gz` | 431.8 MB | `bfdcc576f006` |
+| mn | `mn_replicate_0_output.csv.gz` | 428.1 MB | `ac6f078664fe` |
+| wa | `wa_replicate_0_output.csv.gz` | 425.2 MB | `9be12c1f8726` |
+
+No California replicate is published; `fetch-data` reports this rather than
+failing or silently skipping.
+
+```bash
+phylogas fetch-data --states va --with-simulations
+```
+
+Opt-in, because the simulations roughly quintuple the per-state download
+(0.10 GB -> 0.62 GB for VA).
+
+### Checksum verification
+
+All Zenodo downloads are MD5-verified against the record metadata. Behaviour:
+
+* file absent -> download, verify, keep
+* file present and matching -> skipped without re-downloading
+* file present and **not** matching -> reported, deleted, re-downloaded
+
+That last case matters: a truncated earlier attempt used to be silently
+reused. Verified by truncating a 425 MB file to 400 MB and re-running:
+
+```
+checksum MISMATCH on existing file (got e83fc0853999..., expected 9be12c1f8726...); re-downloading
+checksum OK
+```
+
+`--no-verify` skips it if you need the speed.
+
+### Retry / backoff
+
+Both downloaders retry up to 4 times with exponential backoff (5s, 10s, 20s)
+on 5xx and network errors. Added after a live Dataverse `503` aborted a
+multi-state fetch mid-run.
+
+### Verified end to end
+
+Fetched `wa` (4 population files + the 425 MB replicate), MD5 verified, then:
+
+```
+phylogas paint --input-graph-csv wa/wa_replicate_0_output.csv.gz \
+    --painted-prefix E2 --start-tick 124 --num-ticks 100 ...
+  Wrote 390,885 records in 0.9 min (6,865 rec/s)
+  Dropped 399 importations that had no seed sequence (3,322 supplied for 3,721)
+
+phylogas benchmark sequence --painted out/wa_test.sequences.fasta.xz ...
+  mean_substitutions    0.204985
+  max_substitutions     4
+  pairs_over_8          0
+```
+
+Two notes from that run:
+
+* **The replicates are two-variant.** WA carries both `E1` (3.37M rows, ticks
+  40-359) and `E2` (8.82M rows, ticks 124-699). `--painted-prefix` selects
+  which wave to paint; the VA example data behaves the same way.
+* **Seed shortfall is real for non-VA states.** WA has 3,721 `E2` importations
+  but the bundled seed FASTA is Virginia Delta with 3,322 sequences. The
+  shortfall warning fires correctly and names the affected tick range. Per-state
+  seed sets (via `phylogas prep-seeds`) are needed for full coverage.

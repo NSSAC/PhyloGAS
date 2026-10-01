@@ -149,6 +149,13 @@ def cmd_prep_seeds(args) -> int:
             cmd += [flag, str(value)]
     if args.seed_mode:
         cmd.append("--seed_mode")
+    if _cfg_or_flag(cfg, "seeds.insecure_download", args.insecure_download, False):
+        cmd.append("--insecure_download")
+
+    # Sublineage scope. Default ON (query "B.1.617.2*" and roll descendants up).
+    include_sub = _cfg_or_flag(cfg, "variant.include_sublineages",
+                               args.include_sublineages, True)
+    cmd.append("--include_sublineages" if include_sub else "--no_include_sublineages")
     return _run(cmd, args.dry_run)
 
 
@@ -252,9 +259,13 @@ def cmd_build_demographics(args) -> int:
     return 0
 
 
+_STATE_NAMES = {"va": "Virginia", "ca": "California", "ga": "Georgia",
+                "ma": "Massachusetts", "mn": "Minnesota", "wa": "Washington"}
+
+
 def cmd_fetch_data(args) -> int:
     """Download the synthetic population files from the UVA Dataverse."""
-    from . import dataverse as dv
+    from . import sources as dv
 
     cfg = _load_config(args) if args.config else None
     dest_root = Path(_cfg_or_flag(cfg, "data_dir", args.dest, "data"))
@@ -286,6 +297,23 @@ def cmd_fetch_data(args) -> int:
         print( "   nothing in PhyloGAS reads them. Use --with-epihiper-inputs if you")
         print( "   intend to run the ABM yourself.)")
 
+    sim_plan = dv.simulation_plan(states) if args.with_simulations else []
+    if args.with_simulations:
+        missing_sim = [s for s in states if s not in dv.SIMULATION_FILES]
+        print(f"\nEpiHiper simulation replicates (Zenodo {dv.ZENODO_DOI}):")
+        for _st, key, _url, mb, _md5 in sim_plan:
+            print(f"  {mb:9.1f} MB  {key}")
+        if missing_sim:
+            print(f"  (no replicate published for: {', '.join(missing_sim)})")
+        total_mb += sum(mb for *_, mb, _ in sim_plan)
+    else:
+        avail = [s for s in states if s in dv.SIMULATION_FILES]
+        if avail:
+            sim_mb = sum(dv.SIMULATION_FILES[s][1] for s in avail)
+            print(f"\n  (skipping {sim_mb / 1024:.2f} GB of EpiHiper simulation output;")
+            print( "   add --with-simulations to fetch the transmission networks that")
+            print( "   `phylogas paint` consumes.)")
+
     if args.dry_run:
         print("\n--dry-run: nothing downloaded.")
         return 0
@@ -305,6 +333,40 @@ def cmd_fetch_data(args) -> int:
             return 1
         if args.decompress:
             dv.decompress_xz(target, keep=args.keep_compressed)
+
+    # EpiHiper simulation replicates (Zenodo).
+    for st, key, url, _mb, md5 in sim_plan:
+        state_dir = dest_root / st
+        state_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            dv.download_url(url, state_dir / key, expect_md5=None if args.no_verify else md5)
+        except SystemExit:
+            raise
+        except Exception as exc:
+            print(f"    ERROR downloading {key}: {exc}", file=sys.stderr)
+            return 1
+
+    # Seed sequences (Cov-Spectrum). Public data, so no redistribution
+    # constraint; fetched on demand rather than committed.
+    if args.with_seeds:
+        for st in states:
+            print(f"\nFetching seed sequences for {st} ...")
+            seed_dir = dest_root / st / "seeds"
+            seed_dir.mkdir(parents=True, exist_ok=True)
+            sub = _cfg_or_flag(cfg, "variant.include_sublineages", args.include_sublineages, True)
+            seed_cmd = [
+                sys.executable, "-u", str(_PKG / "seqprep" / "seq_prep.py"),
+                "--state", _STATE_NAMES.get(st, st),
+                "--pango", str(_cfg_or_flag(cfg, "variant.pango", args.pango, "B.1.617.2")),
+                "--output_folder", str(seed_dir),
+                "--outlier_method", str(_cfg_or_flag(cfg, "seeds.outlier_method", None, "chaining")),
+                "--seed_mode",
+                "--include_sublineages" if sub else "--no_include_sublineages",
+            ]
+            if _cfg_or_flag(cfg, "seeds.insecure_download", args.insecure_download, False):
+                seed_cmd.append("--insecure_download")
+            if _run(seed_cmd) != 0:
+                print(f"    WARNING: seed acquisition failed for {st}", file=sys.stderr)
 
     # Build the demographics table the pipeline actually reads.
     if args.build_demographics:
@@ -338,7 +400,8 @@ def cmd_fetch_data(args) -> int:
 
     print("\nStill required from elsewhere (see docs/data_acquisition.md):")
     print("  - Ruralurbancontinuumcodes2023.csv  (USDA ERS)")
-    print("  - EpiHiper simulation replicates    (deposit pending)")
+    if not args.with_simulations:
+        print("  - EpiHiper simulation replicates    (--with-simulations)")
     print(f"\nVerify with:  phylogas validate-config --config {args.config or 'config.yaml'}")
     return 0
 
@@ -360,6 +423,180 @@ def _find_fips(root: Path):
 # --------------------------------------------------------------------------
 # parser
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# phylogas benchmark / compare-strategies
+# --------------------------------------------------------------------------
+def cmd_benchmark(args) -> int:
+    """Score inferred phylodynamics against the simulation's ground truth."""
+    from .benchmark import runner
+
+    if args.what == "mugration":
+        runner.benchmark_mugration(
+            truth_json=args.truth, samples=args.samples, infections=args.infections,
+            out_csv=args.out, state_col=args.state_col,
+            duration_years=args.duration_years, save_matrices=args.save_matrices,
+        )
+    elif args.what == "sequence":
+        runner.benchmark_sequence(
+            painted_fasta=args.painted, infections=args.infections,
+            out_csv=args.out, max_pairs=args.max_pairs,
+        )
+    elif args.what == "compare":
+        runner.benchmark_compare(
+            truth_json=args.truth, simulated_json=args.simulated,
+            augur_json=args.augur, out_csv=args.out, state_col=args.state_col,
+        )
+    return 0
+
+
+def cmd_compare_strategies(args) -> int:
+    """Run a BeyondBaseline sweep, then score every strategy against ABM truth.
+
+    Shells out to `beyond-baseline-sweep` (consistent with how `phylogas paint`
+    invokes the painter), then scores all saved sample sets in one pass so the
+    transmission graph is built once rather than per strategy.
+    """
+    from .benchmark import runner
+
+    if shutil.which("beyond-baseline-sweep") is None:
+        sys.exit(
+            "ERROR: `beyond-baseline-sweep` not on PATH.\n"
+            "  PhyloGAS depends on BeyondBaseline for sample selection:\n"
+            "    pip install git+https://github.com/NSSAC/BeyondBaseline.git"
+        )
+
+    cfg = _load_config(args) if args.config else None
+    outdir = Path(_cfg_or_flag(cfg, "sampling.outdir", args.outdir, "results/03_sampled_datasets"))
+    outdir.mkdir(parents=True, exist_ok=True)
+    algorithms = args.algorithms or _cfg_or_flag(cfg, "sampling.algorithms", None, ["surs"])
+    batch = _cfg_or_flag(cfg, "sampling.batch_size", args.batch_size, 400)
+    linelist = _cfg_or_flag(cfg, "ascertainment.output", args.linelist, None)
+    population = _cfg_or_flag(cfg, "population.demographics_file", args.population, None)
+
+    for name, val in (("linelist", linelist), ("population", population)):
+        if not val:
+            sys.exit(f"ERROR: --{name} not supplied and not resolvable from the config.")
+
+    # ---- 1. selection (BeyondBaseline) ----------------------------------
+    sweep = [
+        "beyond-baseline-sweep",
+        "--linelist", str(linelist),
+        "--population", str(population),
+        "--outdir", str(outdir),
+        "--batch-size", str(batch),
+        "--seed", str(_cfg_or_flag(cfg, "random_seed", args.seed, 42)),
+        "--save-samples",
+        "--algorithms", *[str(a) for a in algorithms],
+    ]
+    if args.no_replacement:
+        sweep.append("--no-replacement")
+    if args.stratifiers:
+        sweep += ["--stratifiers", *args.stratifiers]
+    if args.sweep_args:
+        sweep += args.sweep_args
+
+    if not args.skip_sweep:
+        rc = _run(sweep, args.dry_run)
+        if rc != 0:
+            return rc
+    else:
+        print("--skip-sweep: reusing existing sample sets in the output directory")
+
+    if args.dry_run:
+        print(f"+ phylogas benchmark mugration --truth {args.truth} "
+              f"--samples '{outdir}/*_samples.csv.xz' --infections {args.infections}")
+        return 0
+
+    # ---- 2. scoring (PhyloGAS), one graph build for all strategies -------
+    print("\n" + "=" * 60)
+    print("Scoring every strategy against ABM truth")
+    print("=" * 60)
+    df = runner.benchmark_mugration(
+        truth_json=args.truth,
+        samples=[str(outdir / "*_samples.csv.xz"), str(outdir / "*_samples.csv")],
+        infections=args.infections,
+        out_csv=args.out or str(outdir / "strategy_comparison.csv"),
+        state_col=args.state_col,
+    )
+    print("\nRanking (best cosine similarity first):")
+    print(df[["label", "cosine_similarity", "topological_f1", "n_samples"]].to_string(index=False))
+    return 0
+
+
+# --------------------------------------------------------------------------
+# phylogas status  -- the "where am I / what next" entry point
+# --------------------------------------------------------------------------
+# Stage table: (key, label, config key holding the artefact, next command).
+# `config key` may be None for stages whose output is not a single file.
+_STAGES = [
+    ("config",  "Configuration",        None,
+     "cp config.template.yaml config.yaml"),
+    ("pop",     "Synthetic population", "population.demographics_file",
+     "phylogas fetch-data --states {state} --with-simulations"),
+    ("map",     "Entropy map",          "genetic_painter.probability_matrix",
+     "phylogas train --config {config}"),
+    ("seeds",   "Seed sequences",       "genetic_painter.seed_fasta",
+     "phylogas prep-seeds --config {config}"),
+    ("abm",     "EpiHiper output",      "epihiper.output_csv",
+     "phylogas fetch-data --states {state} --with-simulations"),
+    ("painted", "Painted genomes",      None,
+     "phylogas paint --config {config}"),
+]
+
+
+def cmd_status(args) -> int:
+    """Report pipeline readiness and print the single next command to run."""
+    cfg_path = Path(args.config)
+    print("PhyloGAS pipeline status\n" + "=" * 52)
+
+    if not cfg_path.is_file():
+        print(f"  [ -- ] Configuration            {cfg_path} not found")
+        print("\nNext step:")
+        print(f"  cp config.template.yaml {cfg_path}")
+        print(f"  $EDITOR {cfg_path}")
+        return 1
+
+    cfg = _load_config(args)
+    state = cfg.get("population.state", default="va")
+    print(f"  [okay] Configuration            {cfg_path}")
+
+    first_missing = None
+    for _key, label, cfgkey, nxt in _STAGES[1:]:
+        if cfgkey is None:
+            # Derived stage: check the painter's declared output prefix.
+            prefix = cfg.get("genetic_painter.output_prefix", default=None)
+            if prefix is None:
+                continue
+            comp = cfg.get("genetic_painter.compression", default="xz")
+            ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
+            path = Path(f"{prefix}.sequences.fasta{ext}")
+        else:
+            raw = cfg.get(cfgkey, default=None)
+            if raw is None:
+                print(f"  [ -- ] {label:28s} (not configured)")
+                continue
+            path = Path(str(raw)).expanduser()
+
+        if path.exists():
+            size = path.stat().st_size / 1048576
+            print(f"  [okay] {label:28s} {size:8.1f} MB  {path}")
+        else:
+            print(f"  [MISS] {label:28s} {path}")
+            if first_missing is None:
+                first_missing = nxt.format(state=state, config=cfg_path)
+
+    print()
+    if first_missing is None:
+        print("Everything is in place. Run the full pipeline with:")
+        print(f"  phylogas run --config {cfg_path} --cores all")
+        return 0
+
+    print("Next step:")
+    print(f"  {first_missing}")
+    print(f"\nFull input report:  phylogas validate-config --config {cfg_path}")
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="phylogas",
@@ -368,6 +605,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version", version=f"phylogas {__version__}")
     sub = p.add_subparsers(dest="command", metavar="<command>")
+
+    # -- status (start here) ----------------------------------------------
+    sp = sub.add_parser("status",
+                        help="Show pipeline readiness and the next command to run")
+    sp.add_argument("--config", "-c", default="config.yaml")
+    sp.set_defaults(func=cmd_status)
 
     def add_common(sp):
         sp.add_argument("--config", "-c", default=None, metavar="YAML",
@@ -422,6 +665,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--outlier-method", dest="outlier_method",
                     choices=["iqr", "zscore", "chaining"])
     sp.add_argument("--seed-mode", dest="seed_mode", action="store_true")
+    sp.add_argument("--include-sublineages", dest="include_sublineages",
+                    action="store_true", default=None,
+                    help="Include descendant lineages (query 'B.1.617.2*'). Default: ON.")
+    sp.add_argument("--no-include-sublineages", dest="include_sublineages",
+                    action="store_false",
+                    help="Match the named lineage exactly, excluding descendants.")
+    sp.add_argument("--insecure-download", dest="insecure_download",
+                    action="store_true", default=None,
+                    help="Skip TLS verification for the cluster TSV. Workaround for the "
+                         "expired clustertracker.gi.ucsc.edu certificate.")
     sp.set_defaults(func=cmd_prep_seeds)
 
     # -- subset-fasta -----------------------------------------------------
@@ -443,6 +696,64 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("extra", nargs=argparse.REMAINDER,
                     help="Additional arguments passed through to snakemake")
     sp.set_defaults(func=cmd_run)
+
+    # -- benchmark ---------------------------------------------------------
+    sp = sub.add_parser("benchmark",
+                        help="Score inferred phylodynamics against ABM ground truth")
+    bsub = sp.add_subparsers(dest="what", metavar="<what>", required=True)
+
+    b = bsub.add_parser("mugration",
+                        help="Score sampled sets against the ABM mugration truth")
+    b.add_argument("--truth", required=True, help="ABM truth traits JSON (linelist_mugration.json)")
+    b.add_argument("--samples", required=True, nargs="+",
+                   help="Sample CSVs from BeyondBaseline --save-samples (globs allowed)")
+    b.add_argument("--infections", required=True, help="ABM all-events transmission file")
+    b.add_argument("--out", default=None, help="Output CSV")
+    b.add_argument("--state-col", dest="state_col", default="county")
+    b.add_argument("--duration-years", dest="duration_years", type=float, default=1.0)
+    b.add_argument("--save-matrices", dest="save_matrices", default=None,
+                   help="Directory to write each inferred transition matrix as JSON")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser("sequence",
+                        help="Measure parent->child divergence in the painted genomes")
+    b.add_argument("--painted", required=True, help="Painted FASTA (.xz/.gz/plain)")
+    b.add_argument("--infections", required=True, help="ABM all-events transmission file")
+    b.add_argument("--out", default=None)
+    b.add_argument("--max-pairs", dest="max_pairs", type=int, default=200000)
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser("compare",
+                        help="Simulated parsimony vs augur inference, against the same truth")
+    b.add_argument("--truth", required=True)
+    b.add_argument("--simulated", required=True, help="Traits JSON from simulated parsimony")
+    b.add_argument("--augur", required=True, help="Traits JSON from `augur traits`")
+    b.add_argument("--out", default=None)
+    b.add_argument("--state-col", dest="state_col", default="county")
+    b.set_defaults(func=cmd_benchmark)
+
+    # -- compare-strategies ------------------------------------------------
+    sp = sub.add_parser("compare-strategies",
+                        help="Run a BeyondBaseline sweep, then rank every strategy")
+    sp.add_argument("--config", "-c", default=None)
+    sp.add_argument("--truth", required=True, help="ABM truth traits JSON")
+    sp.add_argument("--infections", required=True, help="ABM all-events transmission file")
+    sp.add_argument("--linelist", default=None)
+    sp.add_argument("--population", default=None)
+    sp.add_argument("--algorithms", nargs="+", default=None)
+    sp.add_argument("--stratifiers", nargs="+", default=None)
+    sp.add_argument("--batch-size", dest="batch_size", type=int, default=None)
+    sp.add_argument("--no-replacement", dest="no_replacement", action="store_true")
+    sp.add_argument("--outdir", default=None)
+    sp.add_argument("--out", default=None, help="Comparison CSV")
+    sp.add_argument("--state-col", dest="state_col", default="county")
+    sp.add_argument("--seed", type=int, default=None)
+    sp.add_argument("--skip-sweep", dest="skip_sweep", action="store_true",
+                    help="Score existing sample sets without re-running selection")
+    sp.add_argument("--dry-run", "-n", dest="dry_run", action="store_true")
+    sp.add_argument("--sweep-args", dest="sweep_args", nargs=argparse.REMAINDER, default=None,
+                    help="Extra arguments passed through to beyond-baseline-sweep")
+    sp.set_defaults(func=cmd_compare_strategies)
 
     # -- validate-config --------------------------------------------------
     sp = sub.add_parser("validate-config", help="Check the config and its inputs")
@@ -468,6 +779,27 @@ def build_parser() -> argparse.ArgumentParser:
                     action="store_false", default=True,
                     help="Skip building <state>_2_4_0_demographics.csv after download.")
     sp.add_argument("--fips", default=None, help="county FIPS -> name lookup CSV")
+    sp.add_argument("--with-simulations", dest="with_simulations", action="store_true",
+                    help="Also fetch the EpiHiper simulation replicates from Zenodo "
+                         "(~0.4-0.6 GB per state). These are the transmission networks "
+                         "`phylogas paint` consumes.")
+    sp.add_argument("--with-seeds", dest="with_seeds", action="store_true",
+                    help="Also fetch per-state seed sequences from Cov-Spectrum. "
+                         "Needed for states other than VA: the bundled seed FASTA is "
+                         "Virginia Delta and will under-cover other states.")
+    sp.add_argument("--pango", default=None, help="Lineage for --with-seeds (default: config)")
+    sp.add_argument("--include-sublineages", dest="include_sublineages",
+                    action="store_true", default=None,
+                    help="With --with-seeds: include descendant lineages. Default: ON.")
+    sp.add_argument("--no-include-sublineages", dest="include_sublineages",
+                    action="store_false",
+                    help="With --with-seeds: match the named lineage exactly.")
+    sp.add_argument("--insecure-download", dest="insecure_download",
+                    action="store_true", default=None,
+                    help="With --with-seeds: skip TLS verification for the cluster TSV "
+                         "(expired UCSC certificate workaround).")
+    sp.add_argument("--no-verify", dest="no_verify", action="store_true",
+                    help="Skip MD5 verification of downloaded files.")
     sp.add_argument("--dry-run", "-n", dest="dry_run", action="store_true",
                     help="List what would be downloaded, then stop.")
     sp.set_defaults(func=cmd_fetch_data)
@@ -491,6 +823,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
+        print("\nNot sure where to begin?  phylogas status")
         return 1
     return args.func(args) or 0
 
