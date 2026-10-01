@@ -174,7 +174,9 @@ genetic_painter:
 ascertainment:
   parameters: "{data_dir}/ascertainment_parameters.yaml"
   schedule_input: "{data_dir}/Virginia_importation_schedule.csv"
-  variant_mode: 2
+  # How variant labels are assigned to transmission components:
+  #   variant_bipartite | variant_temporal | just_components
+  variant_mode: "variant_bipartite"
   prefix_override: ["A2", "P2", "I2", "dM2", "hM2"]
   output: "{results_dir}/02_simulated_linelists/linelist.csv"
 

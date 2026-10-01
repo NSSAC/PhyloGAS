@@ -171,7 +171,7 @@ rule simulate_linelist:
         stop_tick=(cfg("genetic_painter.start_tick", 0) + cfg("genetic_painter.num_ticks", 0)),
         seed=cfg("random_seed", 42),
         schedule=cfg("ascertainment.schedule_input", ""),
-        variant_mode=cfg("ascertainment.variant_mode", 2),
+        variant_mode=cfg("ascertainment.variant_mode", "variant_bipartite"),
     shell:
         "simulate_linelist --epihiper {input.graph} --people {input.people} "
         "--households {params.households} --rucc {params.rucc} "
