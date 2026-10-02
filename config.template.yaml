@@ -13,8 +13,15 @@ project_name: "va_delta_wave"
 random_seed: 43
 
 # Where large inputs live, and where outputs are written.
+#
+# The rule: data_dir holds *inputs* -- anything fetched or handed to the
+# pipeline. results_dir holds everything *derived*, under numbered stages
+# (00_mutation_model, 01_synthetic_genomes, ...).
+#
+# results_dir carries {project_name}, so two projects never write over each
+# other and a whole run is one self-contained directory to archive or delete.
 data_dir: "data"
-results_dir: "results"
+results_dir: "results/{project_name}"
 
 # --- Remote data sources ---------------------------------------------------
 # Everything is fetched from Zenodo. UVA Dataverse proved unreliable
@@ -140,22 +147,32 @@ epihiper:
 # ---------------------------------------------------------------------------
 genetic_painter:
   # -- Training inputs (Mode 1: entropy analysis) --------------------------
-  # Real-world MSA the entropy "fitness map" is learned from. Fetch it with
-  #   phylogas fetch-data --states va --with-training-sequences
-  # which writes to this path. Leave it unset and that command derives a name
-  # under {data_dir}/training_sequences/ and reports it.
-  align_fasta: "{data_dir}/clean_va_delta_sequences.fasta"
+  # Real-world MSA the entropy "fitness map" is learned from -- an input, so
+  # it lives under data_dir. Fetch it with
+  #   phylogas fetch-data --config config.yaml --states va --with-training-sequences
+  # which queries Cov-Spectrum over the training window above and writes to
+  # this path. Cov-Spectrum serves open sequences, so there is no
+  # redistribution constraint; it is left out of git only because it is large
+  # and reproducible from the window.
+  align_fasta: "{data_dir}/training_sequences/va_delta.fasta"
 
   # -- Fitness map (written by `train`, read by `paint`) -------------------
-  entropy_thresholds: "{data_dir}/example_data/run.03.threshold.file"
-  probability_matrix: "{data_dir}/example_data/run.03.base.threshold.df.npy"
+  # Output of `train`, so it lives under results as stage 00. Point these at
+  # a pre-trained map instead if you have one -- the CLI resolves either, and
+  # `train` creates the directory it writes into.
+  #
+  # Note `np.save` appends .npy, so the matrix is written with that suffix
+  # whether or not the config says so; the loader tolerates both.
+  entropy_thresholds: "{results_dir}/00_mutation_model/{project_name}.thresholds.txt"
+  probability_matrix: "{results_dir}/00_mutation_model/{project_name}.base_threshold_df.npy"
 
   # -- Painting inputs (Mode 2: generation) --------------------------------
-  # Written by `phylogas prep-seeds --seed-mode` into seeds.output_folder.
-  # If this path does not exist, the CLI looks there (and in
-  # <data_dir>/<state>/seeds) before reporting it missing, so a fresh
-  # prep-seeds run needs no edit here.
-  seed_fasta: "{data_dir}/example_data/Virginia_B_1_617_2_seed_sequences.fasta.gz"
+  # Written by `phylogas prep-seeds --seed-mode` into seeds.output_folder,
+  # which is where this default points. The CLI also derives the name from
+  # population.state_name + variant.pango and looks in seeds.output_folder and
+  # <data_dir>/<state>/seeds, so a different state or lineage needs no edit
+  # here; point it at a staged file if you have one.
+  seed_fasta: "{seeds.output_folder}/Virginia_B_1_617_2_seed_sequences.fasta"
   reference_fasta: "{data_dir}/reference/reference.fasta"
   output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"
 

@@ -114,6 +114,17 @@ def cmd_paint(args) -> int:
         ("--input_graph_painted_prefix", pick(gp + "painted_prefix", args.painted_prefix)),
         ("--initial_viral_load", pick(gp + "initial_viral_load", args.initial_viral_load)),
     ]
+    # Create the directories the painter writes into. It does not make them
+    # itself, so `train` failed outright when the configured entropy-map
+    # folder did not exist yet.
+    written = [pick(gp + "entropy_thresholds", args.threshold_file),
+               pick(gp + "probability_matrix", args.base_threshold_df)]
+    if args.analysis_type != "entropy_analysis":
+        written.append(pick(gp + "output_prefix", args.output_prefix))
+    for raw in written:
+        if raw and not args.dry_run:
+            Path(str(raw)).expanduser().parent.mkdir(parents=True, exist_ok=True)
+
     for flag, value in optional:
         if value is not None:
             cmd += [flag, str(value)]
@@ -614,7 +625,9 @@ def cmd_fetch_data(args) -> int:
                 # Bulk mode names its own output; move it onto the configured
                 # align_fasta path so `train` finds it without config edits.
                 produced = target.parent / _bulk_output_name(state, pango, d_from, d_to, sub)
-                if produced.exists() and produced.resolve() != target.resolve():
+                if produced.exists() and produced.resolve() == target.resolve():
+                    print(f"    saved: {target}")
+                elif produced.exists():
                     if target.suffix in (".xz", ".gz", ".bz2", ".zst"):
                         # Bulk mode writes plain FASTA; renaming it onto a
                         # compressed name would misreport the format.
@@ -624,7 +637,11 @@ def cmd_fetch_data(args) -> int:
                               f"key at {produced}.")
                     else:
                         produced.replace(target)
-                        print(f"    -> {target}")
+                        # seq_prep.py has just announced its own filename, so
+                        # be explicit that the file moved and why.
+                        print(f"    renamed {produced.name} -> {target}")
+                        print(f"            (genetic_painter.align_fasta, which "
+                              f"`phylogas train` reads)")
                 if cfg.get("genetic_painter.align_fasta", default=None) is None:
                     print(f"    NOTE: set genetic_painter.align_fasta to {target}")
 
@@ -873,15 +890,15 @@ _STAGES = [
     ("config",   "Configuration",         None,
      "cp config.template.yaml config.yaml"),
     ("pop",      "Synthetic population",  "population.demographics_file",
-     "phylogas fetch-data --states {state} --with-simulations"),
+     "phylogas fetch-data --config {config} --states {state} --with-simulations"),
     ("training", "Training sequences",    None,
-     "phylogas fetch-data --states {state} --with-training-sequences"),
+     "phylogas fetch-data --config {config} --states {state} --with-training-sequences"),
     ("map",      "Entropy map",           "genetic_painter.probability_matrix",
      "phylogas train --config {config}"),
     ("seeds",    "Seed sequences",        None,
      "phylogas prep-seeds --config {config} --seed-mode"),
     ("abm",      "EpiHiper output",       "epihiper.output_csv",
-     "phylogas fetch-data --states {state} --with-simulations"),
+     "phylogas fetch-data --config {config} --states {state} --with-simulations"),
     ("painted",  "Painted genomes",       None,
      "phylogas paint --config {config}"),
 ]

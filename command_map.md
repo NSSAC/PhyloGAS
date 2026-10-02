@@ -658,3 +658,71 @@ command moves it onto the configured `genetic_painter.align_fasta` path. Leave
 that key unset and it derives
 `<data_dir>/training_sequences/<State>_<lineage>_<from>_<to>.fasta` and tells
 you what to set. An existing file is never re-downloaded.
+
+---
+
+## Output layout: results scoped by project (2026-10-02)
+
+Two rules now decide where a file goes:
+
+* `data_dir` holds **inputs** — anything fetched or handed to the pipeline.
+* `results_dir` holds everything **derived**, under numbered stages.
+
+`results_dir` carries the project name, so parallel projects cannot write over
+each other and one run is a single directory to archive or delete:
+
+```yaml
+results_dir: "results/{project_name}"
+```
+
+Every stage inherits that without further change:
+
+```
+results/va_delta_wave/00_mutation_model/     <- new: the entropy map
+results/va_delta_wave/01_synthetic_genomes/
+results/va_delta_wave/02_simulated_linelists/
+results/va_delta_wave/03_sampled_datasets/
+results/va_delta_wave/04_nextstrain_builds/
+```
+
+### What moved
+
+| Config key | Old default | New default |
+|---|---|---|
+| `genetic_painter.entropy_thresholds` | `{data_dir}/example_data/run.03.threshold.file` | `{results_dir}/00_mutation_model/{project_name}.thresholds.txt` |
+| `genetic_painter.probability_matrix` | `{data_dir}/example_data/run.03.base.threshold.df.npy` | `{results_dir}/00_mutation_model/{project_name}.base_threshold_df.npy` |
+| `genetic_painter.align_fasta` | `{data_dir}/clean_va_delta_sequences.fasta` | `{data_dir}/training_sequences/va_delta.fasta` |
+| `genetic_painter.seed_fasta` | `{data_dir}/example_data/Virginia_..._seed_sequences.fasta.gz` | `{seeds.output_folder}/Virginia_..._seed_sequences.fasta` |
+
+The entropy map was the clear error: it is the *output* of `train`, but the
+default wrote it into `data/example_data/`, which is gitignored scratch and
+named as if it were sample input. The `run.03.*` names were a label from the
+cluster test runs, inherited by every new project.
+
+Existing configs keep working — these are template defaults, and a config
+pointing at a staged or pre-trained map is resolved as before.
+
+### Directories are created now
+
+The painter does not create its own output directories, and nothing upstream
+did either, so `train` failed outright when the configured folder did not
+exist yet. `train` and `paint` now create what they are about to write into
+(skipped under `--dry-run`).
+
+### Also fixed
+
+`status` printed `fetch-data` next-steps without `--config`, so following its
+advice produced
+
+```
+ERROR: --with-training-sequences needs --config to know the date range and the target path.
+```
+
+And `--with-training-sequences` now says plainly that it renamed the file:
+`seq_prep.py` prints its own output name, then the command moves it onto
+`genetic_painter.align_fasta`, which previously looked like two conflicting
+paths scrolling past.
+
+`.gitignore` gained `data/training_sequences/` and `data/clean_*_sequences.fasta`.
+The training alignment had been landing in a tracked path, so a ~100 MB FASTA
+was one `git add -A` away from being committed.

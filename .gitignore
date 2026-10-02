@@ -38,6 +38,12 @@ slurm-*.out
 # Fetched from Dataverse by `phylogas fetch-data`, never committed.
 data/example_data/
 data/importations/sequences/
+# Training alignment fetched by `fetch-data --with-training-sequences`
+# (Cov-Spectrum bulk mode). Large, and reproducible from the config's
+# training window, so never committed.
+data/training_sequences/
+data/clean_*_sequences.fasta
+data/*_seed_sequences.fasta*
 data/variant_soup*/
 *.fasta.gz
 *.fasta.xz

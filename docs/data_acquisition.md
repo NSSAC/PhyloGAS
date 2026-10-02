@@ -138,35 +138,47 @@ With the script adopted and the merge wired in, here is the full picture.
 
 ### Still unresolved
 
+The table below is the running list; rows marked **Resolved** are kept
+for the record rather than deleted.
+
 | Config key | What it is | Where it comes from | Status |
 |---|---|---|---|
 | `population.rucc_file` | `Ruralurbancontinuumcodes2023.csv` | **USDA ERS**, not Dataverse | **Resolved.** A pinned copy is committed at `data/`; `fetch-data --with-rucc` refreshes it from the agency. `fetch-data` only reports it as outstanding when no copy is found |
-| `genetic_painter.align_fasta` | `clean_va_delta_sequences.fasta` — the training MSA | GISAID-derived; an open-data equivalent is fetchable | **Recipe implemented.** `fetch-data --with-training-sequences` runs `seq_prep.py` bulk mode against Cov-Spectrum over `training.date_from`/`date_to` (default: the painter's own window) and writes this path. Note this rebuilds an *equivalent* alignment from open data; it is not byte-identical to the original GISAID-derived file, so entropy outputs will differ slightly. Shipping the pre-computed entropy outputs remains the reproducible option |
-| `genetic_painter.entropy_thresholds` | `run.03.threshold.file` | Derived from the MSA above | Ship pre-computed — it is small (318 KB) and avoids the GISAID problem entirely |
-| `genetic_painter.probability_matrix` | `run.03.base.threshold.df.npy` | Same | Ship pre-computed (3.6 MB) |
-| `genetic_painter.seed_fasta` | `Virginia_B_1_617_2_seed_sequences.fasta.gz` | GISAID-derived (13 MB) | Redistribution unclear; `prep-seeds` can rebuild from Cov-Spectrum |
+| `genetic_painter.align_fasta` | the training MSA, under `data/training_sequences/` | Cov-Spectrum, which serves **open** sequences | **Resolved.** `fetch-data --with-training-sequences` runs `seq_prep.py` bulk mode over `training.date_from`/`date_to` (default: the painter's own window) and writes this path. No redistribution constraint — we store no sequences ourselves and the query returns public data. Left out of git only because it is large and exactly reproducible from the configured window |
+| `genetic_painter.entropy_thresholds` | stage 00 under `results_dir` | Written by `phylogas train` | Output, not input. A pre-trained map could also be shipped in `data/example_data/` and pointed at — worth doing as a convenience, not as a licensing workaround |
+| `genetic_painter.probability_matrix` | stage 00 under `results_dir` | Same | Same; 3.6 MB for the Virginia Delta map |
+| `genetic_painter.seed_fasta` | `Virginia_B_1_617_2_seed_sequences.fasta` in `seeds.output_folder` | Cov-Spectrum (open sequences) | **Resolved.** `prep-seeds --seed-mode` builds it; the CLI derives the filename from state + lineage and finds it without a config edit |
 | `genetic_painter.reference_fasta` | `reference.fasta` (Wuhan-Hu-1) | Public | **Commit it** — 30 KB |
 | `epihiper.output_csv` | Simulation replicates (~550 MB each) | Your pending deposit | Pending |
 | `ascertainment.parameters` | `ascertainment_parameters.yaml` | TwinSampler repo | Ships with that package |
 | `ascertainment.schedule_input` | `Virginia_importation_schedule.csv` | TwinSampler `Data/` | Ships with that package |
 
-### The GISAID constraint is the real blocker
+### Sequence redistribution is not the blocker (resolved 2026-10-02)
 
-Three inputs derive from GISAID sequences that generally cannot be
-redistributed. The practical resolution:
+Earlier revisions of this document treated GISAID terms as the main obstacle
+to external adoption. That framing was wrong on both counts:
 
-1. **Ship the derived artifacts, not the sequences.** `run.03.threshold.file`
-   (318 KB) and `run.03.base.threshold.df.npy` (3.6 MB) are aggregate entropy
-   statistics, not sequences. Committing these lets users run
-   `phylogas paint` without ever touching GISAID, and `phylogas train` becomes
-   optional for anyone reproducing published results.
-2. **Document the recipe** for users who want to retrain on their own MSA.
-3. **`prep-seeds` already pulls from Cov-Spectrum**, which has different terms
-   than GISAID — worth confirming what that permits.
+* **PhyloGAS stores no sequences.** Both sequence inputs are fetched on
+  demand, never committed.
+* **Cov-Spectrum serves open sequences by default**, and that is what
+  `seq_prep.py` queries in both of its modes — `--seed_mode` for importation
+  seeds and bulk mode for the training alignment. So neither
+  `genetic_painter.seed_fasta` nor `genetic_painter.align_fasta` carries a
+  redistribution constraint; they are simply large and reproducible, which is
+  why `.gitignore` excludes them.
 
-This is the single highest-value decision for external adoption: with the two
-derived files committed, a new user needs only the EpiHiper replicate plus the
-demographics to run the pipeline end to end.
+What remains worth doing, as a convenience rather than a workaround:
+
+1. **Ship a pre-trained mutation model.** The entropy map is small — 318 KB of
+   thresholds plus a 3.6 MB matrix — and training it is the slowest part of a
+   first run. A copy in `data/example_data/` that the config can point at
+   would let a new user go straight to `phylogas paint`. Not yet wired in.
+2. **Document the retraining recipe** for users bringing their own MSA. Mostly
+   covered by `fetch-data --with-training-sequences` plus the `training`
+   config block.
+
+So a new user needs the EpiHiper replicate and the demographics table; both
+sequence inputs come down from Cov-Spectrum on demand.
 
 ---
 
