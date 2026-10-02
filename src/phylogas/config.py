@@ -155,6 +155,53 @@ class Config:
             )
         return p
 
+    # ------------------------------------------------------- derived paths
+    def ascertainment_outputs(self) -> dict:
+        """Paths TwinSampler derives from ``ascertainment.output``.
+
+        simulate_linelist.py strips the extension and appends a suffix, so
+        these are deterministic rather than guessed::
+
+            linelist.csv  ->  linelist_allevents.csv.xz
+                              linelist_mugration.json
+        """
+        out = self.get("ascertainment.output", default=None)
+        if not out:
+            return {}
+        base = re.sub(r"\.csv(\.gz|\.xz)?$", "", str(out))
+        return {
+            "allevents": f"{base}_allevents.csv.xz",
+            "mugration": f"{base}_mugration.json",
+        }
+
+    def resolve_benchmark_input(self, key: str, kind: str):
+        """Resolve a benchmark input that may be 'auto', 'none', or a path.
+
+        Returns ``(path_or_None, reason)``. ``auto`` derives the path from
+        ``ascertainment.output`` and keeps it only if the file is actually
+        there, so a pipeline that has not produced it yet simply skips that
+        benchmark rather than failing.
+        """
+        raw = self.get(key, default="auto")
+        raw = "auto" if raw in (None, "") else str(raw)
+
+        if raw.lower() in ("none", "skip", "off", "false"):
+            return None, "disabled in config"
+
+        if raw.lower() == "auto":
+            derived = self.ascertainment_outputs().get(kind)
+            if not derived:
+                return None, "auto: ascertainment.output is not configured"
+            found = self.resolve_variant(derived)
+            if found is None:
+                return None, f"auto: not found at {derived}"
+            return found, f"auto from ascertainment.output"
+
+        found = self.resolve_variant(raw)
+        if found is None:
+            return None, f"configured path not found: {raw}"
+        return found, "explicit"
+
     def results_dir(self, stage: str) -> Path:
         """Return (and create) the output directory for a named pipeline stage."""
         root = Path(str(self.get("results_dir", default="results")))

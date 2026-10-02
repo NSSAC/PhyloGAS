@@ -221,9 +221,27 @@ nextstrain:
 # ---------------------------------------------------------------------------
 benchmark:
   outdir: "{results_dir}/05_benchmarks"
-  # ABM ground truth. Written by TwinSampler alongside the linelist.
-  # Leave blank to skip mugration benchmarking.
+
   # Matching strategy for `phylogas assign-variants`: bipartite | temporal
   variant_mode: "bipartite"
-  truth_mugration: ""          # e.g. "{results_dir}/02_simulated_linelists/linelist_mugration.json"
-  infections: ""               # e.g. "{results_dir}/02_simulated_linelists/linelist_allevents.csv.xz"
+
+  # --- Ground-truth inputs --------------------------------------------------
+  # Each accepts:
+  #   "auto"  derive from ascertainment.output and use it if present (default)
+  #   "none"  skip the benchmarks that need it
+  #   <path>  use this file
+  #
+  # TwinSampler names these deterministically, so "auto" is exact rather than a
+  # guess. Given ascertainment.output = .../linelist.csv it looks for:
+  #     .../linelist_allevents.csv.xz
+  #     .../linelist_mugration.json
+  # If a file is absent the dependent benchmark is skipped with a reason, which
+  # `phylogas status` reports -- nothing fails and nothing is silently scored.
+
+  # Raw all-events file: the INPUT to `phylogas assign-variants`, and what the
+  # mugration and sequence benchmarks read. Not the variant-annotated output.
+  allevents: "auto"
+
+  # ABM mugration truth matrix. TwinSampler writes this only when the events
+  # carry a county column, so "auto" may legitimately resolve to nothing.
+  truth_mugration: "auto"

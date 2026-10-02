@@ -377,3 +377,41 @@ files and downloads nothing.
 
 The Dataverse DOIs remain in `sources.py` as `DATAVERSE_DOIS` for citation and
 manual fallback.
+
+
+---
+
+## Benchmark inputs resolve automatically (2026-10-01)
+
+`benchmark.allevents` and `benchmark.truth_mugration` default to `"auto"`.
+TwinSampler names its outputs deterministically, so the derivation is exact
+rather than a guess:
+
+```
+ascertainment.output = results/02_simulated_linelists/linelist.csv
+  -> results/02_simulated_linelists/linelist_allevents.csv.xz
+  -> results/02_simulated_linelists/linelist_mugration.json
+```
+
+Each key accepts `"auto"`, `"none"`, or an explicit path. When a file is
+absent the dependent benchmark is skipped with a stated reason and the
+Snakemake rule is not created, so nothing fails and nothing is silently
+scored.
+
+`phylogas validate-config` reports what resolved, including size and mtime so
+a stale file from an earlier run is visible:
+
+```
+Benchmarking inputs:
+  [okay] all-events (ABM truth)    results/.../linelist_allevents.csv.xz
+         1.9 MB, modified 0h ago  [auto from ascertainment.output]
+  [ -- ] mugration truth           skipped -- auto: not found at results/.../linelist_mugration.json
+```
+
+Note that TwinSampler writes the mugration file only when the events carry a
+`county` column, so `auto` resolving to nothing there can be legitimate.
+
+`benchmark.infections` was renamed `benchmark.allevents`. It is the *input* to
+`phylogas assign-variants`, not the variant-annotated output; the old name
+invited pointing it at that rule's own output. The previous key is still read
+as a fallback.

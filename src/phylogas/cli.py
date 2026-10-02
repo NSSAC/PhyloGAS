@@ -241,6 +241,23 @@ def cmd_validate_config(args) -> int:
         else:
             print(f"  [okay] {label:32s} {raw}")
 
+    # --- benchmark inputs, with auto-resolution ---------------------------
+    print("\nBenchmarking inputs:")
+    for key, kind, label in (
+        ("benchmark.allevents", "allevents", "all-events (ABM truth)"),
+        ("benchmark.truth_mugration", "mugration", "mugration truth"),
+    ):
+        path, why = cfg.resolve_benchmark_input(key, kind)
+        if path is None:
+            print(f"  [ -- ] {label:32s} skipped -- {why}")
+        else:
+            import datetime as _dt
+            age = _dt.datetime.now() - _dt.datetime.fromtimestamp(path.stat().st_mtime)
+            hrs = age.total_seconds() / 3600
+            when = f"{hrs:.0f}h ago" if hrs < 48 else f"{hrs/24:.0f}d ago"
+            print(f"  [okay] {label:32s} {path}")
+            print(f"         {path.stat().st_size/1048576:.1f} MB, modified {when}  [{why}]")
+
     if missing:
         print(f"\n{missing} configured input(s) are missing.")
         print("Run `phylogas fetch-data --with-simulations` to download them from Zenodo.")

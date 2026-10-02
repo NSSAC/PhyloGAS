@@ -45,6 +45,42 @@ def _expand(s, _depth=0):
     return out if out == s else _expand(out, _depth + 1)
 
 
+import os
+import re
+
+
+def _ascertainment_base():
+    out = cfg("ascertainment.output", "")
+    return re.sub(r"\.csv(\.gz|\.xz)?$", "", str(out)) if out else ""
+
+
+def resolve_benchmark(key, kind):
+    """'auto' | 'none' | <path> -> an existing path, or None.
+
+    Mirrors phylogas.config.resolve_benchmark_input so the Snakefile and the
+    CLI agree about what will be scored. 'auto' derives the path the way
+    TwinSampler names it and keeps it only if the file exists, so a pipeline
+    that has not produced it yet simply skips that benchmark.
+    """
+    raw = cfg(key, "auto")
+    raw = "auto" if raw in (None, "") else str(raw)
+    if raw.lower() in ("none", "skip", "off", "false"):
+        return None
+    if raw.lower() == "auto":
+        base = _ascertainment_base()
+        if not base:
+            return None
+        cand = {"allevents": f"{base}_allevents.csv.xz",
+                "mugration": f"{base}_mugration.json"}[kind]
+    else:
+        cand = raw
+    alt = cand[:-3] if cand.endswith(".xz") else cand + ".xz"
+    for p in (cand, alt):
+        if os.path.exists(p):
+            return p
+    return None
+
+
 RESULTS       = cfg("results_dir", "results")
 PROJECT       = cfg("project_name", "phylogas")
 
@@ -62,6 +98,10 @@ LINELIST      = cfg("ascertainment.output", f"{RESULTS}/02_simulated_linelists/l
 SAMPLE_DIR    = cfg("sampling.outdir", f"{RESULTS}/03_sampled_datasets")
 BENCH_DIR     = cfg("benchmark.outdir", f"{RESULTS}/05_benchmarks")
 ALGORITHMS    = cfg("sampling.algorithms", ["surs"])
+
+# Resolved once so every rule and the printed summary agree.
+ALLEVENTS = resolve_benchmark("benchmark.allevents", "allevents")
+MUGRATION = resolve_benchmark("benchmark.truth_mugration", "mugration")
 
 
 # --------------------------------------------------------------------------
@@ -159,7 +199,7 @@ rule simulate_linelist:
     """
     input:
         graph=cfg("epihiper.output_csv"),
-        people=cfg("population.persontrait_file"),
+        people=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
     output:
         linelist=LINELIST,
     params:
@@ -191,7 +231,7 @@ rule sample_scenarios:
     """
     input:
         linelist=LINELIST,
-        population=cfg("population.persontrait_file"),
+        population=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
     output:
         samples=f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz",
     params:
@@ -247,40 +287,42 @@ if cfg("nextstrain.enabled", False):
 # Compares the inferred tree against the painter's ground truth
 # (topological F1, mugration cosine similarity).
 #
-rule assign_variants:
-    """Attach benchmark variant labels to transmission components.
+if ALLEVENTS:
 
-    Moved here from TwinSampler: these labels are ground truth for prevalence
-    estimation, matched against a real importation schedule, and deliberately
-    independent of the lineage a genome implies.
-    """
-    input:
-        allevents=cfg("benchmark.infections", ""),
-        schedule=cfg("ascertainment.schedule_input", ""),
-    output:
-        csv=f"{BENCH_DIR}/allevents_variants.csv.xz",
-    params:
-        mode=cfg("benchmark.variant_mode", "bipartite"),
-    shell:
-        "phylogas assign-variants --allevents {input.allevents} "
-        "--schedule {input.schedule} --mode {params.mode} --out {output.csv}"
+ rule assign_variants:
+     """Attach benchmark variant labels to transmission components.
 
-
-rule benchmark_truth:
-    """Score sampled sets against ABM ground truth."""
-    input:
-        samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
-        infections=f"{BENCH_DIR}/allevents_variants.csv.xz",
-    output:
-        csv=f"{BENCH_DIR}/AUC_truth_rankings.csv",
-    params:
-        glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
-    shell:
-        "phylogas benchmark truth --samples '{params.glob}' "
-        "--infections {input.infections} --out {output.csv}"
+     Moved here from TwinSampler: these labels are ground truth for prevalence
+     estimation, matched against a real importation schedule, and deliberately
+     independent of the lineage a genome implies.
+     """
+     input:
+         allevents=ALLEVENTS or "",
+         schedule=cfg("ascertainment.schedule_input", ""),
+     output:
+         csv=f"{BENCH_DIR}/allevents_variants.csv.xz",
+     params:
+         mode=cfg("benchmark.variant_mode", "bipartite"),
+     shell:
+         "phylogas assign-variants --allevents {input.allevents} "
+         "--schedule {input.schedule} --mode {params.mode} --out {output.csv}"
 
 
-if cfg("benchmark.truth_mugration"):
+ rule benchmark_truth:
+      """Score sampled sets against ABM ground truth."""
+      input:
+          samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
+          infections=f"{BENCH_DIR}/allevents_variants.csv.xz",
+      output:
+          csv=f"{BENCH_DIR}/AUC_truth_rankings.csv",
+      params:
+          glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
+      shell:
+          "phylogas benchmark truth --samples '{params.glob}' "
+          "--infections {input.infections} --out {output.csv}"
+
+
+if MUGRATION and ALLEVENTS:
 
     rule benchmark_mugration:
         """Score every sampled strategy against the ABM mugration truth.
@@ -290,8 +332,8 @@ if cfg("benchmark.truth_mugration"):
         BeyondBaseline's run_all_scenarios.py.
         """
         input:
-            truth=cfg("benchmark.truth_mugration"),
-            infections=cfg("benchmark.infections"),
+            truth=MUGRATION or "",
+            infections=ALLEVENTS or "",
             samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
         output:
             csv=f"{BENCH_DIR}/Mugration_Metrics.csv",
@@ -303,13 +345,15 @@ if cfg("benchmark.truth_mugration"):
             "--out {output.csv}"
 
 
-rule benchmark_sequence:
-    """Parent->child divergence in the painted genomes (sanity + rate check)."""
-    input:
-        painted=PAINTED_FASTA,
-        infections=cfg("benchmark.infections", ""),
-    output:
-        csv=f"{BENCH_DIR}/sequence_divergence.csv",
-    shell:
-        "phylogas benchmark sequence --painted {input.painted} "
-        "--infections {input.infections} --out {output.csv}"
+if ALLEVENTS:
+
+ rule benchmark_sequence:
+     """Parent->child divergence in the painted genomes (sanity + rate check)."""
+     input:
+         painted=PAINTED_FASTA,
+         infections=ALLEVENTS or "",
+     output:
+         csv=f"{BENCH_DIR}/sequence_divergence.csv",
+     shell:
+         "phylogas benchmark sequence --painted {input.painted} "
+         "--infections {input.infections} --out {output.csv}"

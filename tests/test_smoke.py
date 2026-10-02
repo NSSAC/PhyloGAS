@@ -380,3 +380,64 @@ def test_variant_column_fallback():
     assert variant_column(pd.DataFrame(columns=["variant_benchmark"])) == "variant_benchmark"
     assert variant_column(pd.DataFrame(columns=["variant_label"])) == "variant_label"
     assert variant_column(pd.DataFrame(columns=["x"])) is None
+
+
+# --------------------------------------------------------------------------
+# benchmark input auto-resolution
+# --------------------------------------------------------------------------
+def test_ascertainment_outputs_derivation():
+    """TwinSampler names these deterministically, so 'auto' must match exactly."""
+    from phylogas.config import Config
+
+    for out, base in (("a/linelist.csv", "a/linelist"),
+                      ("a/linelist.csv.gz", "a/linelist"),
+                      ("a/linelist.csv.xz", "a/linelist")):
+        c = Config({"ascertainment": {"output": out}})
+        d = c.ascertainment_outputs()
+        assert d["allevents"] == f"{base}_allevents.csv.xz"
+        assert d["mugration"] == f"{base}_mugration.json"
+
+    assert Config({}).ascertainment_outputs() == {}
+
+
+def test_resolve_benchmark_input_modes(tmp_path):
+    from phylogas.config import Config
+
+    ll = tmp_path / "linelist.csv"
+    ae = tmp_path / "linelist_allevents.csv.xz"
+    ae.write_text("x")
+    base = {"ascertainment": {"output": str(ll)}}
+
+    # auto, file present
+    c = Config({**base, "benchmark": {"allevents": "auto"}})
+    p, why = c.resolve_benchmark_input("benchmark.allevents", "allevents")
+    assert p == ae and "auto" in why
+
+    # auto, file absent -> skip with a reason, never an error
+    c = Config({**base, "benchmark": {"truth_mugration": "auto"}})
+    p, why = c.resolve_benchmark_input("benchmark.truth_mugration", "mugration")
+    assert p is None and "not found" in why
+
+    # explicitly disabled
+    c = Config({**base, "benchmark": {"allevents": "none"}})
+    p, why = c.resolve_benchmark_input("benchmark.allevents", "allevents")
+    assert p is None and "disabled" in why
+
+    # explicit path wins
+    c = Config({**base, "benchmark": {"allevents": str(ae)}})
+    p, why = c.resolve_benchmark_input("benchmark.allevents", "allevents")
+    assert p == ae and why == "explicit"
+
+    # explicit but missing
+    c = Config({**base, "benchmark": {"allevents": str(tmp_path / "nope.xz")}})
+    p, why = c.resolve_benchmark_input("benchmark.allevents", "allevents")
+    assert p is None and "not found" in why
+
+
+def test_benchmark_defaults_to_auto():
+    """An unset key behaves as 'auto', so a fresh config needs no edits."""
+    from phylogas.config import Config
+
+    c = Config({"ascertainment": {"output": "nowhere/linelist.csv"}})
+    p, why = c.resolve_benchmark_input("benchmark.allevents", "allevents")
+    assert p is None and "auto" in why
