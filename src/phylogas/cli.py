@@ -460,7 +460,14 @@ def cmd_benchmark(args) -> int:
     """Score inferred phylodynamics against the simulation's ground truth."""
     from .benchmark import runner
 
-    if args.what == "mugration":
+    if args.what == "truth":
+        from .benchmark.truth_runner import score_samples
+        score_samples(
+            samples_globs=args.samples, infections=args.infections,
+            linelist=args.linelist, date_field=args.date_field,
+            out_csv=args.out, stride_weeks=args.stride_weeks,
+        )
+    elif args.what == "mugration":
         runner.benchmark_mugration(
             truth_json=args.truth, samples=args.samples, infections=args.infections,
             out_csv=args.out, state_col=args.state_col,
@@ -476,6 +483,36 @@ def cmd_benchmark(args) -> int:
             truth_json=args.truth, simulated_json=args.simulated,
             augur_json=args.augur, out_csv=args.out, state_col=args.state_col,
         )
+    return 0
+
+
+def cmd_assign_variants(args) -> int:
+    """Attach benchmark variant labels to transmission components.
+
+    Moved here from TwinSampler: these labels are ground truth for prevalence
+    estimation, matched against a real importation schedule. TwinSampler still
+    finds the components; PhyloGAS decides what variant each one is.
+    """
+    import pandas as pd
+
+    from .benchmark.variants import assign_variants, VARIANT_COLUMN
+
+    print(f"Events   : {args.allevents}")
+    events = pd.read_csv(args.allevents, dtype={"alias_pid": str, "alias_contact": str,
+                                                "sim_pid": str, "pid": str})
+    events.columns = [c.strip() for c in events.columns]
+    print(f"  {len(events):,} rows")
+
+    print(f"Schedule : {args.schedule}")
+    schedule = pd.read_csv(args.schedule)
+
+    out = assign_variants(events, schedule, mode=args.mode, column=args.column)
+
+    dest = Path(args.out)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(dest, index=False,
+               compression="xz" if str(dest).endswith(".xz") else None)
+    print(f"\nWrote {len(out):,} rows with '{args.column}' -> {dest}")
     return 0
 
 
@@ -739,6 +776,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Score inferred phylodynamics against ABM ground truth")
     bsub = sp.add_subparsers(dest="what", metavar="<what>", required=True)
 
+    b = bsub.add_parser("truth",
+                        help="Score sampled sets against ABM ground truth "
+                             "(prevalence error, component coverage)")
+    b.add_argument("--samples", required=True, nargs="+",
+                   help="Sample CSVs from BeyondBaseline --save-samples (globs allowed)")
+    b.add_argument("--infections", required=True,
+                   help="ABM all-events file, after `phylogas assign-variants`")
+    b.add_argument("--linelist", default=None,
+                   help="Linelist, if its edges should define coverage instead")
+    b.add_argument("--date-field", dest="date_field", default="date")
+    b.add_argument("--stride-weeks", dest="stride_weeks", type=int, default=4)
+    b.add_argument("--out", default=None, help="Output CSV (AUC_truth_rankings.csv)")
+    b.set_defaults(func=cmd_benchmark)
+
     b = bsub.add_parser("mugration",
                         help="Score sampled sets against the ABM mugration truth")
     b.add_argument("--truth", required=True, help="ABM truth traits JSON (linelist_mugration.json)")
@@ -768,6 +819,20 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--out", default=None)
     b.add_argument("--state-col", dest="state_col", default="county")
     b.set_defaults(func=cmd_benchmark)
+
+    # -- assign-variants ---------------------------------------------------
+    sp = sub.add_parser("assign-variants",
+                        help="Attach benchmark variant labels to transmission components")
+    sp.add_argument("--allevents", required=True,
+                    help="TwinSampler all-events file (must carry component_id)")
+    sp.add_argument("--schedule", required=True,
+                    help="Importation schedule: tick,date,variant,clusters,sample_count")
+    sp.add_argument("--mode", default="bipartite", choices=["bipartite", "temporal"],
+                    help="Matching strategy (default: bipartite)")
+    sp.add_argument("--column", default="variant_benchmark",
+                    help="Output column name (default: variant_benchmark)")
+    sp.add_argument("--out", required=True, help="Output CSV (.xz supported)")
+    sp.set_defaults(func=cmd_assign_variants)
 
     # -- compare-strategies ------------------------------------------------
     sp = sub.add_parser("compare-strategies",

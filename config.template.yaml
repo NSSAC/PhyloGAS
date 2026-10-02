@@ -188,7 +188,9 @@ ascertainment:
   schedule_input: "{data_dir}/Virginia_importation_schedule.csv"
   # How variant labels are assigned to transmission components:
   #   variant_bipartite | variant_temporal | just_components
-  variant_mode: "variant_bipartite"
+  # Variant assignment moved to PhyloGAS; TwinSampler now emits component_id
+  # only. See benchmark.variant_mode below.
+  variant_mode: "just_components"
   prefix_override: ["A2", "P2", "I2", "dM2", "hM2"]
   output: "{results_dir}/02_simulated_linelists/linelist.csv"
 
@@ -221,5 +223,7 @@ benchmark:
   outdir: "{results_dir}/05_benchmarks"
   # ABM ground truth. Written by TwinSampler alongside the linelist.
   # Leave blank to skip mugration benchmarking.
+  # Matching strategy for `phylogas assign-variants`: bipartite | temporal
+  variant_mode: "bipartite"
   truth_mugration: ""          # e.g. "{results_dir}/02_simulated_linelists/linelist_mugration.json"
   infections: ""               # e.g. "{results_dir}/02_simulated_linelists/linelist_allevents.csv.xz"

@@ -247,6 +247,39 @@ if cfg("nextstrain.enabled", False):
 # Compares the inferred tree against the painter's ground truth
 # (topological F1, mugration cosine similarity).
 #
+rule assign_variants:
+    """Attach benchmark variant labels to transmission components.
+
+    Moved here from TwinSampler: these labels are ground truth for prevalence
+    estimation, matched against a real importation schedule, and deliberately
+    independent of the lineage a genome implies.
+    """
+    input:
+        allevents=cfg("benchmark.infections", ""),
+        schedule=cfg("ascertainment.schedule_input", ""),
+    output:
+        csv=f"{BENCH_DIR}/allevents_variants.csv.xz",
+    params:
+        mode=cfg("benchmark.variant_mode", "bipartite"),
+    shell:
+        "phylogas assign-variants --allevents {input.allevents} "
+        "--schedule {input.schedule} --mode {params.mode} --out {output.csv}"
+
+
+rule benchmark_truth:
+    """Score sampled sets against ABM ground truth."""
+    input:
+        samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
+        infections=f"{BENCH_DIR}/allevents_variants.csv.xz",
+    output:
+        csv=f"{BENCH_DIR}/AUC_truth_rankings.csv",
+    params:
+        glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
+    shell:
+        "phylogas benchmark truth --samples '{params.glob}' "
+        "--infections {input.infections} --out {output.csv}"
+
+
 if cfg("benchmark.truth_mugration"):
 
     rule benchmark_mugration:

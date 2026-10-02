@@ -313,3 +313,70 @@ def test_rucc_file_present_and_parses():
     df = pd.read_csv(rucc, encoding="latin1")
     assert {"FIPS", "State", "County_Name", "Attribute", "Value"} <= set(df.columns)
     assert (df["Attribute"] == "RUCC_2023").any(), "no RUCC_2023 rows"
+
+
+# --------------------------------------------------------------------------
+# benchmark modules moved from BeyondBaseline / TwinSampler
+# --------------------------------------------------------------------------
+def test_benchmark_modules_import():
+    import phylogas.benchmark.variants  # noqa: F401
+    import phylogas.benchmark.truth_metrics  # noqa: F401
+    import phylogas.benchmark.truth_runner  # noqa: F401
+
+
+def test_variant_matchers_present_and_deterministic():
+    """Both matchers moved from TwinSampler must be callable and stable."""
+    import pandas as pd
+
+    from phylogas.benchmark.variants import (
+        mode1_temporal_match, mode2_bipartite_match, unroll_schedule,
+        summarize_components, VARIANT_COLUMN,
+    )
+
+    comps = pd.DataFrame({
+        "component_id": [1, 2, 3],
+        "first_tick": [0, 20, 60],
+        "component_size": [10, 5, 30],
+    })
+    sched = pd.DataFrame({
+        "tick": [0, 20], "date": ["2021-06-01", "2021-06-21"],
+        "variant": ["B.1.617.2", "AY.44"], "clusters": [1, 1], "sample_count": [10, 5],
+    })
+    real = unroll_schedule(sched)
+    assert len(real) == 2
+
+    for fn in (mode1_temporal_match, mode2_bipartite_match):
+        a = fn(comps.copy(), real.copy())
+        b = fn(comps.copy(), real.copy())
+        assert a == b, f"{fn.__name__} is not deterministic"
+        assert set(a.values()) <= {"B.1.617.2", "AY.44"}
+
+    assert VARIANT_COLUMN == "variant_benchmark"
+
+
+def test_summarize_components_rebuilds_from_events():
+    """PhyloGAS must reconstruct component_summary without re-running
+    component detection -- TwinSampler already did that."""
+    import pandas as pd
+
+    from phylogas.benchmark.variants import summarize_components
+
+    events = pd.DataFrame({
+        "component_id": [1, 1, 2],
+        "exposure_tick": [5, 9, 30],
+        "pid": ["a", "b", "c"],
+    })
+    s = summarize_components(events).set_index("component_id")
+    assert s.loc[1, "first_tick"] == 5 and s.loc[1, "component_size"] == 2
+    assert s.loc[2, "first_tick"] == 30 and s.loc[2, "component_size"] == 1
+
+
+def test_variant_column_fallback():
+    """Readers must accept the legacy column name."""
+    import pandas as pd
+
+    from phylogas.benchmark.truth_metrics import variant_column
+
+    assert variant_column(pd.DataFrame(columns=["variant_benchmark"])) == "variant_benchmark"
+    assert variant_column(pd.DataFrame(columns=["variant_label"])) == "variant_label"
+    assert variant_column(pd.DataFrame(columns=["x"])) is None
