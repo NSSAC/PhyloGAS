@@ -129,7 +129,7 @@ def score_samples(
         sdf["_wk"] = ((pd.to_datetime(sdf[date_field]) - start).dt.days // 7).astype(int)
         n_weeks = int(sdf["_wk"].max()) + 1 if len(sdf) else 0
 
-        # --- E: prevalence estimation error ------------------------------
+        # --- stride_variant_prevalence_error -----------------------------
         if weekly_true_variants is not None and T.variant_column(sdf):
             svcol = T.variant_column(sdf)
             xs, ys = [], []
@@ -148,12 +148,12 @@ def score_samples(
                 ys.append(float((p_hat.reindex(idx, fill_value=0.0)
                                  - p_true.reindex(idx, fill_value=0.0)).abs().sum()))
             if xs:
-                rows.append(dict(eval_type="E_stride_variant_prevalence_error",
+                rows.append(dict(eval_type="stride_variant_prevalence_error",
                                  algorithm=algo, scenario_id=scen, scenario_label=scen,
                                  weeks=len(xs), auc=_series_auc(xs, ys),
                                  samples_file=str(p)))
 
-        # --- F: transmission-component coverage ---------------------------
+        # --- stride_component_coverage ------------------------------------
         if adj:
             target = set(edge_src["alias_pid"].astype(str))
             xs, ys = [], []
@@ -166,7 +166,7 @@ def score_samples(
                 xs.append(end + 1)
                 ys.append(T.calculate_coverage_score(target, sampled, adj))
             if xs:
-                rows.append(dict(eval_type="F_stride_component_coverage",
+                rows.append(dict(eval_type="stride_component_coverage",
                                  algorithm=algo, scenario_id=scen, scenario_label=scen,
                                  weeks=len(xs), auc=_series_auc(xs, ys),
                                  samples_file=str(p)))

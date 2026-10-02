@@ -25,6 +25,9 @@ from pathlib import Path
 from . import __version__
 
 _PKG = Path(__file__).resolve().parent
+# <repo>/src/phylogas -> <repo>, so bundled data/ can be found when the
+# package is installed with `pip install -e .` and run from elsewhere.
+_REPO_ROOT = _PKG.parent.parent
 
 
 # --------------------------------------------------------------------------
@@ -77,9 +80,25 @@ def cmd_paint(args) -> int:
         "--random_number_seed", str(pick("random_seed", args.seed, 43)),
     ]
 
+    # The seed FASTA and the training alignment are produced by prep-seeds /
+    # fetch-data under their own keys, so resolve them rather than trusting
+    # genetic_painter.{seed,align}_fasta to have been edited by hand.
+    align_fasta = pick(gp + "align_fasta", args.align_fasta)
+    seed_fasta = args.seed_fasta or pick(gp + "seed_fasta", None)
+    if cfg is not None:
+        if not align_fasta:
+            found, _ = _training_fasta_path(cfg, args)
+            align_fasta = str(found) if found else None
+        found, where = _seed_fasta_path(cfg, args)
+        if found is not None and where != "genetic_painter.seed_fasta":
+            seed_fasta = str(found)
+            print(f"  seed FASTA: using {found}  (via {where})")
+        elif found is not None:
+            seed_fasta = str(found)
+
     optional = [
-        ("--align_fasta", pick(gp + "align_fasta", args.align_fasta)),
-        ("--seed_fasta", pick(gp + "seed_fasta", args.seed_fasta)),
+        ("--align_fasta", align_fasta),
+        ("--seed_fasta", seed_fasta),
         ("--input_graph_csv", pick("epihiper.output_csv", args.input_graph_csv)),
         ("--output_prefix", pick(gp + "output_prefix", args.output_prefix)),
         ("--start_date", pick(gp + "start_date", args.start_date)),
@@ -218,13 +237,32 @@ def cmd_validate_config(args) -> int:
         ("genetic_painter.entropy_thresholds", "entropy thresholds"),
         ("genetic_painter.probability_matrix", "probability matrix"),
         ("genetic_painter.reference_fasta", "reference FASTA"),
-        ("genetic_painter.seed_fasta", "seed FASTA"),
         ("epihiper.output_csv", "EpiHiper transmission log"),
         ("population.demographics_file", "demographics (derived)"),
         ("population.fips_file", "county FIPS lookup"),
     ]
     missing = 0
     print("\nInput files:")
+
+    # Resolved rather than looked up directly: these are produced under one
+    # config key and read under another (see _seed_fasta_path).
+    seed_found, seed_where = _seed_fasta_path(cfg)
+    train_found, train_target = _training_fasta_path(cfg)
+    for label, found, shown, note in (
+        ("training sequences", train_found, train_target, None),
+        ("seed FASTA", seed_found,
+         seed_found or cfg.get("genetic_painter.seed_fasta", default=None),
+         None if seed_where == "genetic_painter.seed_fasta" else seed_where),
+    ):
+        if found is not None:
+            print(f"  [okay] {label:32s} {found}")
+            if note:
+                print(f"         (found via {note})")
+        elif shown is None:
+            print(f"  [ -- ] {label:32s} (not configured)")
+        else:
+            print(f"  [MISS] {label:32s} {shown}")
+            missing += 1
     for key, label in checks:
         raw = cfg.get(key, default=None)
         if raw is None:
@@ -293,6 +331,117 @@ _STATE_NAMES = {"va": "Virginia", "ca": "California", "ga": "Georgia",
                 "ma": "Massachusetts", "mn": "Minnesota", "wa": "Washington"}
 
 
+# --------------------------------------------------------------------------
+# Derived input locations
+#
+# Several stages write a file under one config key and are read back under
+# another: `prep-seeds` writes into `seeds.output_folder`, `fetch-data
+# --with-seeds` writes into <data_dir>/<state>/seeds, and the painter reads
+# `genetic_painter.seed_fasta`. Rather than have a producer rewrite the user's
+# config, the readers resolve the configured key first and then fall back to
+# the places the producers actually write to.
+# --------------------------------------------------------------------------
+def _sanitize_pango(pango) -> str:
+    """Match seq_prep.py's filename sanitisation of a lineage name."""
+    return str(pango).split(",")[0].strip().replace(".", "_").replace("/", "_")
+
+
+def _state_name(cfg, args=None) -> str:
+    """Full state name as seq_prep.py expects it (e.g. 'Virginia')."""
+    name = _cfg_or_flag(cfg, "population.state_name", getattr(args, "state", None), None)
+    if name:
+        return str(name)
+    code = str(_cfg_or_flag(cfg, "population.state", None, "va")).lower()
+    return _STATE_NAMES.get(code, code)
+
+
+def _seed_fasta_path(cfg, args=None):
+    """Locate the seed FASTA. Returns ``(path_or_None, note)``.
+
+    ``note`` says where it came from, so `status` can report a file that was
+    found somewhere other than the configured key.
+    """
+    raw = cfg.get("genetic_painter.seed_fasta", default=None)
+    if raw is not None:
+        found = cfg.resolve_variant(raw)
+        if found is not None:
+            return found, "genetic_painter.seed_fasta"
+
+    state = _state_name(cfg, args)
+    pango = _sanitize_pango(_cfg_or_flag(cfg, "variant.pango", None, "B.1.617.2"))
+    stem = f"{state.replace(' ', '_')}_{pango}_seed_sequences.fasta"
+
+    data_dir = str(cfg.get("data_dir", default="data"))
+    code = str(cfg.get("population.state", default="va")).lower()
+    for folder, note in (
+        (cfg.get("seeds.output_folder", default=None), "seeds.output_folder"),
+        (f"{data_dir}/{code}/seeds", "fetch-data --with-seeds output"),
+        (f"{data_dir}/importations/sequences", "bundled importations folder"),
+    ):
+        if not folder:
+            continue
+        found = cfg.resolve_variant(Path(str(folder)) / stem)
+        if found is not None:
+            return found, note
+
+    # Nothing on disk: report the configured target if there is one, so the
+    # caller can print a meaningful path.
+    return None, "genetic_painter.seed_fasta" if raw is not None else "not configured"
+
+
+def _training_window(cfg):
+    """``(date_from, date_to)`` for the bulk training-sequence download.
+
+    Defaults to the window the painter simulates, which is what the existing
+    runs used. A mutational model is often better trained on a window that
+    starts earlier than the simulation; set ``training.date_from`` /
+    ``training.date_to`` explicitly to do that.
+    """
+    import datetime as _dt
+
+    d_from = cfg.get("training.date_from", default=None)
+    d_to = cfg.get("training.date_to", default=None)
+    if d_from and d_to:
+        return str(d_from), str(d_to)
+
+    start = cfg.get("genetic_painter.start_date", default=None)
+    ticks = cfg.get("genetic_painter.num_ticks", default=None)
+    if not start:
+        return (str(d_from) if d_from else None, str(d_to) if d_to else None)
+    s = _dt.date.fromisoformat(str(start))
+    e = s + _dt.timedelta(days=int(ticks)) if ticks else None
+    return (str(d_from) if d_from else s.isoformat(),
+            str(d_to) if d_to else (e.isoformat() if e else None))
+
+
+def _bulk_output_name(state, pango, d_from, d_to, include_sublineages=True) -> str:
+    """The filename seq_prep.py's bulk mode writes, so callers can find it."""
+    stem = f"{str(state).replace(' ', '_')}_{_sanitize_pango(pango)}"
+    span = f"{d_from}_{d_to}" if d_from and d_to else "all-dates"
+    name = f"{stem}_{span}.fasta"
+    return name if include_sublineages else name.replace(".fasta", "_exact.fasta")
+
+
+def _training_fasta_path(cfg, args=None):
+    """Locate the bulk training alignment. Returns ``(found_or_None, target)``.
+
+    ``target`` is where `fetch-data --with-training-sequences` would put it:
+    the configured ``genetic_painter.align_fasta`` if set, otherwise a name
+    derived the way seq_prep.py's bulk mode names its output.
+    """
+    raw = cfg.get("genetic_painter.align_fasta", default=None)
+    if raw is not None:
+        return cfg.resolve_variant(raw), Path(str(raw)).expanduser()
+
+    state = _state_name(cfg, args).replace(" ", "_")
+    pango = _sanitize_pango(_cfg_or_flag(cfg, "variant.pango", None, "B.1.617.2"))
+    d_from, d_to = _training_window(cfg)
+    span = f"{d_from}_{d_to}" if d_from and d_to else "all-dates"
+    data_dir = str(cfg.get("data_dir", default="data"))
+    target = Path(f"{data_dir}/training_sequences/{state}_{pango}_{span}.fasta")
+    return cfg.resolve_variant(target), target
+
+
 def cmd_fetch_data(args) -> int:
     """Download the synthetic population files from the UVA Dataverse."""
     from . import sources as dv
@@ -344,6 +493,29 @@ def cmd_fetch_data(args) -> int:
             print(f"\n  (skipping {sim_mb / 1024:.2f} GB of EpiHiper simulation output;")
             print( "   add --with-simulations to fetch the transmission networks that")
             print( "   `phylogas paint` consumes.)")
+
+    # Training sequences for the mutational model (Cov-Spectrum bulk mode).
+    # seq_prep.py's bulk path is independent of --seed_mode: it queries
+    # Cov-Spectrum over a date range and writes one FASTA, which `train` reads
+    # as genetic_painter.align_fasta.
+    if args.with_training_sequences:
+        if cfg is None:
+            print("\nERROR: --with-training-sequences needs --config to know the "
+                  "date range and the target path.", file=sys.stderr)
+            return 1
+        found, target = _training_fasta_path(cfg, args)
+        d_from, d_to = _training_window(cfg)
+        print(f"\nTraining sequences (Cov-Spectrum bulk mode):")
+        print(f"  target: {target}")
+        if d_from and d_to:
+            src = ("training.date_from/date_to" if cfg.get("training.date_from", default=None)
+                   else "genetic_painter.start_date + num_ticks; set "
+                        "training.date_from/date_to to widen")
+            print(f"  window: {d_from} .. {d_to}   ({src})")
+        else:
+            print("  window: all dates (no training window or start_date configured)")
+        if found is not None:
+            print(f"  already present: {found}")
 
     if args.dry_run:
         print("\n--dry-run: nothing downloaded.")
@@ -415,6 +587,47 @@ def cmd_fetch_data(args) -> int:
             if _run(seed_cmd) != 0:
                 print(f"    WARNING: seed acquisition failed for {st}", file=sys.stderr)
 
+    # Training sequences: the download itself (plan printed further up).
+    if args.with_training_sequences:
+        found, target = _training_fasta_path(cfg, args)
+        d_from, d_to = _training_window(cfg)
+        if found is None:   # already reported as present in the plan above
+            print(f"\nFetching training sequences for {_state_name(cfg, args)} ...")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            state = _state_name(cfg, args)
+            pango = str(_cfg_or_flag(cfg, "variant.pango", args.pango, "B.1.617.2"))
+            sub = _cfg_or_flag(cfg, "variant.include_sublineages",
+                               args.include_sublineages, True)
+            bulk_cmd = [
+                sys.executable, "-u", str(_PKG / "seqprep" / "seq_prep.py"),
+                "--state", state,
+                "--pango", pango,
+                "--output_folder", str(target.parent),
+                "--include_sublineages" if sub else "--no_include_sublineages",
+            ]
+            if d_from and d_to:
+                bulk_cmd += ["--date_from", d_from, "--date_to", d_to]
+            if _run(bulk_cmd) != 0:
+                print("    WARNING: training-sequence download failed",
+                      file=sys.stderr)
+            else:
+                # Bulk mode names its own output; move it onto the configured
+                # align_fasta path so `train` finds it without config edits.
+                produced = target.parent / _bulk_output_name(state, pango, d_from, d_to, sub)
+                if produced.exists() and produced.resolve() != target.resolve():
+                    if target.suffix in (".xz", ".gz", ".bz2", ".zst"):
+                        # Bulk mode writes plain FASTA; renaming it onto a
+                        # compressed name would misreport the format.
+                        print(f"    wrote {produced}")
+                        print(f"    NOTE: genetic_painter.align_fasta names a "
+                              f"{target.suffix} file. Compress it, or point the "
+                              f"key at {produced}.")
+                    else:
+                        produced.replace(target)
+                        print(f"    -> {target}")
+                if cfg.get("genetic_painter.align_fasta", default=None) is None:
+                    print(f"    NOTE: set genetic_painter.align_fasta to {target}")
+
     # Build the demographics table the pipeline actually reads.
     if args.build_demographics:
         fips = args.fips or _find_fips(dest_root)
@@ -445,10 +658,23 @@ def cmd_fetch_data(args) -> int:
                 except SystemExit as exc:
                     print(f"  demographics build failed: {exc}", file=sys.stderr)
 
-    print("\nStill required from elsewhere (see docs/data_acquisition.md):")
-    print("  - Ruralurbancontinuumcodes2023.csv  (USDA ERS)")
+    # Only name what is actually absent. This used to announce the RUCC file
+    # unconditionally, including when a copy was already sitting in data/.
+    outstanding = []
+    if _find_rucc(cfg, dest_root) is None:
+        outstanding.append(f"- {dv.RUCC_FILENAME}  (USDA ERS; --with-rucc)")
     if not args.with_simulations:
-        print("  - EpiHiper simulation replicates    (--with-simulations)")
+        outstanding.append("- EpiHiper simulation replicates    (--with-simulations)")
+    if cfg is not None:
+        found, target = _training_fasta_path(cfg, args)
+        if found is None and not args.with_training_sequences:
+            outstanding.append(
+                "- training sequences for the mutational model "
+                "(--with-training-sequences)")
+    if outstanding:
+        print("\nStill required from elsewhere (see docs/data_acquisition.md):")
+        for line in outstanding:
+            print(f"  {line}")
     print(f"\nVerify with:  phylogas validate-config --config {args.config or 'config.yaml'}")
     return 0
 
@@ -457,6 +683,28 @@ def _pick(d: Path, stem: str) -> Path:
     """Return the decompressed file if present, else the .xz (pandas reads both)."""
     plain = d / stem
     return plain if plain.exists() else d / (stem + ".xz")
+
+
+def _find_rucc(cfg, root: Path):
+    """Locate the USDA rural-urban continuum codes, or None.
+
+    Checked in the order a run would actually use: the configured key, the
+    download destination, then the copy bundled in the repository.
+    """
+    from . import sources as dv
+
+    cands = []
+    if cfg is not None:
+        raw = cfg.get("population.rucc_file", default=None)
+        if raw:
+            cands.append(Path(str(raw)).expanduser())
+    cands += [root / dv.RUCC_FILENAME,
+              Path("data") / dv.RUCC_FILENAME,
+              _REPO_ROOT / "data" / dv.RUCC_FILENAME]
+    for c in cands:
+        if c.exists():
+            return c
+    return None
 
 
 def _find_fips(root: Path):
@@ -612,20 +860,74 @@ def cmd_compare_strategies(args) -> int:
 # --------------------------------------------------------------------------
 # Stage table: (key, label, config key holding the artefact, next command).
 # `config key` may be None for stages whose output is not a single file.
+# Pipeline stages in dependency order: each one's inputs are produced by the
+# stages above it. `status` walks this list, so the order here is what decides
+# the order of the report and which command is named as the next step.
+#
+#   key      -> internal id
+#   label    -> what the report calls it
+#   cfgkey   -> config key holding the path, or None for a derived location
+#               (see _resolve_stage)
+#   nxt      -> the command that produces it
 _STAGES = [
-    ("config",  "Configuration",        None,
+    ("config",   "Configuration",         None,
      "cp config.template.yaml config.yaml"),
-    ("pop",     "Synthetic population", "population.demographics_file",
+    ("pop",      "Synthetic population",  "population.demographics_file",
      "phylogas fetch-data --states {state} --with-simulations"),
-    ("map",     "Entropy map",          "genetic_painter.probability_matrix",
+    ("training", "Training sequences",    None,
+     "phylogas fetch-data --states {state} --with-training-sequences"),
+    ("map",      "Entropy map",           "genetic_painter.probability_matrix",
      "phylogas train --config {config}"),
-    ("seeds",   "Seed sequences",       "genetic_painter.seed_fasta",
-     "phylogas prep-seeds --config {config}"),
-    ("abm",     "EpiHiper output",      "epihiper.output_csv",
+    ("seeds",    "Seed sequences",        None,
+     "phylogas prep-seeds --config {config} --seed-mode"),
+    ("abm",      "EpiHiper output",       "epihiper.output_csv",
      "phylogas fetch-data --states {state} --with-simulations"),
-    ("painted", "Painted genomes",      None,
+    ("painted",  "Painted genomes",       None,
      "phylogas paint --config {config}"),
 ]
+
+
+def _resolve_stage(key, cfgkey, cfg):
+    """Locate one stage's artefact. Returns ``(found_or_None, shown, note)``.
+
+    ``shown`` is the path to display when it is missing; ``note`` is an
+    optional remark, used when a file turns up somewhere other than the
+    configured key.
+    """
+    if cfgkey is not None:
+        raw = cfg.get(cfgkey, default=None)
+        if raw is None:
+            return None, None, None          # not configured
+        return (cfg.resolve_variant(raw),
+                Path(str(raw)).expanduser(), None)
+
+    if key == "training":
+        found, target = _training_fasta_path(cfg)
+        note = None
+        if found is None and cfg.get("genetic_painter.align_fasta", default=None) is None:
+            note = "align_fasta not set; would be written here"
+        return found, target, note
+
+    if key == "seeds":
+        found, where = _seed_fasta_path(cfg)
+        raw = cfg.get("genetic_painter.seed_fasta", default=None)
+        if found is None:
+            return None, (Path(str(raw)).expanduser() if raw else None), None
+        note = None
+        if where != "genetic_painter.seed_fasta":
+            note = f"found via {where}; config points elsewhere"
+        return found, found, note
+
+    if key == "painted":
+        prefix = cfg.get("genetic_painter.output_prefix", default=None)
+        if prefix is None:
+            return None, None, None
+        comp = cfg.get("genetic_painter.compression", default="xz")
+        ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
+        raw = f"{prefix}.sequences.fasta{ext}"
+        return cfg.resolve_variant(raw), Path(raw), None
+
+    return None, None, None
 
 
 def cmd_status(args) -> int:
@@ -644,41 +946,44 @@ def cmd_status(args) -> int:
     state = cfg.get("population.state", default="va")
     print(f"  [okay] Configuration            {cfg_path}")
 
-    first_missing = None
-    for _key, label, cfgkey, nxt in _STAGES[1:]:
-        if cfgkey is None:
-            # Derived stage: check the painter's declared output prefix.
-            prefix = cfg.get("genetic_painter.output_prefix", default=None)
-            if prefix is None:
-                continue
-            comp = cfg.get("genetic_painter.compression", default="xz")
-            ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
-            path = cfg.resolve_variant(f"{prefix}.sequences.fasta{ext}")
-            shown = path or Path(f"{prefix}.sequences.fasta{ext}")
-        else:
-            raw = cfg.get(cfgkey, default=None)
-            if raw is None:
-                print(f"  [ -- ] {label:28s} (not configured)")
-                continue
-            path = cfg.resolve_variant(raw)
-            shown = path or Path(str(raw)).expanduser()
+    missing = []   # (label, command) in dependency order
+    for key, label, cfgkey, nxt in _STAGES[1:]:
+        path, shown, note = _resolve_stage(key, cfgkey, cfg)
+
+        if path is None and shown is None:
+            print(f"  [ -- ] {label:28s} (not configured)")
+            continue
 
         if path is not None:
             size = path.stat().st_size / 1048576
             print(f"  [okay] {label:28s} {size:8.1f} MB  {path}")
+            if note:
+                print(f"         {note}")
         else:
             print(f"  [MISS] {label:28s} {shown}")
-            if first_missing is None:
-                first_missing = nxt.format(state=state, config=cfg_path)
+            if note:
+                print(f"         {note}")
+            missing.append((label, nxt.format(state=state, config=cfg_path)))
 
     print()
-    if first_missing is None:
+    if not missing:
         print("Everything is in place. Run the full pipeline with:")
         print(f"  phylogas run --config {cfg_path} --cores all")
         return 0
 
+    # Report every gap, not just the first. A single "next step" sent people
+    # to `train` while the seed FASTA was also absent, so they had to work the
+    # rest out by backtracking.
     print("Next step:")
-    print(f"  {first_missing}")
+    print(f"  {missing[0][1]}")
+    if len(missing) > 1:
+        print(f"\nThen, for the other {len(missing) - 1} missing input"
+              f"{'s' if len(missing) > 2 else ''}:")
+        seen = {missing[0][1]}
+        for label, cmd in missing[1:]:
+            shown = cmd if cmd not in seen else "(same command as above)"
+            print(f"  {label:22s}  {shown}")
+            seen.add(cmd)
     print(f"\nFull input report:  phylogas validate-config --config {cfg_path}")
     return 1
 
@@ -910,13 +1215,22 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Also fetch per-state seed sequences from Cov-Spectrum. "
                          "Needed for states other than VA: the bundled seed FASTA is "
                          "Virginia Delta and will under-cover other states.")
-    sp.add_argument("--pango", default=None, help="Lineage for --with-seeds (default: config)")
+    sp.add_argument("--with-training-sequences", "--training-sequences",
+                    dest="with_training_sequences", action="store_true",
+                    help="Also fetch the bulk Cov-Spectrum alignment that `phylogas "
+                         "train` reads as genetic_painter.align_fasta. Uses "
+                         "seq_prep.py's bulk mode over training.date_from/date_to, "
+                         "defaulting to the painter's own window. Skipped if the "
+                         "file is already present.")
+    sp.add_argument("--pango", default=None,
+                    help="Lineage for --with-seeds / --with-training-sequences "
+                         "(default: config)")
     sp.add_argument("--include-sublineages", dest="include_sublineages",
                     action="store_true", default=None,
-                    help="With --with-seeds: include descendant lineages. Default: ON.")
+                    help="With --with-seeds / --with-training-sequences: include descendant lineages. Default: ON.")
     sp.add_argument("--no-include-sublineages", dest="include_sublineages",
                     action="store_false",
-                    help="With --with-seeds: match the named lineage exactly.")
+                    help="With --with-seeds / --with-training-sequences: match the named lineage exactly.")
     sp.add_argument("--insecure-download", dest="insecure_download",
                     action="store_true", default=None,
                     help="With --with-seeds: skip TLS verification for the cluster TSV "

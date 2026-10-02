@@ -7,16 +7,22 @@ here instead.
 
 What moved:
 
-===================================  ==================================
-eval_type                            needs
-===================================  ==================================
-B_cumulative_infections              true infection counts
-C_stride_window_infections           true infection counts
-E_stride_variant_prevalence_error    true variant counts + variant_benchmark
-F_stride_component_coverage          the transmission graph
-M_8_week_rolling_tree_coverage       the transmission graph
-*_coverage_size_*                    the transmission graph
-===================================  ==================================
+=================================  ====================================
+eval_type                          needs
+=================================  ====================================
+cumulative_infections              true infection counts
+stride_window_infections           true infection counts
+stride_variant_prevalence_error    true variant counts + variant_benchmark
+stride_component_coverage          the transmission graph
+8_week_rolling_tree_coverage       the transmission graph
+coverage_size_*                    the transmission graph
+=================================  ====================================
+
+These used to be the single-letter "panel" codes B, C, E, F, M and I/J/K/L.
+The letters are retired: they told you nothing about what was measured and
+leaked into output filenames. BeyondBaseline's
+``scenarios_simulation/eval_names.py`` is the registry of record, and its
+``canonicalize()`` maps any old letter-coded name onto the new one.
 
 What stayed in BeyondBaseline: KL divergence against the line list and the
 population, and the equity metrics. Those need only the line list the sampler

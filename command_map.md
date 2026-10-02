@@ -5,7 +5,7 @@ underlying scripts runnable, and the mutational-model imports fall back to flat
 imports when a script is executed directly. This table is the migration guide,
 not a deprecation notice.
 
-Last verified: 2026-09-28.
+Last verified: 2026-10-02.
 
 ---
 
@@ -13,7 +13,8 @@ Last verified: 2026-09-28.
 
 | Stage | Old | New |
 |---|---|---|
-| 0. Seeds | `python seq_prep.py --seed_mode ...` | `phylogas prep-seeds --config config.yaml` |
+| 0. Seeds | `python seq_prep.py --seed_mode ...` | `phylogas prep-seeds --config config.yaml --seed-mode` |
+| 0b. Training seqs | `python seq_prep.py ...` (bulk mode, by hand) | `phylogas fetch-data --with-training-sequences` |
 | 1. Train | `python genetic_painter.py --analysis_type entropy_analysis ...` | `phylogas train --config config.yaml` |
 | 2. Paint | `python genetic_painter.py --analysis_type generate_sequence ...` | `phylogas paint --config config.yaml` |
 | 3. Linelist | `python simulate_linelist.py ...` | `simulate_linelist ...` (TwinSampler) |
@@ -509,3 +510,151 @@ Produces exactly the same output as the in-pass filter (verified). Use
 Painter metadata now carries `alias_pid` (`{pid}.{tick}`) alongside `strain`,
 so joins against TwinSampler and BeyondBaseline outputs are a direct key match
 instead of parsing the strain ID.
+
+---
+
+## Panel letters retired (2026-10-02)
+
+The scenario sweeps labelled every metric with a single letter -- "panel A",
+"panel F" -- and the letter went into the `eval_type` column and into output
+filenames, so a results directory held
+`lasso_all_scenarios_K_coverage_size_100.csv` with nothing to say what K was.
+The letters are gone. The new name is the old one with the letter stripped,
+except `A_targets`, which became `kl_targets`.
+
+| Old `eval_type` | New `eval_type` | Computed by |
+|---|---|---|
+| `A_targets` | `kl_targets` | BeyondBaseline |
+| `B_cumulative_infections` | `cumulative_infections` | PhyloGAS (needs ABM truth) |
+| `C_stride_window_infections` | `stride_window_infections` | PhyloGAS (needs ABM truth) |
+| `E_stride_variant_prevalence_error` | `stride_variant_prevalence_error` | PhyloGAS (needs ABM truth) |
+| `F_stride_component_coverage` | `stride_component_coverage` | PhyloGAS (needs ABM truth) |
+| `I_coverage_size_0` | `coverage_size_0` | PhyloGAS (needs ABM truth) |
+| `J_coverage_size_10` | `coverage_size_10` | PhyloGAS (needs ABM truth) |
+| `K_coverage_size_100` | `coverage_size_100` | PhyloGAS (needs ABM truth) |
+| `L_coverage_size_1000` | `coverage_size_1000` | PhyloGAS (needs ABM truth) |
+| `M_8_week_rolling_tree_coverage` | `8_week_rolling_tree_coverage` | PhyloGAS (needs ABM truth) |
+| `N_equity_<stratifier>` | `equity_<stratifier>` | BeyondBaseline |
+
+`D_`, `G_` and `H_` appeared in the notebooks' prefix tuples but were never
+emitted by any code in either repository. They are dropped, not renamed.
+
+Output filenames followed the rename:
+
+| Old | New |
+|---|---|
+| `lasso_all_scenarios_B_cumulative_infections.csv` | `lasso_all_scenarios_cumulative_infections.csv` |
+| `lasso_all_scenarios_K_coverage_size_100.csv` | `lasso_all_scenarios_coverage_size_100.csv` |
+| `A_table3_targets_1xN.png` | `kl_targets_table_1xN.png` |
+| `N_equity_heatmap_<age>.png` | `equity_heatmap_<age>.png` |
+| `Ranking_Selected_Panels_ACFHKM.csv` | `Ranking_Selected_Metrics.csv` |
+
+### Where the definitions live
+
+`BeyondBaseline/scripts/scenarios_simulation/eval_names.py` is the registry of
+record. It declares, per metric, whether a higher value is better, which
+metric family it belongs to, and whether it needs ABM ground truth. Two things
+that used to be inferred from the letter prefix -- direction of improvement
+and metric family -- were spelled differently in each notebook
+(`('G_','H_','I_','J_','K_','L_','M_')` in one, `('F_','I_',...)` in another);
+they now come from one place.
+
+`canonicalize()` maps any old letter-coded name onto the new one, and the
+aggregator and the notebooks apply it when reading result CSVs, so existing
+`AUC_rankings.csv` / `Aggregated_Median_AUC_Rankings.csv` files still load.
+
+### Why the split is by ground truth, not by "sweep vs evaluation"
+
+BeyondBaseline keeps `kl_targets` and `equity_*` because they need only the
+line list it was handed -- a health department can compute them on real data.
+Everything that needs the ABM's true infection counts or its transmission
+graph is a PhyloGAS metric. The sweep itself needs no ground truth at all:
+`--infections` is only ever read by the truth metrics.
+
+The LASSO subgroup sweeps had broken on this, because they imported the moved
+functions at module scope. They now import them optionally:
+
+```python
+try:
+    from phylogas.benchmark.truth_metrics import (...)
+    _HAVE_TRUTH = True
+except ImportError:
+    _HAVE_TRUTH = False
+```
+
+so `beyond-baseline-lasso-greedy` runs against a line list with no PhyloGAS
+installed, printing which metrics it skipped.
+
+---
+
+## Status and input resolution (2026-10-02)
+
+`phylogas status` changed in three ways after a cluster run sent the user in
+circles:
+
+1. **Training sequences are a tracked stage.** `genetic_painter.align_fasta`
+   was never checked, so nothing told you to run bulk mode before `train`.
+2. **Every missing input is reported**, not just the first. The old report
+   named one next step -- `train` -- while the seed FASTA was also absent, so
+   the rest had to be found by backtracking.
+3. **Seeds are resolved, not just looked up.** `prep-seeds` writes into
+   `seeds.output_folder` and `fetch-data --with-seeds` writes into
+   `<data_dir>/<state>/seeds`, while the painter reads
+   `genetic_painter.seed_fasta`. All three readers (`status`,
+   `validate-config`, `paint`) now check the configured key and then those two
+   locations, reporting where the file was found:
+
+```
+  [okay] Seed sequences    0.0 MB  data/importations/sequences/Virginia_B_1_617_2_seed_sequences.fasta
+         found via seeds.output_folder; config points elsewhere
+```
+
+   so a fresh `prep-seeds` run no longer needs the YAML hand-edited.
+
+`fetch-data` also stopped announcing `Ruralurbancontinuumcodes2023.csv` as
+"still required from elsewhere" unconditionally. It now looks at
+`population.rucc_file`, the download destination, `./data/` and the copy
+committed in the repository, and says nothing when any of them has it.
+
+---
+
+## Training sequences for the mutational model
+
+`seq_prep.py` has two independent modes. `--seed_mode` picks importation seeds
+from a UCSC cluster TSV; without it, **bulk mode** queries Cov-Spectrum over a
+date range and writes one FASTA. Bulk mode is what produces the training
+alignment the entropy model is fitted to, and it was missing from the CLI: the
+date-range flags existed in the script but `prep-seeds` never passed them, so
+a bulk run would have queried the lineage's whole history.
+
+```bash
+phylogas fetch-data --states va --with-training-sequences
+phylogas fetch-data --states va --with-training-sequences --dry-run   # show the window first
+```
+
+`--training-sequences` is accepted as an alias. The window is:
+
+| config | window used |
+|---|---|
+| `training.date_from` + `training.date_to` set | exactly those |
+| unset | `genetic_painter.start_date` .. `start_date + num_ticks` |
+
+The derived default is the simulated window, matching what the existing runs
+did. The command always prints the window and where it came from, so this is
+never silent:
+
+```
+Training sequences (Cov-Spectrum bulk mode):
+  target: data/clean_va_delta_sequences.fasta
+  window: 2021-04-07 .. 2022-02-01   (genetic_painter.start_date + num_ticks; set training.date_from/date_to to widen)
+```
+
+A mutational model is usually better fitted to a window that *starts earlier*
+than the wave being simulated, so set `training.date_from` explicitly when
+that matters -- the default is a convenience, not a recommendation.
+
+Bulk mode names its own output (`<State>_<lineage>_<from>_<to>.fasta`), so the
+command moves it onto the configured `genetic_painter.align_fasta` path. Leave
+that key unset and it derives
+`<data_dir>/training_sequences/<State>_<lineage>_<from>_<to>.fasta` and tells
+you what to set. An existing file is never re-downloaded.

@@ -103,6 +103,25 @@ seeds:
 
 
 # ---------------------------------------------------------------------------
+# 3b. Training sequences for the mutational model
+#     (phylogas fetch-data --with-training-sequences)
+#
+# seq_prep.py's *bulk* mode -- a separate path from --seed_mode -- queries
+# Cov-Spectrum over a date range and writes the alignment that `phylogas
+# train` reads as genetic_painter.align_fasta.
+#
+# Leave these unset and the window defaults to the simulated one
+# (genetic_painter.start_date through start_date + num_ticks), which is what
+# the existing runs used. Set them to train the mutational model on a wider
+# or earlier window -- usually worth doing, since the model is fitted to
+# sequences observed *before* and around the wave being simulated.
+# ---------------------------------------------------------------------------
+training:
+  date_from: null             # e.g. "2021-02-01"
+  date_to: null               # e.g. "2021-09-01"
+
+
+# ---------------------------------------------------------------------------
 # 4. EpiHiper agent-based simulation output
 # ---------------------------------------------------------------------------
 epihiper:
@@ -121,7 +140,10 @@ epihiper:
 # ---------------------------------------------------------------------------
 genetic_painter:
   # -- Training inputs (Mode 1: entropy analysis) --------------------------
-  # Real-world MSA the entropy "fitness map" is learned from.
+  # Real-world MSA the entropy "fitness map" is learned from. Fetch it with
+  #   phylogas fetch-data --states va --with-training-sequences
+  # which writes to this path. Leave it unset and that command derives a name
+  # under {data_dir}/training_sequences/ and reports it.
   align_fasta: "{data_dir}/clean_va_delta_sequences.fasta"
 
   # -- Fitness map (written by `train`, read by `paint`) -------------------
@@ -129,6 +151,10 @@ genetic_painter:
   probability_matrix: "{data_dir}/example_data/run.03.base.threshold.df.npy"
 
   # -- Painting inputs (Mode 2: generation) --------------------------------
+  # Written by `phylogas prep-seeds --seed-mode` into seeds.output_folder.
+  # If this path does not exist, the CLI looks there (and in
+  # <data_dir>/<state>/seeds) before reporting it missing, so a fresh
+  # prep-seeds run needs no edit here.
   seed_fasta: "{data_dir}/example_data/Virginia_B_1_617_2_seed_sequences.fasta.gz"
   reference_fasta: "{data_dir}/reference/reference.fasta"
   output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"

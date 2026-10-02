@@ -140,8 +140,8 @@ With the script adopted and the merge wired in, here is the full picture.
 
 | Config key | What it is | Where it comes from | Status |
 |---|---|---|---|
-| `population.rucc_file` | `Ruralurbancontinuumcodes2023.csv` | **USDA ERS**, not Dataverse | Needs its own fetch; small, could be committed |
-| `genetic_painter.align_fasta` | `clean_va_delta_sequences.fasta` — the training MSA | GISAID-derived | **Cannot be redistributed.** Needs a documented recipe via `phylogas prep-seeds`, or ship only the derived entropy outputs |
+| `population.rucc_file` | `Ruralurbancontinuumcodes2023.csv` | **USDA ERS**, not Dataverse | **Resolved.** A pinned copy is committed at `data/`; `fetch-data --with-rucc` refreshes it from the agency. `fetch-data` only reports it as outstanding when no copy is found |
+| `genetic_painter.align_fasta` | `clean_va_delta_sequences.fasta` — the training MSA | GISAID-derived; an open-data equivalent is fetchable | **Recipe implemented.** `fetch-data --with-training-sequences` runs `seq_prep.py` bulk mode against Cov-Spectrum over `training.date_from`/`date_to` (default: the painter's own window) and writes this path. Note this rebuilds an *equivalent* alignment from open data; it is not byte-identical to the original GISAID-derived file, so entropy outputs will differ slightly. Shipping the pre-computed entropy outputs remains the reproducible option |
 | `genetic_painter.entropy_thresholds` | `run.03.threshold.file` | Derived from the MSA above | Ship pre-computed — it is small (318 KB) and avoids the GISAID problem entirely |
 | `genetic_painter.probability_matrix` | `run.03.base.threshold.df.npy` | Same | Ship pre-computed (3.6 MB) |
 | `genetic_painter.seed_fasta` | `Virginia_B_1_617_2_seed_sequences.fasta.gz` | GISAID-derived (13 MB) | Redistribution unclear; `prep-seeds` can rebuild from Cov-Spectrum |
