@@ -219,7 +219,11 @@ rule simulate_linelist:
         stop_tick=(cfg("genetic_painter.start_tick", 0) + cfg("genetic_painter.num_ticks", 0)),
         seed=cfg("random_seed", 42),
         schedule=cfg("ascertainment.schedule_input", ""),
-        variant_mode=cfg("ascertainment.variant_mode", "variant_bipartite"),
+        # TwinSampler changed its own default to just_components when
+        # benchmark variant assignment moved to `phylogas assign-variants`.
+        # This fallback used to say variant_bipartite, which would have
+        # silently re-enabled the moved step for a config without the key.
+        variant_mode=cfg("ascertainment.variant_mode", "just_components"),
         # Geography must match what the painter puts in its FASTA headers:
         # both build the Nextstrain `strain` id from these, and ncov joins
         # sequences to metadata on that string. Single source of truth.

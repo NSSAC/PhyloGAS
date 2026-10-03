@@ -760,6 +760,8 @@ argparse defaults. `command_map.md` claimed otherwise.
 `alias_pid` was also built in three places with three type treatments -- no
 cast, `astype(str)`, and `int()` -- which agree only while pid and tick are
 integral. A float tick gave `123.45.0` from one and `123.45` from another.
+(Two of those live in TwinSampler: `simulate_linelist.py` builds it inside the
+strain id, `label_components.py` builds the column itself.)
 
 ### What changed
 
@@ -817,3 +819,12 @@ reads it -- not TwinSampler (`--epihiper/--people/--households/--rucc/
 --ascertain/--schedule_input`), not `assign-variants` (which reads the
 allevents file). In the Snakefile `PAINTED_META` appears only as a paint output
 and in the `all` / `paint_only` target lists.
+
+Nothing in TwinSampler consumes its own `strain` column either. The only
+consumer anywhere was `filter_fasta_by_metadata` in `utils/sampling.py`, whose
+sole caller is its own `__main__`; TwinSampler deleted that file in the
+BeyondBaseline split, and `phylogas subset-fasta` supersedes it. Two stale
+copies remain, in BeyondBaseline and PhyloGAS -- a salvage-audit item.
+
+So the `strain` column exists for exactly one reason: to be the `strain`
+column ncov joins on.

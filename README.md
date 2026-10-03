@@ -250,5 +250,5 @@ Due to size constraints, the heavy synthetic population data and raw EpiHiper tr
 
 **Core Components:**
 * **Genetic Painter:** Integrated within `src/genetic_painter/`.
-* **Twin Sampler:** [github.com/NSSAC/twin_sampler](https://github.com/NSSAC/twin_sampler)
+* **Twin Sampler:** [github.com/NSSAC/TwinSampler](https://github.com/NSSAC/TwinSampler)
 * **BeyondBaseline:** [github.com/NSSAC/BeyondBaseline](https://github.com/NSSAC/BeyondBaseline)
