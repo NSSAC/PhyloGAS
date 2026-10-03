@@ -80,6 +80,25 @@ def cmd_paint(args) -> int:
         "--random_number_seed", str(pick("random_seed", args.seed, 43)),
     ]
 
+    # genetic_painter.location / .reference_location are mappings in YAML but
+    # the painter takes them as JSON strings. These were never passed, so the
+    # painter silently used its own argparse defaults (USA / Virginia / VA)
+    # and the config key was dead -- which mattered once TwinSampler started
+    # honouring the same values to build matching strain ids.
+    def _location_json(dotted, flag_value):
+        raw = flag_value if flag_value is not None else (
+            cfg.get(dotted, default=None) if cfg is not None else None)
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            return raw            # already JSON, or passed through verbatim
+        import json
+        return json.dumps(raw, separators=(",", ":"), sort_keys=True)
+
+    location = _location_json(gp + "location", getattr(args, "location", None))
+    reference_location = _location_json(gp + "reference_location",
+                                        getattr(args, "reference_location", None))
+
     # The seed FASTA and the training alignment are produced by prep-seeds /
     # fetch-data under their own keys, so resolve them rather than trusting
     # genetic_painter.{seed,align}_fasta to have been edited by hand.
@@ -113,6 +132,8 @@ def cmd_paint(args) -> int:
         ("--add_metadata", pick(gp + "add_metadata", args.add_metadata)),
         ("--input_graph_painted_prefix", pick(gp + "painted_prefix", args.painted_prefix)),
         ("--initial_viral_load", pick(gp + "initial_viral_load", args.initial_viral_load)),
+        ("--location", location),
+        ("--reference_location", reference_location),
     ]
     # Create the directories the painter writes into. It does not make them
     # itself, so `train` failed outright when the configured entropy-map
@@ -208,6 +229,102 @@ def cmd_subset_fasta(args) -> int:
         "-o", args.output,
     ]
     return _run(cmd, args.dry_run)
+
+
+# --------------------------------------------------------------------------
+# phylogas check-join
+# --------------------------------------------------------------------------
+def cmd_check_join(args) -> int:
+    """Verify that every FASTA header has a metadata row.
+
+    Nextstrain joins sequences to metadata on the `strain` string, and the two
+    sides are built by different code in different repositories -- the painter
+    writes the FASTA headers, TwinSampler writes the line list. A one-character
+    disagreement makes ncov drop sequences, and depending on the step it may do
+    so without an error, leaving a tree that is quietly missing data.
+
+    So this is a precondition for a build, not a diagnostic.
+    """
+    import lzma
+    import gzip
+
+    def _open_text(path):
+        p = str(path)
+        if p.endswith(".xz"):
+            return lzma.open(p, "rt")
+        if p.endswith(".gz"):
+            return gzip.open(p, "rt")
+        return open(p, "r")
+
+    fasta = Path(args.fasta)
+    meta = Path(args.metadata)
+    for f in (fasta, meta):
+        if not f.exists():
+            sys.exit(f"ERROR: not found: {f}")
+
+    # FASTA headers: the id is the first whitespace-delimited token, because
+    # the painter appends metadata after a space.
+    headers = []
+    with _open_text(fasta) as fh:
+        for line in fh:
+            if line.startswith(">"):
+                headers.append(line[1:].strip().split(None, 1)[0])
+    header_set = set(headers)
+
+    # Metadata: sniff the delimiter from the header line rather than trusting
+    # the extension, since these files are .tsv and .csv in different stages.
+    with _open_text(meta) as fh:
+        first = fh.readline().rstrip("\n").rstrip("\r")
+        delim = "\t" if first.count("\t") >= first.count(",") else ","
+        cols = first.split(delim)
+        if args.column not in cols:
+            sys.exit(f"ERROR: {meta} has no '{args.column}' column.\n"
+                     f"       columns: {', '.join(cols[:12])}"
+                     f"{' ...' if len(cols) > 12 else ''}")
+        idx = cols.index(args.column)
+        meta_ids = set()
+        for line in fh:
+            parts = line.rstrip("\n").rstrip("\r").split(delim)
+            if len(parts) > idx:
+                meta_ids.add(parts[idx].strip())
+    meta_ids.discard("")
+
+    missing = header_set - meta_ids
+    extra = meta_ids - header_set
+    matched = len(header_set) - len(missing)
+    pct = 100.0 * matched / len(header_set) if header_set else 0.0
+
+    print(f"FASTA    : {fasta}")
+    print(f"           {len(headers):,} records, {len(header_set):,} distinct ids")
+    if len(headers) != len(header_set):
+        print(f"           WARNING: {len(headers) - len(header_set):,} duplicate headers")
+    print(f"Metadata : {meta}  (column '{args.column}', {len(meta_ids):,} distinct ids)")
+    print(f"\nMatched  : {matched:,} / {len(header_set):,}  ({pct:.2f}%)")
+    print(f"Unmatched: {len(missing):,} sequences with no metadata row")
+    print(f"Spare    : {len(extra):,} metadata rows with no sequence  (harmless; ncov filters them)")
+
+    if missing:
+        print("\nSequences ncov would drop:")
+        for sid in sorted(missing)[: args.max_report]:
+            print(f"  {sid}")
+        if len(missing) > args.max_report:
+            print(f"  ... and {len(missing) - args.max_report:,} more")
+        # A total mismatch is nearly always the geography or the date anchor,
+        # since those shift every id at once.
+        if matched == 0 and extra:
+            print("\nNothing matched at all. The usual causes, in order:")
+            print("  1. country/divisionAbbr differ between the painter's")
+            print("     genetic_painter.location and what simulate_linelist was given")
+            print("     (compare the prefixes below).")
+            print("  2. start_date / start_tick differ between the two runs, which")
+            print("     shifts the year in every id.")
+            print(f"  FASTA    e.g.  {sorted(header_set)[0]}")
+            print(f"  metadata e.g.  {sorted(extra)[0]}")
+        print(f"\nFAIL: {len(missing):,} of {len(header_set):,} sequences would be dropped.")
+        return 1
+
+    print("\nOK: every sequence has a metadata row.")
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -1014,6 +1131,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"phylogas {__version__}")
     sub = p.add_subparsers(dest="command", metavar="<command>")
 
+    # -- check-join -------------------------------------------------------
+    sp = sub.add_parser("check-join",
+                        help="Verify every FASTA header has a metadata row "
+                             "(ncov joins on the strain id)")
+    sp.add_argument("-f", "--fasta", required=True,
+                    help="painted or subset FASTA (.fasta, .xz, .gz)")
+    sp.add_argument("-m", "--metadata", required=True,
+                    help="metadata table; TwinSampler line list or painter metadata")
+    sp.add_argument("--column", default="strain",
+                    help="metadata column holding the id (default: strain)")
+    sp.add_argument("--max-report", dest="max_report", type=int, default=10,
+                    help="how many unmatched ids to print (default: 10)")
+    sp.set_defaults(func=cmd_check_join)
+
     # -- status (start here) ----------------------------------------------
     sp = sub.add_parser("status",
                         help="Show pipeline readiness and the next command to run")
@@ -1043,6 +1174,10 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["entropy_analysis", "generate_sequence", "both"])
     sp.add_argument("--align-fasta", dest="align_fasta")
     sp.add_argument("--seed-fasta", dest="seed_fasta")
+    sp.add_argument("--location", default=None,
+                    help="JSON location block; overrides genetic_painter.location")
+    sp.add_argument("--reference-location", dest="reference_location", default=None,
+                    help="JSON location block for the reference record")
     sp.add_argument("--threshold-file", dest="threshold_file")
     sp.add_argument("--base-threshold-df", dest="base_threshold_df")
     sp.add_argument("--input-graph-csv", dest="input_graph_csv")

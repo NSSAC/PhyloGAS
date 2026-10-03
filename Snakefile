@@ -89,6 +89,14 @@ PROBMATRIX    = cfg("genetic_painter.probability_matrix")
 ALIGN_FASTA   = cfg("genetic_painter.align_fasta")
 PAINT_PREFIX  = cfg("genetic_painter.output_prefix", f"{RESULTS}/01_synthetic_genomes/{PROJECT}")
 
+# genetic_painter.location is a mapping in YAML but the painter takes it as a
+# JSON string, so it is read here once and shared with simulate_linelist.
+_loc = cfg("genetic_painter.location", {}) or {}
+if isinstance(_loc, str):
+    import json as _json
+    _loc = _json.loads(_loc)
+LOCATION = _loc
+
 _COMP         = cfg("genetic_painter.compression", "xz")
 _EXT          = {"xz": ".xz", "bgzf": ".gz"}.get(_COMP, "")
 PAINTED_FASTA = f"{PAINT_PREFIX}.sequences.fasta{_EXT}"
@@ -212,13 +220,22 @@ rule simulate_linelist:
         seed=cfg("random_seed", 42),
         schedule=cfg("ascertainment.schedule_input", ""),
         variant_mode=cfg("ascertainment.variant_mode", "variant_bipartite"),
+        # Geography must match what the painter puts in its FASTA headers:
+        # both build the Nextstrain `strain` id from these, and ncov joins
+        # sequences to metadata on that string. Single source of truth.
+        country=LOCATION.get("country", "USA"),
+        region=LOCATION.get("region", "North America"),
+        division=LOCATION.get("division", "Virginia"),
+        division_abbr=LOCATION.get("divisionAbbr", "VA"),
     shell:
         "simulate_linelist --epihiper {input.graph} --people {input.people} "
         "--households {params.households} --rucc {params.rucc} "
         "--ascertain {params.ascertain} --start_date {params.start_date} "
         "--start_tick {params.start_tick} --stop_tick {params.stop_tick} "
         "--out {output.linelist} --seed {params.seed} --output_all_events "
-        "--schedule_input {params.schedule} --variant_mode {params.variant_mode}"
+        "--schedule_input {params.schedule} --variant_mode {params.variant_mode} "
+        "--country {params.country:q} --region {params.region:q} "
+        "--division {params.division:q} --division_abbr {params.division_abbr:q}"
 
 
 # --------------------------------------------------------------------------

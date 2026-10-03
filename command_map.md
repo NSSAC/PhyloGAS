@@ -726,3 +726,94 @@ paths scrolling past.
 `.gitignore` gained `data/training_sequences/` and `data/clean_*_sequences.fasta`.
 The training alignment had been landing in a tracked path, so a ~100 MB FASTA
 was one `git add -A` away from being committed.
+
+---
+
+## The strain id as a cross-repo contract (2026-10-03)
+
+Nextstrain joins sequences to metadata on the `strain` string. The painter
+writes it as a FASTA header; TwinSampler writes it into the line list's
+`strain` column, from a separate implementation. If they disagree by one
+character ncov drops the sequence, sometimes without an error.
+
+### What was wrong
+
+`simulate_linelist.format_final_linelist` hardcoded the geography as Python
+default arguments, while the painter read the same four values from
+`genetic_painter.location`:
+
+```python
+def format_final_linelist(raw_linelist_df, country="USA",
+                          region="North America",
+                          division="Virginia", divisionAbbr="VA"):
+```
+
+Both call sites used the bare defaults. So a Washington run would have
+produced line list strains reading `USA/VA-EHip-...` against painter headers
+reading `USA/WA-EHip-...` -- no sequence matching its metadata. It had not
+fired only because every run so far has been Virginia.
+
+Worse, `phylogas paint` never passed `--location` at all, so
+`genetic_painter.location` was dead config and the painter always used its own
+argparse defaults. `command_map.md` claimed otherwise.
+
+`alias_pid` was also built in three places with three type treatments -- no
+cast, `astype(str)`, and `int()` -- which agree only while pid and tick are
+integral. A float tick gave `123.45.0` from one and `123.45` from another.
+
+### What changed
+
+| | before | after |
+|---|---|---|
+| `phylogas paint --location` | never passed | from `genetic_painter.location` (and `.reference_location`) |
+| `simulate_linelist` geography | hardcoded defaults | `--country/--region/--division/--division_abbr` |
+| Snakefile | start_date/start_tick shared only | geography shared too, via `LOCATION` |
+| `alias_pid` / `strain` | 3 implementations | `phylogas/ids.py` canonical; TwinSampler keeps a pinned copy |
+
+`src/phylogas/ids.py` is the canonical implementation. The painter routes
+through it; output is byte-identical for integral input, and non-integral
+input now raises instead of producing a second spelling.
+
+TwinSampler deliberately keeps its own copy -- it must run without PhyloGAS
+installed -- so both are pinned to one fixture table:
+
+```
+PhyloGAS/tests/data/strain_ids.json          <- the table
+PhyloGAS/tests/test_strain_id_contract.py
+twin_sampler/.../test_data/strain_ids.json   <- same table, copied
+twin_sampler/.../test_strain_id_contract.py
+```
+
+Change either formula and at least one test fails. Verified: all five fixture
+cases agree between the two implementations, across VA/WA/GA geographies, and
+a WA run now yields WA strains on both sides.
+
+### Checking a build before running it
+
+```bash
+phylogas check-join -f <painted_or_subset.fasta.xz> -m <linelist.csv.xz>
+phylogas check-join -f out.surs.sequences.fasta.xz -m runs/surs_samples.csv.xz --column strain
+```
+
+Exits non-zero if any FASTA header lacks a metadata row, and reports the
+unmatched ids. When nothing matches at all it prints an example from each side
+and names the two causes that shift every id at once -- geography and the
+date anchor. Spare metadata rows are reported but fine; ncov filters them.
+
+This is a precondition for `nextstrain build`, not a diagnostic, and
+`nextstrain-config` will call it before rendering.
+
+### Which metadata feeds Nextstrain
+
+TwinSampler's line list, because it carries `component_id`, `variant_label`,
+`rucc_code`, `ses_category` and the rest of the analysis columns. The painter's
+metadata has none of those.
+
+The painter's metadata is kept all the same: it is the only record of
+`real_strain`, which links a simulated lineage back to the real-world seed
+sequence it descended from, and it is the authoritative `strain` <-> `alias_pid`
+mapping written by the same code that wrote the FASTA headers. Nothing else
+reads it -- not TwinSampler (`--epihiper/--people/--households/--rucc/
+--ascertain/--schedule_input`), not `assign-variants` (which reads the
+allevents file). In the Snakefile `PAINTED_META` appears only as a paint output
+and in the `all` / `paint_only` target lists.

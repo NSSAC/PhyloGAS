@@ -52,8 +52,13 @@ import math # Added for rate limiting
 # run.03.vadelta.* scripts still do.
 try:
     from .mutational_models import registry as model_registry
+    from .. import ids as _ids
 except ImportError:
+    # Run directly from this directory: mutational_models/ is a subdirectory,
+    # but ids.py lives one level up in the package, so put it on the path.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from mutational_models import registry as model_registry
+    import ids as _ids
 
 # Force line-buffered stdout/stderr so progress is visible in SLURM logs as it
 # happens. Without this, stdout is block-buffered (4-8 KB) when redirected to a
@@ -870,7 +875,7 @@ def generate_sequences(args):
     for i, (pid_val, tick) in enumerate(zip(seed_df["pid"], seed_df["tick"])):
         if i >= M:
             break
-        infection_id = f"{pid_val}.{tick}"
+        infection_id = _ids.alias_pid(pid_val, tick)
         temp_seed_seqs[infection_id] = np.frombuffer(
             str(align_seed_records[i].seq).encode('ascii'), dtype='S1'
         )
@@ -1068,7 +1073,7 @@ def generate_sequences(args):
     )[["pid", "contact_pid", "tick"]]
 
     for _, pid, contact_pid, tick in ordered_events.itertuples():
-        infection_id = f"{pid}.{tick}"
+        infection_id = _ids.alias_pid(pid, tick)
         is_seed = contact_pid == -1
 
         if is_seed:
@@ -1213,7 +1218,7 @@ def create_infection_record(
         new_seq_str = sequence.tobytes().decode('ascii')
     else:
         new_seq_str = "".join(sequence.tolist())
-    cur_strain_id = f"{country}/{divisionAbbr}-EHip-{infection_id}/{date_year}"
+    cur_strain_id = _ids.strain_id_from_alias(country, divisionAbbr, infection_id, date_year)
     infection = InfectionRecord()
     infection.fromEpihiper(
         "ncov",

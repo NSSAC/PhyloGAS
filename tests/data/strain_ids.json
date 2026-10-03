@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Contract fixture for the Nextstrain `strain` identifier and the alias_pid",
+    "join key. The painter writes these as FASTA headers; TwinSampler writes",
+    "the same strings into the line list's `strain` column; ncov joins",
+    "sequences to metadata on them. Two independent implementations build",
+    "them, so both are pinned to this table.",
+    "",
+    "PhyloGAS  : tests/test_strain_id_contract.py",
+    "TwinSampler: scripts/linelist_generation/test_strain_id_contract.py",
+    "",
+    "If you change either formula, change this file and both tests together."
+  ],
+  "start_date": "2021-04-07",
+  "start_tick": 128,
+  "cases": [
+    {"pid": 1,       "tick": 128, "country": "USA", "divisionAbbr": "VA",
+     "alias_pid": "1.128",       "year": 2021, "strain": "USA/VA-EHip-1.128/2021"},
+    {"pid": 4242,    "tick": 200, "country": "USA", "divisionAbbr": "VA",
+     "alias_pid": "4242.200",    "year": 2021, "strain": "USA/VA-EHip-4242.200/2021"},
+    {"pid": 7,       "tick": 428, "country": "USA", "divisionAbbr": "VA",
+     "alias_pid": "7.428",       "year": 2022, "strain": "USA/VA-EHip-7.428/2022"},
+    {"pid": 5000000, "tick": 397, "country": "USA", "divisionAbbr": "WA",
+     "alias_pid": "5000000.397", "year": 2022, "strain": "USA/WA-EHip-5000000.397/2022"},
+    {"pid": 9,       "tick": 0,   "country": "USA", "divisionAbbr": "GA",
+     "alias_pid": "9.0",         "year": 2020, "strain": "USA/GA-EHip-9.0/2020"}
+  ]
+}
