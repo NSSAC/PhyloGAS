@@ -68,6 +68,60 @@ phylogas --help
 > **Status: not yet available.** The `Dockerfile` has not been written and no
 > image is published. Use Option A or B for now.
 
+### Optional: Nextstrain, for the phylodynamic stage
+
+Only needed for `nextstrain.enabled: true`. Two pieces, and installing one does
+not bring the other.
+
+**1. The CLI**, which runs the workflow:
+
+```bash
+# Linux / WSL
+curl -fsSL --proto '=https' https://nextstrain.org/cli/installer/linux | bash
+# macOS
+curl -fsSL --proto '=https' https://nextstrain.org/cli/installer/mac | bash
+
+nextstrain setup conda        # or: docker, singularity, ambient, aws-batch
+nextstrain check-setup --set-default
+```
+
+Going through the CLI rather than a hand-built conda environment is deliberate:
+`check-setup --set-default` picks the runtime, so one config runs unchanged on a
+laptop with Docker and on an HPC with Singularity or conda. PhyloGAS only needs
+`nextstrain` on `PATH` — it never has to know which runtime you chose.
+
+**2. The ncov workflow**, which is a separate clone. ncov ships no
+`nextstrain-pathogen.yaml`, so it is not a CLI-managed pathogen:
+
+```bash
+git clone https://github.com/nextstrain/ncov.git
+```
+
+Then point the config at it:
+
+```yaml
+nextstrain:
+  enabled: true
+  dir: "/path/to/ncov"
+```
+
+`phylogas status` reports both pieces and tells you which step is outstanding.
+Note each pathogen is its own workflow repository (ncov, measles, avian-flu…),
+which is why the config names the directory rather than hardcoding ncov.
+
+Per arm, PhyloGAS then renders and validates a config of its own:
+
+```bash
+phylogas nextstrain-config --config config.yaml --build-type strategy --algo surs
+```
+
+This stages the arm's sequences and metadata *inside* the ncov checkout and
+writes relative paths, because `nextstrain build <dir>` mounts only that
+directory — absolute paths elsewhere are invisible under the docker and
+singularity runtimes. It refuses to render if the sequences do not all join to
+their metadata, or if `traits.columns` lacks `county` (which
+`phylogas benchmark mugration` requires).
+
 ---
 
 ## 🚀 Quickstart & Usage

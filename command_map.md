@@ -828,3 +828,87 @@ copies remain, in BeyondBaseline and PhyloGAS -- a salvage-audit item.
 
 So the `strain` column exists for exactly one reason: to be the `strain`
 column ncov joins on.
+
+---
+
+## Nextstrain integration (2026-10-03)
+
+**Old** -- a hand-written ncov config per run, with the run name typed into
+four places and absolute `/home/anwarren/...` paths in three:
+
+```bash
+snakemake --snakefile .../ncov/Snakefile \
+          --configfile .../run_03_vadelta_2026_03_22_128to428.SURS.yaml \
+          --cores all --rerun-incomplete
+```
+
+**New**
+
+```bash
+phylogas nextstrain-config --config config.yaml --build-type strategy --algo surs
+nextstrain build /path/to/ncov --configfile data/phylogas/surs/config.yaml
+```
+
+or as part of `phylogas run` with `nextstrain.enabled: true`.
+
+### Two arms, differing in inputs as well as subsampling
+
+| | `strategy` (default) | `all_infections` |
+|---|---|---|
+| sequences | the BeyondBaseline subset FASTA | the full painted FASTA |
+| metadata | that arm's `_samples.csv.xz` | the all-events line list |
+| scheme | `strategy_focal_context` | `country_17k` |
+| focal set | taken **whole** | capped at 17,000 |
+
+The default arm never re-subsamples the focal set: BeyondBaseline already chose
+it, and capping it again would measure ncov's subsampler instead of the
+strategy. The 17k cap is bound to the all-infections input, where the cap *is*
+the experiment, so it cannot be applied by accident to a sampled arm.
+
+### base.yaml carries deviations only
+
+ncov loads `defaults/parameters.yaml` and deep merges the user's `--configfile`
+over it, so `cfg/nextstrain/ncov/base.yaml` states only what differs:
+`coalescent` skyline (ncov: opt) and `clock_filter_iqd` 4 (ncov: 8), plus
+`traits`, `files` and the two subsampling schemes.
+
+Four things turned up while merging the a/b configs:
+
+| finding | consequence |
+|---|---|
+| `filter.group_by` is never read by ncov -- `config["filter"]` is only indexed by input name, `min_length` and `skip_diagnostics` | the long group_by lists in the old configs were inert; grouping belongs in the subsampling scheme |
+| `traits.columns` had no `county` in either new config | `phylogas benchmark mugration` reads `models['county']`, so those builds could not have been scored. Now pinned, and `nextstrain-config` refuses a base without it |
+| omitting `clock_rate` does **not** make TreeTime infer it | ncov's default 0.0008 applies instead. The refine rule passes `--clock-rate` unconditionally and reads the key with `[]`, so inference is impossible from inside ncov -- hence `phylogas benchmark clock` as a separate step on ncov's own intermediates |
+| `reference_id.txt` read `Wuhan-Hu-1/2019` | the reference files and `refine.root` use `Wuhan/Hu-1/2019`; `--include` matched nothing, so the root could be subsampled away. Fixed, and `21L` added |
+
+Also: `USA/WA1/2020` in ncov's defaults is `reference_node_name`, which ncov's
+own docs list as **Unused**. The root is still `Wuhan/Hu-1/2019` and the
+alignment reference is still `MN908947`, so there was nothing to migrate.
+
+### Why inputs are staged rather than referenced
+
+`nextstrain build <dir>` mounts only that directory. Under the docker and
+singularity runtimes an absolute path outside it is invisible, so
+`nextstrain-config` hardlinks (or copies) the arm's sequences and metadata into
+`<ncov>/data/phylogas/<arm>/` and the shared support files into
+`<ncov>/data/phylogas/_shared/`, then writes ncov-relative paths. Referencing
+absolute paths would work under `ambient`/`conda` and fail under the runtime
+most likely on a cluster.
+
+This is also why the old configs had everything under `.../ncov/data/` -- that
+was a container requirement, not an accident.
+
+### Validation is a precondition, not a diagnostic
+
+`nextstrain-config` refuses to write a config when the sequences do not all
+join to their metadata, and names the two causes that shift every id at once.
+Nothing is staged on failure. `phylogas check-join` runs the same check
+standalone.
+
+### Installing it
+
+The CLI and the workflow are separate; installing the CLI does not bring ncov,
+which has no `nextstrain-pathogen.yaml` and so is a clone-and-build workflow.
+See the README's "Optional: Nextstrain" section. `phylogas status` reports the
+checkout and the CLI, distinguishing "not installed" from "installed but no
+runtime set up".

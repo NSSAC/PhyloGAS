@@ -286,20 +286,59 @@ rule subset_fasta:
 # --------------------------------------------------------------------------
 if cfg("nextstrain.enabled", False):
 
-    rule nextstrain_build:
-        """Hand the sampled FASTA to an external Nextstrain/ncov workflow."""
+    NS_DIR    = cfg("nextstrain.dir", "")
+    NS_STAGE  = cfg("nextstrain.stage_subdir", "data/phylogas")
+    NS_RUNNER = cfg("nextstrain.runner", "nextstrain")
+
+    rule nextstrain_config:
+        """Render, stage and validate the ncov config for one arm.
+
+        Validation is the point of making this its own rule: it refuses a
+        build whose sequences do not join to its metadata, or whose traits
+        cannot be scored, before any hours are spent.
+        """
         input:
             fasta=f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}",
+            metadata=f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz",
+        output:
+            configfile=f"{NS_DIR}/{NS_STAGE}/{{algo}}/config.yaml",
+        params:
+            config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
+        shell:
+            "phylogas nextstrain-config --config {params.config} "
+            "--build-type strategy --algo {wildcards.algo}"
+
+    rule nextstrain_build:
+        """Run the ncov workflow through the Nextstrain CLI.
+
+        `nextstrain build` resolves the runtime (docker / conda / singularity /
+        ambient) from `nextstrain check-setup --set-default`, so the same rule
+        works on a laptop and on a cluster. It also mounts only the build
+        directory, which is why nextstrain_config stages inputs inside the
+        checkout and writes relative paths.
+
+        Set nextstrain.runner: snakemake to bypass the CLI and call snakemake
+        directly, which needs the full ncov environment already active.
+        """
+        input:
+            configfile=f"{NS_DIR}/{NS_STAGE}/{{algo}}/config.yaml",
         output:
             auspice=f"{cfg('nextstrain.outdir')}/{{algo}}/auspice.json",
         params:
-            snakefile=cfg("nextstrain.snakefile"),
-            configfile=cfg("nextstrain.configfile"),
+            ns_dir=NS_DIR,
+            rel_config=f"{NS_STAGE}/{{algo}}/config.yaml",
+            runner=NS_RUNNER,
         threads: 8
         shell:
-            "snakemake --snakefile {params.snakefile} "
-            "--configfile {params.configfile} --cores {threads} "
-            "--rerun-incomplete"
+            r"""
+            if [ "{params.runner}" = "nextstrain" ]; then
+                nextstrain build {params.ns_dir}                     --configfile {params.rel_config}                     --cores {threads} --rerun-incomplete
+            else
+                snakemake --snakefile {params.ns_dir}/Snakefile                     --configfile {input.configfile}                     --cores {threads} --rerun-incomplete
+            fi
+            mkdir -p $(dirname {output.auspice})
+            cp {params.ns_dir}/auspice/*_{wildcards.algo}.json {output.auspice}
+            """
 
 
 # --------------------------------------------------------------------------

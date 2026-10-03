@@ -254,9 +254,41 @@ sampling:
 # ---------------------------------------------------------------------------
 nextstrain:
   enabled: false
-  snakefile: ""                 # path to the ncov Snakefile
-  configfile: ""
+
+  # Your ncov checkout. PhyloGAS does not vendor it, and installing the
+  # Nextstrain CLI does not bring it either -- ncov has no
+  # nextstrain-pathogen.yaml, so it is a clone-and-build workflow:
+  #   git clone https://github.com/nextstrain/ncov.git
+  # Pin a commit if you need a sweep to stay reproducible across months.
+  dir: ""
+
+  # How to run it. "nextstrain" uses the CLI, which resolves the runtime
+  # (docker / conda / singularity / ambient) from
+  #   nextstrain setup <runtime> && nextstrain check-setup --set-default
+  # so the same config works on a laptop and on the cluster. "snakemake"
+  # bypasses the CLI and needs the full ncov environment already active.
+  runner: "nextstrain"
+
+  # Where, inside the ncov checkout, `phylogas nextstrain-config` stages this
+  # project's inputs and writes each arm's config. It stages rather than
+  # points because `nextstrain build <dir>` mounts only that directory --
+  # absolute paths elsewhere are invisible under docker and singularity.
+  stage_subdir: "data/phylogas"
+
   outdir: "{results_dir}/04_nextstrain_builds"
+
+  # Which arms to build.
+  #   strategy       - one build per BeyondBaseline sampling arm. The focal set
+  #                    is taken whole: BeyondBaseline already chose it, and
+  #                    re-subsampling would benchmark ncov's sampler instead.
+  #   all_infections - the full painted set plus the all-events line list,
+  #                    capped at 17,000 by the country_17k scheme. Here the cap
+  #                    is the experiment: what does the tree look like with
+  #                    complete ascertainment up to that point?
+  builds:
+    - type: strategy
+      algorithms: ["surs", "lasso_greedy"]
+    # - type: all_infections
 
 
 # ---------------------------------------------------------------------------

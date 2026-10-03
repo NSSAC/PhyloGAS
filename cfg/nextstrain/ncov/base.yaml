@@ -1,0 +1,113 @@
+# =========================================================================
+# PhyloGAS base configuration for the Nextstrain ncov workflow.
+#
+# ncov loads its own defaults/parameters.yaml and DEEP MERGES this file over
+# it (see the comment block at the top of ncov/Snakefile). So this file lists
+# only deviations -- anything absent keeps ncov's default, which is the
+# behaviour we want for comparability with published builds.
+#
+# Rendered per arm by `phylogas nextstrain-config`, which adds the `inputs`
+# and `builds` sections and writes the result inside the ncov checkout.
+# Paths here are relative to that checkout, because `nextstrain build` mounts
+# the build directory and nothing outside it is visible under the docker or
+# singularity runtimes.
+# =========================================================================
+
+files:
+  # Staged by `phylogas nextstrain-config` from cfg/nextstrain/.
+  lat_longs: "data/phylogas/_shared/custom_lat_longs.tsv"
+  auspice_config: "data/phylogas/_shared/auspice_augmented.json"
+
+filter:
+  # ncov's default, restated because it is easy to assume otherwise: painted
+  # genomes are full length (29,903 bp), so this gates only the context set.
+  # The earlier hand-written configs used 15000, which loosened the cutoff
+  # with nothing to gain. Raise or lower it only if real, degraded sequences
+  # join the inputs.
+  min_length: 27000
+
+  # ncov's default (false) -- Nextclade QC runs and can DROP sequences.
+  #
+  # Worth watching on synthetic data: the painter's genomes are not real
+  # reads, so if QC flags them (reversions, clustered SNPs) it removes true
+  # signal, and it may remove different amounts from different sampling arms,
+  # which confounds the comparison. Set true to turn it off if a build loses
+  # sequences it should not.
+  skip_diagnostics: false
+
+  # NOTE: `filter.group_by` is NOT read by ncov -- grep shows config["filter"]
+  # is only indexed by input name and "min_length"/"skip_diagnostics". The
+  # long group_by lists in the earlier configs were inert. Grouping belongs in
+  # the subsampling scheme below.
+
+refine:
+  # Deviations from ncov: coalescent opt -> skyline, clock_filter_iqd 8 -> 4.
+  coalescent: "skyline"
+  clock_filter_iqd: 4
+
+  # clock_rate / clock_std_dev are deliberately NOT set, which means ncov's
+  # pinned defaults (0.0008 / 0.0004) apply. That is intentional: the refine
+  # rule passes --clock-rate unconditionally and reads the key with [], so
+  # there is no way to make TreeTime infer the rate from within ncov.
+  #
+  # The inferred rate -- the quantity we actually want, and the basis for
+  # comparison against real data -- comes from `phylogas benchmark clock`,
+  # which re-runs augur refine on this build's own intermediates
+  # (results/<build>/filtered.fasta, tree_raw.nwk, metadata_adjusted.tsv.xz)
+  # with no --clock-rate. Keeping the tree itself on ncov's default means the
+  # synthetic and real-data runs stay directly comparable.
+  #
+  # clock_filter_iqd drops sequences that look off-clock. On synthetic data
+  # with a known clock that discards true signal, differentially by arm. Set
+  # it to 0 to disable (ncov makes the flag conditional on a truthy value).
+
+traits:
+  default:
+    # `county` is REQUIRED. phylogas benchmark mugration reads the traits JSON
+    # as models['county'] -- hardcoded in benchmark/mugration.py -- so a build
+    # without it cannot be scored. The earlier configs had region/country or
+    # division only, and would have failed at scoring time.
+    #
+    # country and region are here because auspice_augmented.json declares
+    # geo_resolutions [country, region, county] and needs traits to render
+    # transitions for each.
+    columns: ["county", "country", "region"]
+
+    # ncov's default. Pinned rather than omitted because it corrects mugration
+    # for uneven sampling, and uneven sampling is the independent variable of
+    # this experiment -- it MUST be identical across arms or it confounds the
+    # comparison. The earlier configs used 2.5, 1.0 and unset.
+    sampling_bias_correction: 2.5
+
+subsampling:
+  # -----------------------------------------------------------------------
+  # The default arm: BeyondBaseline already chose which sequences exist, so
+  # the focal set is taken WHOLE. Capping it here would re-sample the thing
+  # being benchmarked and measure ncov's subsampler instead of the strategy.
+  #
+  # `{division}` is substituted from the build's own `division` attribute,
+  # which `phylogas nextstrain-config` writes from genetic_painter.location.
+  # -----------------------------------------------------------------------
+  strategy_focal_context:
+    focal:
+      query: --query "(division == '{division}')"
+      # Deliberately no group_by / seq_per_group / max_sequences.
+    context:
+      query: --query "(division != '{division}')"
+      group_by: "country year month"
+      seq_per_group: 50
+      priorities:
+        type: proximity
+        focus: focal
+
+  # -----------------------------------------------------------------------
+  # The specialised arm, for the all-infections line list and its companion
+  # sequences: what does the tree look like when every infection up to the
+  # first 17,000 is present? Here the cap IS the experiment, which is why it
+  # is bound to that input rather than offered as a general option.
+  # -----------------------------------------------------------------------
+  country_17k:
+    country:
+      group_by: "country year month"
+      max_sequences: 17000
+      include: "data/phylogas/_shared/reference_id.txt"

@@ -1,0 +1,11 @@
+# Strains augur filter must keep regardless of subsampling. These are the
+# names as they appear in references_metadata.tsv / references_sequences.fasta.
+#
+# Wuhan/Hu-1/2019 is what refine.root expects; if subsampling drops it the
+# tree cannot be rooted. 21L is the clade anchor.
+#
+# This file previously read "Wuhan-Hu-1/2019" -- the hyphenated spelling used
+# by PhyloGAS's own data/reference/reference.fasta header -- which matches
+# nothing here, so --include kept nothing.
+Wuhan/Hu-1/2019
+21L

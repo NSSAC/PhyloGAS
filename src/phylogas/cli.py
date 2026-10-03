@@ -234,6 +234,53 @@ def cmd_subset_fasta(args) -> int:
 # --------------------------------------------------------------------------
 # phylogas check-join
 # --------------------------------------------------------------------------
+def _open_text(path):
+    """Open a possibly-compressed text file. These stages mix .xz, .gz and plain."""
+    import gzip
+    import lzma
+
+    p = str(path)
+    if p.endswith(".xz"):
+        return lzma.open(p, "rt")
+    if p.endswith(".gz"):
+        return gzip.open(p, "rt")
+    return open(p, "r")
+
+
+def _fasta_ids(path):
+    """Sequence ids, in file order. The id is the first whitespace-delimited
+    token, because the painter appends metadata after a space."""
+    out = []
+    with _open_text(path) as fh:
+        for line in fh:
+            if line.startswith(">"):
+                out.append(line[1:].strip().split(None, 1)[0])
+    return out
+
+
+def _metadata_ids(path, column):
+    """Values of one metadata column, in file order, plus the column list.
+
+    The delimiter is sniffed from the header rather than taken from the
+    extension, since these files are .tsv in one stage and .csv in another.
+    """
+    with _open_text(path) as fh:
+        first = fh.readline().rstrip("\n").rstrip("\r")
+        delim = "\t" if first.count("\t") >= first.count(",") else ","
+        cols = first.split(delim)
+        if column not in cols:
+            return None, cols
+        idx = cols.index(column)
+        vals = []
+        for line in fh:
+            parts = line.rstrip("\n").rstrip("\r").split(delim)
+            if len(parts) > idx:
+                v = parts[idx].strip()
+                if v:
+                    vals.append(v)
+    return vals, cols
+
+
 def cmd_check_join(args) -> int:
     """Verify that every FASTA header has a metadata row.
 
@@ -245,49 +292,21 @@ def cmd_check_join(args) -> int:
 
     So this is a precondition for a build, not a diagnostic.
     """
-    import lzma
-    import gzip
-
-    def _open_text(path):
-        p = str(path)
-        if p.endswith(".xz"):
-            return lzma.open(p, "rt")
-        if p.endswith(".gz"):
-            return gzip.open(p, "rt")
-        return open(p, "r")
-
     fasta = Path(args.fasta)
     meta = Path(args.metadata)
     for f in (fasta, meta):
         if not f.exists():
             sys.exit(f"ERROR: not found: {f}")
 
-    # FASTA headers: the id is the first whitespace-delimited token, because
-    # the painter appends metadata after a space.
-    headers = []
-    with _open_text(fasta) as fh:
-        for line in fh:
-            if line.startswith(">"):
-                headers.append(line[1:].strip().split(None, 1)[0])
+    headers = _fasta_ids(fasta)
     header_set = set(headers)
 
-    # Metadata: sniff the delimiter from the header line rather than trusting
-    # the extension, since these files are .tsv and .csv in different stages.
-    with _open_text(meta) as fh:
-        first = fh.readline().rstrip("\n").rstrip("\r")
-        delim = "\t" if first.count("\t") >= first.count(",") else ","
-        cols = first.split(delim)
-        if args.column not in cols:
-            sys.exit(f"ERROR: {meta} has no '{args.column}' column.\n"
-                     f"       columns: {', '.join(cols[:12])}"
-                     f"{' ...' if len(cols) > 12 else ''}")
-        idx = cols.index(args.column)
-        meta_ids = set()
-        for line in fh:
-            parts = line.rstrip("\n").rstrip("\r").split(delim)
-            if len(parts) > idx:
-                meta_ids.add(parts[idx].strip())
-    meta_ids.discard("")
+    meta_vals, cols = _metadata_ids(meta, args.column)
+    if meta_vals is None:
+        sys.exit(f"ERROR: {meta} has no '{args.column}' column.\n"
+                 f"       columns: {', '.join(cols[:12])}"
+                 f"{' ...' if len(cols) > 12 else ''}")
+    meta_ids = set(meta_vals)
 
     missing = header_set - meta_ids
     extra = meta_ids - header_set
@@ -299,6 +318,13 @@ def cmd_check_join(args) -> int:
     if len(headers) != len(header_set):
         print(f"           WARNING: {len(headers) - len(header_set):,} duplicate headers")
     print(f"Metadata : {meta}  (column '{args.column}', {len(meta_ids):,} distinct ids)")
+    if len(meta_vals) != len(meta_ids):
+        # ncov expects one metadata row per strain. An all-events line list has
+        # several rows per person (E, P, I, ...), so it needs de-duplicating
+        # before it can serve as metadata.
+        print(f"           WARNING: {len(meta_vals) - len(meta_ids):,} duplicate "
+              f"'{args.column}' values ({len(meta_vals):,} rows). ncov expects "
+              f"one row per sequence.")
     print(f"\nMatched  : {matched:,} / {len(header_set):,}  ({pct:.2f}%)")
     print(f"Unmatched: {len(missing):,} sequences with no metadata row")
     print(f"Spare    : {len(extra):,} metadata rows with no sequence  (harmless; ncov filters them)")
@@ -324,6 +350,203 @@ def cmd_check_join(args) -> int:
         return 1
 
     print("\nOK: every sequence has a metadata row.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# phylogas nextstrain-config
+# --------------------------------------------------------------------------
+_NS_SHARED = ("custom_lat_longs.tsv", "auspice_augmented.json",
+              "reference_id.txt", "references_metadata.tsv",
+              "references_sequences.fasta")
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    """Recursive dict update, the same shape of merge ncov does on its own
+    defaults. `over` wins."""
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def _stage(src: Path, dest: Path) -> str:
+    """Put a file inside the ncov checkout, hardlinking when possible.
+
+    `nextstrain build <dir>` mounts only that directory, so under the docker
+    and singularity runtimes nothing outside it is visible. Pointing at an
+    absolute path elsewhere works under `ambient`/`conda` and fails under the
+    runtime most likely on a cluster, which is why these are staged rather
+    than referenced. Hardlinks because the FASTAs are large.
+    """
+    import os
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    try:
+        os.link(src, dest)
+        how = "hardlink"
+    except OSError:
+        import shutil
+        shutil.copy2(src, dest)
+        how = "copy"
+    return how
+
+
+def cmd_nextstrain_config(args) -> int:
+    """Render one ncov config for one arm, stage its inputs, and validate.
+
+    The output is base.yaml plus an `inputs`/`builds` overlay, written inside
+    the ncov checkout with paths relative to it. Validation runs first: a build
+    that cannot be scored, or whose sequences do not join to its metadata, is
+    refused here rather than discovered hours later.
+    """
+    import yaml
+
+    cfg = _load_config(args)
+    ns_dir = Path(str(_cfg_or_flag(cfg, "nextstrain.dir", args.dir, ""))).expanduser()
+    if not ns_dir.is_dir():
+        sys.exit("ERROR: set nextstrain.dir (or --dir) to your ncov checkout.\n"
+                 f"       got: {ns_dir or '(unset)'}")
+    if not (ns_dir / "Snakefile").is_file():
+        sys.exit(f"ERROR: {ns_dir} has no Snakefile; is it an ncov checkout?")
+
+    base_path = Path(args.base) if args.base else (
+        _REPO_ROOT / "cfg" / "nextstrain" / "ncov" / "base.yaml")
+    if not base_path.is_file():
+        sys.exit(f"ERROR: base config not found: {base_path}")
+    base = yaml.safe_load(base_path.read_text()) or {}
+
+    # --- what this arm is -------------------------------------------------
+    project = str(cfg.get("project_name", default="phylogas"))
+    arm = args.algo if args.build_type == "strategy" else "all_infections"
+    if args.build_type == "strategy" and not args.algo:
+        sys.exit("ERROR: --algo is required for --build-type strategy "
+                 "(it names which sampling arm to build).")
+    build_name = f"{project}_{arm}"
+
+    loc = cfg.get("genetic_painter.location", default={}) or {}
+    if isinstance(loc, str):
+        import json
+        loc = json.loads(loc)
+    division = loc.get("division", "Virginia")
+
+    # --- the two files this arm is built from ------------------------------
+    if args.build_type == "strategy":
+        sample_dir = Path(str(cfg.get("sampling.outdir",
+                                      default=f"{cfg.get('results_dir', default='results')}"
+                                              "/03_sampled_datasets")))
+        comp = cfg.get("genetic_painter.compression", default="xz")
+        ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
+        aligned = Path(args.aligned) if args.aligned else sample_dir / f"{project}.{arm}.fasta{ext}"
+        metadata = Path(args.metadata) if args.metadata else sample_dir / f"{arm}_samples.csv.xz"
+        scheme = args.scheme or "strategy_focal_context"
+    else:
+        prefix = cfg.get("genetic_painter.output_prefix", default=None)
+        comp = cfg.get("genetic_painter.compression", default="xz")
+        ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
+        aligned = Path(args.aligned) if args.aligned else Path(f"{prefix}.sequences.fasta{ext}")
+        # Every infection, not only the ascertained ones, so the all-events
+        # table rather than the line list. It has several rows per person, so
+        # it must be de-duplicated on `strain`; check-join warns if it is not.
+        derived = cfg.ascertainment_outputs().get("allevents")
+        metadata = Path(args.metadata) if args.metadata else Path(str(derived or ""))
+        scheme = args.scheme or "country_17k"
+
+    for label, f in (("sequences", aligned), ("metadata", metadata)):
+        if not f or not Path(f).exists():
+            sys.exit(f"ERROR: {label} not found for arm '{arm}': {f}\n"
+                     f"       pass --aligned/--metadata to override.")
+
+    # --- validate before writing anything ---------------------------------
+    cols = base.get("traits", {}).get("default", {}).get("columns", [])
+    if "county" not in cols:
+        sys.exit("ERROR: base.yaml traits.default.columns must include 'county'.\n"
+                 "       phylogas benchmark mugration reads the traits JSON as\n"
+                 "       models['county'], so a build without it cannot be scored.")
+
+    print(f"Arm      : {arm}  (build '{build_name}', scheme '{scheme}')")
+    print(f"Sequences: {aligned}")
+    print(f"Metadata : {metadata}")
+
+    seq_ids = _fasta_ids(aligned)
+    meta_vals, meta_cols = _metadata_ids(metadata, args.column)
+    if meta_vals is None:
+        sys.exit(f"ERROR: {metadata} has no '{args.column}' column.\n"
+                 f"       columns: {', '.join(meta_cols[:12])}"
+                 f"{' ...' if len(meta_cols) > 12 else ''}")
+    missing = set(seq_ids) - set(meta_vals)
+    print(f"Join     : {len(set(seq_ids)) - len(missing):,} / {len(set(seq_ids)):,} "
+          f"sequences have a metadata row")
+    if missing:
+        print("\nSequences ncov would drop:", file=sys.stderr)
+        for sid in sorted(missing)[:5]:
+            print(f"  {sid}", file=sys.stderr)
+        if len(missing) > 5:
+            print(f"  ... and {len(missing) - 5:,} more", file=sys.stderr)
+        sys.exit(f"ERROR: {len(missing):,} sequences have no metadata row. "
+                 f"Run:\n       phylogas check-join -f {aligned} -m {metadata}")
+    if len(meta_vals) != len(set(meta_vals)):
+        print(f"  note: metadata has {len(meta_vals) - len(set(meta_vals)):,} "
+              f"duplicate '{args.column}' rows; ncov wants one per sequence")
+
+    # --- stage ------------------------------------------------------------
+    stage_root = Path(str(cfg.get("nextstrain.stage_subdir", default="data/phylogas")))
+    shared_rel = stage_root / "_shared"
+    arm_rel = stage_root / arm
+
+    for name in _NS_SHARED:
+        src = _REPO_ROOT / "cfg" / "nextstrain" / name
+        if src.is_file():
+            _stage(src, ns_dir / shared_rel / name)
+        else:
+            print(f"  WARNING: {src.name} not in cfg/nextstrain/; "
+                  f"base.yaml may reference it", file=sys.stderr)
+
+    aligned_rel = arm_rel / Path(aligned).name
+    metadata_rel = arm_rel / Path(metadata).name
+    how_a = _stage(Path(aligned), ns_dir / aligned_rel)
+    how_m = _stage(Path(metadata), ns_dir / metadata_rel)
+    print(f"Staged   : {ns_dir / arm_rel}  ({how_a}/{how_m})")
+
+    # --- render -----------------------------------------------------------
+    overlay = {
+        "inputs": [
+            {"name": "reference_data",
+             "metadata": str(shared_rel / "references_metadata.tsv"),
+             "aligned": str(shared_rel / "references_sequences.fasta")},
+            {"name": build_name,
+             "metadata": str(metadata_rel),
+             "aligned": str(aligned_rel)},
+        ],
+        "builds": {
+            build_name: {
+                "subsampling_scheme": scheme,
+                # Substituted into the scheme's {division} queries.
+                "division": division,
+            },
+        },
+    }
+    merged = _deep_merge(base, overlay)
+
+    out = ns_dir / arm_rel / "config.yaml"
+    header = (f"# Generated by `phylogas nextstrain-config` -- do not edit.\n"
+              f"# arm: {arm}   build: {build_name}   scheme: {scheme}\n"
+              f"# base: {base_path}\n"
+              f"# ncov deep merges its defaults/parameters.yaml under this file.\n")
+    out.write_text(header + yaml.safe_dump(merged, sort_keys=False, default_flow_style=False))
+    print(f"Wrote    : {out}")
+
+    runner = str(cfg.get("nextstrain.runner", default="nextstrain"))
+    cmd = (f"nextstrain build {ns_dir} --configfile {arm_rel / 'config.yaml'}"
+           if runner == "nextstrain" else
+           f"snakemake --snakefile {ns_dir / 'Snakefile'} "
+           f"--configfile {ns_dir / arm_rel / 'config.yaml'} --cores all")
+    print(f"\nRun with:\n  {cmd}")
     return 0
 
 
@@ -1064,6 +1287,54 @@ def _resolve_stage(key, cfgkey, cfg):
     return None, None, None
 
 
+def _report_nextstrain(cfg) -> None:
+    """Report the external Nextstrain dependency: the checkout and the CLI.
+
+    Diagnosed rather than assumed. "It is on PATH" is fine as an interface
+    decision, but a silent assumption turns into a confusing failure hours
+    into a run, so `status` says which of the three states you are in.
+    """
+    import shutil
+    import subprocess
+
+    ns_dir = str(cfg.get("nextstrain.dir", default="") or "")
+    label = "ncov checkout"
+    if not ns_dir:
+        print(f"  [ -- ] {label:28s} (nextstrain.dir not set)")
+    elif not (Path(ns_dir).expanduser() / "Snakefile").is_file():
+        print(f"  [MISS] {label:28s} {ns_dir}  (no Snakefile)")
+    else:
+        print(f"  [okay] {label:28s} {ns_dir}")
+
+    label = "nextstrain CLI"
+    if shutil.which("nextstrain") is None:
+        print(f"  [MISS] {label:28s} not on PATH")
+        plat = "mac" if sys.platform == "darwin" else "linux"
+        print(f"         curl -fsSL --proto '=https' "
+              f"https://nextstrain.org/cli/installer/{plat} | bash")
+        return
+    try:
+        ver = subprocess.run(["nextstrain", "--version"], capture_output=True,
+                             text=True, timeout=30).stdout.strip()
+    except Exception as exc:
+        print(f"  [MISS] {label:28s} present but not runnable: {exc}")
+        return
+
+    # Installed is not the same as usable: a runtime has to be set up too.
+    try:
+        chk = subprocess.run(["nextstrain", "check-setup"], capture_output=True,
+                             text=True, timeout=180)
+        ok = chk.returncode == 0
+    except Exception:
+        ok = False
+    if ok:
+        print(f"  [okay] {label:28s} {ver}")
+    else:
+        print(f"  [MISS] {label:28s} {ver}, but no runtime is set up")
+        print("         nextstrain setup docker   # or conda, singularity, ambient")
+        print("         nextstrain check-setup --set-default")
+
+
 def cmd_status(args) -> int:
     """Report pipeline readiness and print the single next command to run."""
     cfg_path = Path(args.config)
@@ -1098,6 +1369,9 @@ def cmd_status(args) -> int:
             if note:
                 print(f"         {note}")
             missing.append((label, nxt.format(state=state, config=cfg_path)))
+
+    if cfg.get("nextstrain.enabled", default=False):
+        _report_nextstrain(cfg)
 
     print()
     if not missing:
@@ -1144,6 +1418,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-report", dest="max_report", type=int, default=10,
                     help="how many unmatched ids to print (default: 10)")
     sp.set_defaults(func=cmd_check_join)
+
+    # -- nextstrain-config -------------------------------------------------
+    sp = sub.add_parser("nextstrain-config",
+                        help="Render, stage and validate an ncov config for one arm")
+    sp.add_argument("--config", "-c", default="config.yaml")
+    sp.add_argument("--build-type", dest="build_type", required=True,
+                    choices=["strategy", "all_infections"],
+                    help="strategy: a BeyondBaseline sampling arm (needs --algo). "
+                         "all_infections: the full painted set with the 17k cap.")
+    sp.add_argument("--algo", default=None,
+                    help="sampling algorithm, for --build-type strategy")
+    sp.add_argument("--dir", default=None, help="ncov checkout (default: nextstrain.dir)")
+    sp.add_argument("--base", default=None,
+                    help="base config (default: cfg/nextstrain/ncov/base.yaml)")
+    sp.add_argument("--aligned", default=None, help="override the sequences file")
+    sp.add_argument("--metadata", default=None, help="override the metadata file")
+    sp.add_argument("--scheme", default=None, help="override the subsampling scheme")
+    sp.add_argument("--column", default="strain",
+                    help="metadata column holding the sequence id (default: strain)")
+    sp.set_defaults(func=cmd_nextstrain_config)
 
     # -- status (start here) ----------------------------------------------
     sp = sub.add_parser("status",
