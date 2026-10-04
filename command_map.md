@@ -1238,3 +1238,51 @@ Two corrections made on the way:
   missing under `runner: "snakemake"`. It now checks for `snakemake` and
   `conda`/`mamba` in that case, and its setup hint is the one-step
   `nextstrain setup --set-default conda`.
+
+## Verification run: DAG builds, one flaky test fixed (2026-10-03)
+
+`snakemake -n` on the cluster builds the DAG cleanly -- 6 jobs
+(`simulate_linelist`, `sample_scenarios` x2, `subset_fasta` x2, `all`), the
+`{algo}` wildcard expanding over `surs` and `lasso_greedy` as configured. The
+~150 Snakefile lines added over this session had never had a DAG built before;
+no syntax or wildcard errors. The Nextstrain rules are absent from the DAG
+because the test config has `nextstrain.enabled: false`, so `nextstrain_build`
+and `clock_estimates` are still unexercised.
+
+The "missing provenance/metadata" note for `paint_network` and `train_entropy`
+is expected: those outputs were produced by earlier manual runs, so Snakemake
+has no recorded provenance to compare against. Not an error.
+
+### `test_rate_limited_model_produces_valid_sequences` was flaky, not broken
+
+`pytest tests` gave 66 passed, 1 failed, with
+`implausible mutation frequency: 0/300`. The model is fine; the test was.
+
+The mutation count is `Poisson(mutation_rate_per_cycle * n * cycles)`. With the
+test's `n = 2000`:
+
+| quantity | value |
+| --- | --- |
+| `_lambda_per_cycle` | `3.40e-6 * 2000` = 0.0068 |
+| `cycles` (burst 10..1000) | 3 for burst<=31, 2 for 32..999, 1 for 1000; mean 2.02 |
+| mean mutations per call | 0.0137 |
+| expected mutating calls | ~4 of 300 |
+| **P(zero across 300)** | **1.6%, i.e. ~1 run in 62** |
+
+Confirmed both analytically and by running the test shape across 40 seeds: 1 of
+40 came back zero. The failure was the 1-in-62.
+
+Two causes, both fixed:
+
+- **Nondeterminism.** The test seeded a local `default_rng`, which only built
+  the sequence. The model reads two *globals* -- `random.randint` for burst
+  size and `np.random.randint` to seed its own Generator -- so results varied
+  run to run. Both are now seeded.
+- **No statistical power.** The thresholds do not affect the mutation *count*
+  (they only pick which site is hit), so `n` is the only lever. The test now
+  uses the real genome length, 29903, where the mean is ~0.21 per call and ~54
+  of 300 calls mutate. Across 40 seeds: min 39, max 70, no zeros.
+
+The `~82% of transmissions draw zero mutations` comment in `rate_limited.py`
+refers to the full genome and checks out: `exp(-3.40e-6 * 29903 * 2.02)` =
+0.815. The toy `n` in the test was what pushed that to 98.6%.

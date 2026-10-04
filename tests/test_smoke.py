@@ -156,15 +156,30 @@ def test_simulation_urls_well_formed():
 # mutation engine
 # --------------------------------------------------------------------------
 def test_rate_limited_model_produces_valid_sequences():
+    import random
+
     import numpy as np
 
     from phylogas.painter.mutational_models import registry
 
+    # The model draws from two *global* RNGs -- random.randint for the burst
+    # size and np.random.randint to seed its own Generator -- so seeding only
+    # a local default_rng leaves the test nondeterministic. Seed both.
+    random.seed(0)
+    np.random.seed(0)
     rng = np.random.default_rng(0)
-    n = 2000
-    # Mostly conserved, with a mutable tail -- mirrors a real threshold file.
+
+    # Full genome length, not a toy one. The expected mutation count is
+    # Poisson with mean mutation_rate_per_cycle * n * cycles, so it scales
+    # with n and is unaffected by the thresholds (those only decide *which*
+    # site is hit). At n=2000 the mean is ~0.014 per call, which left ~4 of
+    # 300 calls mutating and a 1.6% chance of zero -- a test that failed
+    # about one run in sixty. At full length the mean is ~0.21 and ~54 of 300
+    # calls mutate.
+    n = 29903
+    # Mostly conserved, with a mutable head -- mirrors a real threshold file.
     thresholds = np.full(n, 100.0)
-    thresholds[:200] = 70.0
+    thresholds[:3000] = 70.0
 
     letters = np.array(list("ACGTNRKSYMWBHDV"))
     prob = np.zeros((len(letters), n))
@@ -184,6 +199,7 @@ def test_rate_limited_model_produces_valid_sequences():
             assert out[i] != seq[i], "a 'mutation' left the base unchanged"
             assert thresholds[i] < 100.0, "mutation landed on a fully conserved site"
 
+    # Expect ~54; the bounds only catch "never mutates" and "always mutates".
     assert 0 < mutated < 300, f"implausible mutation frequency: {mutated}/300"
 
 
