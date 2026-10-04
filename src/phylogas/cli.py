@@ -237,6 +237,22 @@ def cmd_subset_fasta(args) -> int:
 # --------------------------------------------------------------------------
 # phylogas check-join
 # --------------------------------------------------------------------------
+def _parse_date(value):
+    """ISO date from a string or a date; None when absent or unparseable."""
+    import datetime as _dt
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, _dt.datetime):
+        return value.date()
+    if isinstance(value, _dt.date):
+        return value
+    try:
+        return _dt.date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        sys.exit(f"ERROR: could not read '{value}' as an ISO date (YYYY-MM-DD).")
+
+
 def _context_ids(explicit=None):
     """Sequence ids that legitimately have no line-list row.
 
@@ -1186,7 +1202,13 @@ def _benchmark_clock(args) -> int:
 
     from .benchmark import clock as clk
 
-    cfg = _load_config(args) if args.config else None
+    # --config now defaults to config.yaml. An explicitly named file that is
+    # missing is still an error; the default quietly degrades to no config so
+    # the command keeps working outside a project directory.
+    if args.config and (Path(args.config).exists() or args.config != "config.yaml"):
+        cfg = _load_config(args)
+    else:
+        cfg = None
     arm = args.arm or "all_infections"
     want = (["truth", "inferred", "operational"] if args.mode == "all"
             else [args.mode])
@@ -1210,11 +1232,28 @@ def _benchmark_clock(args) -> int:
         if missing:
             print(f"  truth: skipped, need {', '.join(missing)}", file=sys.stderr)
         else:
+            # The reference is never a data point: its divergence from itself
+            # is structurally 0, and it carries Wuhan-Hu-1's real 2019-12-26
+            # collection date, ~500 days before any simulated infection. Left
+            # in, it reports a 537-day span for a 70-day study.
+            drop = set() if args.keep_context else _context_ids(args.exclude_id)
+
+            # Bound the window to the simulated period unless told otherwise.
+            # Only for simulated data -- clipping real sequences to the
+            # simulation's start date would be meaningless.
+            dmin, dmax = _parse_date(args.date_min), _parse_date(args.date_max)
+            if dmin is None and args.kind == "simulated":
+                dmin = _parse_date(_cfgget("genetic_painter.start_date"))
+                if dmin is not None:
+                    print(f"         window: >= {dmin} "
+                          f"(genetic_painter.start_date; --date-min to override)")
+
             print(f"  truth: {fasta}")
             res = clk.root_to_tip(
                 fasta, ref, meta,
                 date_col=args.date_field, id_col=args.column,
                 max_records=args.max_records,
+                date_min=dmin, date_max=dmax, exclude_ids=drop,
                 # Same estimator either way; only the label differs. On real
                 # sequences this is the cheapest and most comparable number
                 # available -- no TreeTime on either side -- and it needs only
@@ -1884,7 +1923,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bsub.add_parser("clock",
                         help="Molecular clock rate: measured, inferred and assumed")
-    b.add_argument("--config", "-c", default=None)
+    # Default to config.yaml as `status` does. Without it every lookup fell
+    # through to a hardcoded default, and the CSV landed in
+    # results/05_benchmarks rather than the project's results/<name>/.
+    b.add_argument("--config", "-c", default="config.yaml")
     b.add_argument("--mode", default="all",
                    choices=["truth", "inferred", "operational", "all"],
                    help="truth: tree-free root-to-tip from the painted sequences. "
@@ -1911,7 +1953,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="0 (default) disables it. With the rate being fitted, the "
                         "filter prunes valid branches, and by differing amounts per arm.")
     b.add_argument("--max-records", dest="max_records", type=int, default=None,
-                   help="stop after N sequences (for a quick look at a huge FASTA)")
+                   help="stop after N sequences (for a quick look at a huge FASTA). "
+                        "Truncates in file order; it does not sample")
+    b.add_argument("--date-min", dest="date_min", default=None,
+                   help="earliest date to fit (default for --kind simulated: "
+                        "genetic_painter.start_date)")
+    b.add_argument("--date-max", dest="date_max", default=None,
+                   help="latest date to fit (default: unbounded)")
+    b.add_argument("--exclude-id", dest="exclude_id", action="append", default=None,
+                   help="drop this sequence id; repeatable. Defaults to the ids in "
+                        "cfg/nextstrain/reference_id.txt")
+    b.add_argument("--keep-context", dest="keep_context", action="store_true",
+                   help="keep the reference and other context sequences in the fit")
     b.add_argument("--out", default=None, help="CSV (default: <benchmark.outdir>/clock_estimates.csv)")
     b.set_defaults(func=cmd_benchmark)
 

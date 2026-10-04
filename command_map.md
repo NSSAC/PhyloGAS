@@ -1286,3 +1286,71 @@ Two causes, both fixed:
 The `~82% of transmissions draw zero mutations` comment in `rate_limited.py`
 refers to the full genome and checks out: `exp(-3.40e-6 * 29903 * 2.02)` =
 0.815. The toy `n` in the test was what pushed that to 98.6%.
+
+## First real clock measurement, and the span it reported (2026-10-04)
+
+`phylogas benchmark clock --mode truth` on the painted VA Delta genomes:
+
+```
+mu_truth  8.8734e-04 subs/site/year   R2=0.124  n=20,000  span=537d
+          slope=0.0723 subs/genome/day   mean_divergence=45.13
+```
+
+The rate is good -- ~11% above the canonical ~8e-4 -- and it is internally
+consistent with the painter's own parameters, which is the part worth keeping.
+The painter draws `Poisson(3.40e-6 * 29903 * 2.02)` = 0.206 mutations per
+transmission, so 26.4 subs/genome/year needs ~128 transmissions/year along a
+chain, implying a **2.84-day generation interval**. That is right for Delta.
+The mutation engine and the epidemic dynamics agree without being fitted to
+each other.
+
+`mean_divergence = 45.1` is the Delta-from-Wuhan offset. It inflates the
+intercept, not the slope, so it does not bias the rate.
+
+### But span=537 described a 70-day study
+
+The simulation runs 2021-04-07 to ~2021-06-15. The 537 days came from one
+record dated 2019-12-26 -- Wuhan-Hu-1's real collection date. The run predated
+the `emit_reference` gate, so the reference was in the painted output.
+
+This matters because `date_span_days` is the field the docs tell you to check
+to judge a fit, and it was describing a period the fit barely covered. The
+rate itself was barely affected: at n=20,000 the anchor carries only 3% of the
+x-variance, so it inflated the slope ~0.7%.
+
+Fixed in `root_to_tip`, which now takes `date_min`/`date_max` and
+`exclude_ids`:
+
+| Default | Source | Why |
+| --- | --- | --- |
+| window `>= start_date` | `genetic_painter.start_date` | records outside the simulated period are not observations of its clock |
+| drop reference ids | `cfg/nextstrain/reference_id.txt` (via `_context_ids`) | divergence from itself is structurally 0, at a date 500 days early |
+
+Neither applies to `--kind real`. Overrides: `--date-min`, `--date-max`,
+`--exclude-id`, `--keep-context`. New columns: `skipped_out_of_window`,
+`skipped_excluded_id`, `window`, `first_date`, `last_date`.
+
+Validated against synthetic data at a known 8.0e-4:
+
+| window | anchor left in | fix applied |
+| --- | --- | --- |
+| 400 days | 7.97e-4 (-0.4%), R2 0.862, span 868d | 7.94e-4 (-0.8%), R2 0.861, span 400d |
+| 70 days | 8.46e-4 (+5.8%), R2 0.212, span 538d | 7.87e-4 (-1.7%), R2 0.163, span 70d |
+
+The 70-day row reproduces the real run closely (R2 0.16 vs 0.124, span 538 vs
+537), which confirms the diagnosis -- and shows the low R2 is a property of
+the short window, not a fault. Over 70 days the clock contributes only ~5
+substitutions against a comparable seed-to-seed spread.
+
+### Two smaller fixes in the same pass
+
+- `benchmark clock --config` defaulted to `None` while `status` defaults to
+  `config.yaml`. Run without it, every lookup fell through to a hardcoded
+  default and the CSV landed in `results/05_benchmarks/` instead of the
+  project's `results/<name>/05_benchmarks/` -- where the Snakefile's
+  `clock_estimates` rule expects it. Now defaults to `config.yaml`; an
+  explicitly named missing file is still an error, the default degrades to no
+  config so the command still works outside a project.
+- `--max-records` help now says it truncates in file order rather than
+  sampling. It breaks out of the read loop, so on a tick-ordered FASTA it
+  biases toward early infections.

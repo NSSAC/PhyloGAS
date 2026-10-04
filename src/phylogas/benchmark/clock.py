@@ -154,7 +154,8 @@ def per_site_per_year(slope_per_genome_per_day: float, n_sites: int) -> float:
 
 
 def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
-                max_records=None, quantity="mu_truth") -> dict:
+                max_records=None, quantity="mu_truth",
+                date_min=None, date_max=None, exclude_ids=None) -> dict:
     """Regress divergence-from-reference on sampling date.
 
     The estimator does not care whether the sequences are simulated or real:
@@ -166,6 +167,17 @@ def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
     Real sequences must be ALIGNED to the reference first; unaligned records
     are skipped and counted, since silently comparing them would be wrong.
 
+    `date_min`/`date_max` bound the fitted window. They matter more than they
+    look: a single record dated outside the simulated period -- the reference
+    at Wuhan-Hu-1's real 2019-12-26 collection date, or a seed carrying its
+    real-world date -- stretches `date_span_days` from the ~70 days actually
+    studied to 537, which turns the one field you would glance at to judge
+    the fit into a number describing data the fit barely contains. Excluded
+    records are counted, not silently dropped.
+
+    `exclude_ids` drops records by id, for the reference and any other
+    context sequence injected into the alignment.
+
     Returns a dict of regression results, or one carrying `error` when there
     is not enough usable data to fit.
     """
@@ -173,14 +185,22 @@ def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
     dates = read_dates(metadata, date_col=date_col, id_col=id_col)
     if not dates:
         return {"error": f"no usable dates in {metadata}"}
+    drop = {str(i) for i in (exclude_ids or ())}
 
     xs, ys = [], []
-    n_seen = n_nodate = n_unaligned = 0
+    n_seen = n_nodate = n_unaligned = n_window = n_excluded = 0
     for sid, seq in _iter_fasta(fasta):
         n_seen += 1
+        if sid in drop:
+            n_excluded += 1
+            continue
         d = dates.get(sid)
         if d is None:
             n_nodate += 1
+            continue
+        if (date_min is not None and d < date_min) or \
+           (date_max is not None and d > date_max):
+            n_window += 1
             continue
         div = hamming_to_reference(seq, ref)
         if div is None:
@@ -193,7 +213,9 @@ def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
 
     if len(xs) < 3:
         msg = (f"only {len(xs)} usable records ({n_nodate} without a date, "
-               f"{n_unaligned} not aligned to the reference, of {n_seen} sequences)")
+               f"{n_unaligned} not aligned to the reference, "
+               f"{n_window} outside {date_min or '-inf'}..{date_max or '+inf'}, "
+               f"{n_excluded} excluded by id, of {n_seen} sequences)")
         if n_unaligned > len(xs):
             msg += ("\n       Most records are not the reference's length. Real "
                     "sequences need aligning\n       first -- use ncov's "
@@ -219,6 +241,12 @@ def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
         "comparable_sites": n_sites,
         "skipped_no_date": n_nodate,
         "skipped_unaligned": n_unaligned,
+        "skipped_out_of_window": n_window,
+        "skipped_excluded_id": n_excluded,
+        "window": (f"{date_min or ''}..{date_max or ''}"
+                   if (date_min or date_max) else "unbounded"),
+        "first_date": _dt.date.fromordinal(min(xs)).isoformat(),
+        "last_date": _dt.date.fromordinal(max(xs)).isoformat(),
     }
 
 

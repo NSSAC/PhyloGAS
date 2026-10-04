@@ -241,6 +241,24 @@ count and the date span. R^2 and the span are reported because a rate fitted
 over a narrow window is unreliable regardless of mode, and a short sampling
 window is the usual reason a clock estimate misbehaves.
 
+For that to mean anything, the span has to describe the data the fit rests
+on. `mu_truth` therefore bounds the window at `genetic_painter.start_date`
+and drops the ids in `cfg/nextstrain/reference_id.txt`. Without both, a
+single record -- the reference, carrying Wuhan-Hu-1's real 2019-12-26
+collection date -- reported a 537-day span for a 70-day study, making the one
+field you would check to judge the fit describe a period the fit barely
+covers. `--date-min`/`--date-max` override the window and `--keep-context`
+the exclusion; neither default applies to `--kind real`, where clipping to a
+simulation's start date would be meaningless.
+
+Low R^2 over a short window is expected, not a fault. Over 70 days at ~8e-4
+the clock contributes only ~5 substitutions of divergence, while tips sampled
+the same day differ by a comparable amount because divergence tracks chain
+length rather than calendar time. On synthetic data with a known 8.0e-4 rate,
+a 70-day window recovers 7.87e-4 at R^2 = 0.16, and a 400-day window recovers
+7.94e-4 at R^2 = 0.86. The slope stays well determined because n is large;
+it is the variance explained that falls.
+
 ---
 
 ## 6. What is assumed, and what would invalidate it
