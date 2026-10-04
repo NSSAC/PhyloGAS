@@ -1219,3 +1219,22 @@ the snakemake runner.
 `NEXTSTRAIN_HOME` is documented in the README for the same class of reason --
 environment 2 is multi-GB and `~/.nextstrain` is the wrong place for it on a
 cluster with a quota'd or non-shared `$HOME`.
+
+### README trimmed to the user's view (2026-10-03)
+
+The previous README pass explained the three environments, the merge
+argument and the `--use-conda` mechanics -- the reasoning above. That is
+maintainer material; a user needs to know which commands to run. The README
+section now says only: you stay in the PhyloGAS environment; clone ncov; pick
+the CLI (Option A) or snakemake-only (Option B); two cluster notes. 137 lines
+to 57. The reasoning stays here.
+
+Two corrections made on the way:
+
+- The nextclade dataset is an output file
+  (`data/sars-cov-2-nextclade-defaults.zip`), so it downloads on the first
+  build and is reused -- not on every build, as the previous text said.
+- `phylogas status` ignored `nextstrain.runner` and reported the CLI as
+  missing under `runner: "snakemake"`. It now checks for `snakemake` and
+  `conda`/`mamba` in that case, and its setup hint is the one-step
+  `nextstrain setup --set-default conda`.

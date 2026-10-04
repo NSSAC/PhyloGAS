@@ -70,48 +70,19 @@ phylogas --help
 
 ### Optional: Nextstrain, for the phylodynamic stage
 
-Only needed for `nextstrain.enabled: true`. **Two things, both required**: the
-Nextstrain CLI *and* a clone of the ncov workflow. Installing the CLI does not
-get you the workflow, and `nextstrain check-setup` passing says nothing about
-whether you have one — it checks runtimes, not pathogens. That is the usual
-place people get stuck.
+Only needed for `nextstrain.enabled: true`.
 
-**1. The CLI** — the tooling layer (`augur`, `auspice`, `nextclade`, and the
-runtime that hosts them):
+You keep working in your PhyloGAS environment the whole time. Nextstrain's own
+tools (augur, nextclade, …) live in a separate environment that is built for
+you and switched into automatically whenever a build runs — you never activate
+it, and you should not install augur into the PhyloGAS environment.
 
-```bash
-# Linux / WSL
-curl -fsSL --proto '=https' https://nextstrain.org/cli/installer/linux | bash
-# macOS
-curl -fsSL --proto '=https' https://nextstrain.org/cli/installer/mac | bash
-
-nextstrain setup conda        # or: docker, singularity, ambient, aws-batch
-nextstrain check-setup --set-default
-```
-
-Going through the CLI rather than a hand-built environment is deliberate:
-`--set-default` records the runtime, so one PhyloGAS config runs unchanged on a
-laptop with Docker and on an HPC with Singularity or conda. PhyloGAS only needs
-`nextstrain` on `PATH` — it never has to know which runtime you chose.
-
-Two notes on runtime choice:
-
-- `nextstrain setup conda` has the CLI build and own a conda environment for
-  you. This is the usual choice on a cluster where Docker is unavailable.
-- `ambient` means "whatever environment Nextstrain CLI is itself running in",
-  i.e. *you* manage it. Pick this only if you have already conda-installed
-  `augur`/`auspice` yourself and want the CLI to use them as-is. If you ran
-  `nextstrain setup conda`, you want `conda`, not `ambient`.
-
-**2. The ncov workflow** — the analysis layer, a separate clone. ncov ships no
-`nextstrain-pathogen.yaml`, so it is not a CLI-managed pathogen and
-`nextstrain setup` will not fetch it:
+**1. Get the ncov workflow.** This is always required, whichever option you
+pick below; no Nextstrain installer fetches it for you.
 
 ```bash
 git clone https://github.com/nextstrain/ncov.git
 ```
-
-Then point the config at it:
 
 ```yaml
 nextstrain:
@@ -119,92 +90,41 @@ nextstrain:
   dir: "/path/to/ncov"
 ```
 
-The clone is not a formality. PhyloGAS's `cfg/nextstrain/ncov/base.yaml` is a
-*deviations* file: it overrides 2 of ncov's 13 `files` entries and leaves 15 of
-20 top-level config keys untouched, so the run depends on ncov's own
-`defaults/parameters.yaml`, its reference and annotation, its clade and colour
-tables, and its workflow rules and scripts. ncov's config merge loads your
-`--configfile` first and then merges `defaults/parameters.yaml` underneath it,
-which is what makes a deviations file work.
+**2. Choose how builds run.** Pick one.
 
-`phylogas status` reports both pieces and tells you which one is outstanding.
-Each pathogen is its own workflow repository (ncov, measles, avian-flu…), which
-is why the config names a directory rather than hardcoding ncov.
+*Option A — Nextstrain CLI (default, recommended).* Install it once; it builds
+and maintains the tools environment.
 
-> **Network at build time.** ncov's main workflow runs
-> `nextclade dataset get --name sars-cov-2`, so the first build needs outbound
-> network from wherever the workflow executes. On a compute node without egress,
-> fetch the dataset on a login node first (or pre-populate the cache) and submit
-> afterwards.
+```bash
+curl -fsSL --proto '=https' https://nextstrain.org/cli/installer/linux | bash   # or .../mac
+nextstrain setup --set-default conda      # use docker instead if you have it
+```
 
-**Bypassing the CLI.** If you would rather drive ncov's Snakefile directly —
-already-activated environment, site Snakemake profile, your own cluster
-submission — set:
+*Option B — Snakemake only, no CLI.* Snakemake builds the tools environment
+from ncov's own recipe on the first run. Needs `conda` or `mamba` on your
+`PATH`.
 
 ```yaml
 nextstrain:
   runner: "snakemake"
 ```
 
-PhyloGAS then invokes `snakemake` in the ncov directory instead of
-`nextstrain build`, and the CLI is not needed at all. The default is
-`"nextstrain"`.
+**3. Check.** `phylogas status` reports whether the workflow and the runner are
+in place and what is missing.
 
-#### How many conda environments is this, really?
+#### On a cluster
 
-Three, and keeping them separate is deliberate:
+- **Put the tools environment somewhere roomy.** It is several GB. Option A:
+  `export NEXTSTRAIN_HOME=/scratch/$USER/nextstrain` before running setup.
+  Option B: set `nextstrain.conda_prefix: "/scratch/$USER/snakemake-conda"`,
+  which also means it is built once rather than per run.
+- **The first build needs internet.** ncov downloads a nextclade dataset into
+  the checkout the first time it runs, and reuses it afterwards. If compute
+  nodes have no outbound access, run the first build from a login node.
 
-| Environment | Owned by | Holds |
-| --- | --- | --- |
-| PhyloGAS | you | `phylogas`, pandas, scipy, scikit-learn, networkx, snakemake |
-| `$NEXTSTRAIN_HOME/runtimes/conda/env` | the Nextstrain CLI | augur, auspice, nextclade — built by `nextstrain setup conda` |
-| `<ncov>/workflow/envs/nextstrain.yaml` | ncov | pinned `augur`, `nextclade`, `iqtree`, `epiweeks` |
-
-Do not try to merge them. The CLI's runtime is a managed artifact at a
-CLI-chosen path, and `nextstrain update` rebuilds it — anything you install
-there disappears. More to the point, PhyloGAS never *imports* augur: it shells
-out to `nextstrain build`. The coupling is a subprocess boundary, so one
-environment buys nothing and costs you a shared dependency solve in which
-augur's numpy/pandas/biopython pins have to satisfy scipy and scikit-learn too.
-
-Which of the three is live depends on the runner:
-
-- **`runner: "nextstrain"`** (default) — the CLI's runtime provides augur.
-  ncov's per-rule `conda:` directives are inert, because `nextstrain build`
-  does not pass `--use-conda`. Environments 1 and 2; PhyloGAS needs only
-  `nextstrain` on `PATH`.
-- **`runner: "snakemake"`** — PhyloGAS passes `--use-conda`, so snakemake
-  builds environment 3 from ncov's own pinned spec. Environments 1 and 3, and
-  the CLI is not installed at all. PhyloGAS's environment needs `snakemake`
-  and a working `conda`/`mamba`, *not* augur.
-
-That second case is why `--use-conda` is passed rather than left off: without
-it, `augur`, `nextclade` and `iqtree` would have to be on the `PATH` of the
-PhyloGAS environment, which is exactly the merge described above. With it,
-ncov's pins stay in ncov's environment.
-
-Two environment variables worth setting on a cluster:
-
-- **`SNAKEMAKE_CONDA_PREFIX`** (or `nextstrain.conda_prefix`, which maps to
-  `--conda-prefix`). Without a shared prefix, `--use-conda` re-solves
-  environment 3 per working directory. Point it at one path and the solve
-  happens once and is reused across every arm and every sweep.
-- **`NEXTSTRAIN_HOME`** — relocates environment 2, which is multi-GB. Set it
-  to scratch or project space if `$HOME` is quota'd or is not mounted on
-  compute nodes. (`NEXTSTRAIN_RUNTIMES` moves just the runtimes.)
-
-Per arm, PhyloGAS renders and validates a config of its own:
-
-```bash
-phylogas nextstrain-config --config config.yaml --build-type strategy --algo surs
-```
-
-This stages the arm's sequences and metadata *inside* the ncov checkout and
-writes relative paths, because `nextstrain build <dir>` mounts only that
-directory — absolute paths elsewhere are invisible under the docker and
-singularity runtimes. It refuses to render if the sequences do not all join to
-their metadata, or if `traits.columns` lacks `county` (which
-`phylogas benchmark mugration` requires).
+`phylogas nextstrain-config` (run for you by `phylogas run`) writes each arm's
+ncov config and copies its inputs into the ncov checkout. It stops with an
+error if any sequence lacks a metadata row.
 
 ---
 

@@ -1576,6 +1576,20 @@ def _report_nextstrain(cfg) -> None:
     else:
         print(f"  [okay] {label:28s} {ns_dir}")
 
+    runner = str(cfg.get("nextstrain.runner", default="nextstrain"))
+    if runner == "snakemake":
+        # No CLI needed: snakemake --use-conda builds ncov's own environment,
+        # so what has to exist is snakemake and something to build it with.
+        label = "runner: snakemake"
+        missing = [t for t in ("snakemake",) if shutil.which(t) is None]
+        if not (shutil.which("conda") or shutil.which("mamba")):
+            missing.append("conda or mamba")
+        if missing:
+            print(f"  [MISS] {label:28s} not on PATH: {', '.join(missing)}")
+        else:
+            print(f"  [okay] {label:28s} snakemake + conda found")
+        return
+
     label = "nextstrain CLI"
     if shutil.which("nextstrain") is None:
         print(f"  [MISS] {label:28s} not on PATH")
@@ -1601,8 +1615,7 @@ def _report_nextstrain(cfg) -> None:
         print(f"  [okay] {label:28s} {ver}")
     else:
         print(f"  [MISS] {label:28s} {ver}, but no runtime is set up")
-        print("         nextstrain setup docker   # or conda, singularity, ambient")
-        print("         nextstrain check-setup --set-default")
+        print("         nextstrain setup --set-default conda   # or docker")
 
 
 def cmd_status(args) -> int:
