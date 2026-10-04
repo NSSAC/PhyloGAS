@@ -148,7 +148,7 @@ for the record rather than deleted.
 | `genetic_painter.entropy_thresholds` | stage 00 under `results_dir` | Written by `phylogas train` | Output, not input. A pre-trained map could also be shipped in `data/example_data/` and pointed at — worth doing as a convenience, not as a licensing workaround |
 | `genetic_painter.probability_matrix` | stage 00 under `results_dir` | Same | Same; 3.6 MB for the Virginia Delta map |
 | `genetic_painter.seed_fasta` | `Virginia_B_1_617_2_seed_sequences.fasta` in `seeds.output_folder` | Cov-Spectrum (open sequences) | **Resolved.** `prep-seeds --seed-mode` builds it; the CLI derives the filename from state + lineage and finds it without a config edit |
-| `genetic_painter.reference_fasta` | `reference.fasta` (Wuhan-Hu-1) | Public | **Commit it** — 30 KB |
+| `genetic_painter.reference_fasta` | `reference.fasta` (Wuhan/Hu-1/2019) | Public | **Committed.** The id matches ncov's `refine.root`, so an emitted copy is self-rooting — 30 KB |
 | `epihiper.output_csv` | Simulation replicates (~550 MB each) | Your pending deposit | Pending |
 | `ascertainment.parameters` | `ascertainment_parameters.yaml` | TwinSampler repo | Ships with that package |
 | `ascertainment.schedule_input` | `Virginia_importation_schedule.csv` | TwinSampler `Data/` | Ships with that package |

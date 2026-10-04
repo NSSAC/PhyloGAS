@@ -7,7 +7,7 @@ from Zenodo by `phylogas fetch-data`; see `docs/data_acquisition.md`.
 |---|---|---|
 | `Ruralurbancontinuumcodes2023.csv` | 629 KB | USDA Economic Research Service |
 | `county_fips.csv` | 57 KB | derived from the US Census county table |
-| `reference/reference.fasta` | 30 KB | SARS-CoV-2 reference, Wuhan-Hu-1/2019 |
+| `reference/reference.fasta` | 30 KB | SARS-CoV-2 reference, Wuhan/Hu-1/2019 (id matches ncov's refine.root) |
 
 ---
 
@@ -70,6 +70,6 @@ metadata.
 
 ## reference/reference.fasta
 
-The SARS-CoV-2 reference genome (Wuhan-Hu-1, 29,903 bp), optionally prepended
+The SARS-CoV-2 reference genome (Wuhan/Hu-1/2019, 29,903 bp), optionally prepended
 to painted output via `--reference` so downstream phylogenetics has a rooting
 sequence.

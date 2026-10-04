@@ -123,6 +123,13 @@ def getClas():
     parser.add_argument("--start_tick", type=int, dest="start_tick", required=False, default=0,
                         help="Start tick for processing the input_graph_csv. Defaults to 0.")
 
+    parser.add_argument("--emit_reference", "--emit-reference", dest="emit_reference",
+                        action="store_true", default=False,
+                        help="Write the reference sequence as the first record of the "
+                             "output FASTA and metadata. Off by default: Nextstrain "
+                             "supplies its own root, and the emitted record has no "
+                             "metadata row in the line list, so it shows up as an "
+                             "unmatched sequence in `phylogas check-join`.")
     parser.add_argument("--reference", default=None, type=str, dest="reference", required=False, help="add reference sequence to the output")
     parser.add_argument("--compression", default=None, type=str, dest="compression_type", required=False, 
                         help="add compression method -- None, xz, bgzf, or parquet",
@@ -781,7 +788,23 @@ def generate_sequences(args):
             _o.metadata_file.write(meta_line)
 
     ref_location_dict = json.loads(args.reference_location)
-    if args.reference is not None:
+    # The reference record is emitted only on request (--emit_reference).
+    #
+    # data/reference/reference.fasta is now headed "Wuhan/Hu-1/2019", matching
+    # what ncov's refine.root names, so when this IS emitted the output FASTA
+    # is self-rooting -- usable by augur or TreeTime directly, with no
+    # Nextstrain installation and no separate reference input.
+    #
+    # Off by default because it is written to the unfiltered output set only,
+    # never to the --linelist-filter sets, so the sets would disagree about
+    # whether the root is present. Through ncov it is also redundant, since
+    # the reference_data input supplies the root -- though harmlessly so now
+    # that data/reference/reference.fasta is byte-identical to ncov's copy.
+    #
+    # The clock metrics read the reference from
+    # genetic_painter.reference_fasta, not from this record, so mu_truth is
+    # unaffected either way.
+    if args.reference is not None and args.emit_reference:
         align_ref = AlignIO.read(args.reference, "fasta")
         infection = InfectionRecord()
         country_ref=ref_location_dict['country'] # Use distinct names for clarity

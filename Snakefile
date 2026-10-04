@@ -115,12 +115,59 @@ MUGRATION = resolve_benchmark("benchmark.truth_mugration", "mugration")
 # --------------------------------------------------------------------------
 # Targets
 # --------------------------------------------------------------------------
+# Clock mode -> which `phylogas benchmark clock` invocations to make.
+# docs/clock_modes.md explains why these are not interchangeable. Defined here
+# rather than inside the nextstrain block because `rule all` needs it too, and
+# the two must agree: a target nothing produces is a DAG error.
+_CLOCK_MODES = {
+    "operational": ["operational"],
+    "generative":  ["truth", "inferred"],
+    "both":        ["all"],
+}
+
+
+def _clock_invocations():
+    mode = str(cfg("nextstrain.clock.mode", "both"))
+    if mode not in _CLOCK_MODES:
+        raise ValueError(
+            f"nextstrain.clock.mode is '{mode}'; expected one of "
+            f"{', '.join(sorted(_CLOCK_MODES))}. See docs/clock_modes.md.")
+    return _CLOCK_MODES[mode]
+
+
+def _nextstrain_targets():
+    """Auspice JSONs and the clock CSV, when nextstrain is enabled.
+
+    A function because the arm list and the clock mode are both read from
+    config inside the `if cfg("nextstrain.enabled")` block below, which has
+    not run yet when `rule all` is defined.
+    """
+    if not cfg("nextstrain.enabled", False):
+        return []
+    out = cfg("nextstrain.outdir", f"{RESULTS}/04_nextstrain_builds")
+    arms = []
+    for b in (cfg("nextstrain.builds", []) or []):
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "strategy":
+            arms += list(b.get("algorithms") or ALGORITHMS)
+        elif b.get("type") == "all_infections":
+            arms.append("all_infections")
+    arms = arms or list(ALGORITHMS)
+    targets = [f"{out}/{a}/auspice.json" for a in arms]
+    # Only ask for the CSV when a rule will exist to produce it.
+    if _clock_invocations():
+        targets.append(f"{BENCH_DIR}/clock_estimates.csv")
+    return targets
+
+
 rule all:
     """Default target: painted genomes plus every requested sampled subset."""
     input:
         PAINTED_FASTA,
         PAINTED_META,
         expand(f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}", algo=ALGORITHMS),
+        _nextstrain_targets(),
 
 
 rule paint_only:
@@ -289,14 +336,38 @@ if cfg("nextstrain.enabled", False):
     NS_DIR    = cfg("nextstrain.dir", "")
     NS_STAGE  = cfg("nextstrain.stage_subdir", "data/phylogas")
     NS_RUNNER = cfg("nextstrain.runner", "nextstrain")
+    NS_OUT    = cfg("nextstrain.outdir", f"{RESULTS}/04_nextstrain_builds")
 
-    rule nextstrain_config:
-        """Render, stage and validate the ncov config for one arm.
+    # nextstrain.builds decides which arms exist. A `strategy` entry expands to
+    # one arm per algorithm (defaulting to sampling.algorithms); an
+    # `all_infections` entry is a single arm with its own inputs and its own
+    # subsampling scheme.
+    NS_STRATEGY_ARMS = []
+    NS_ALL_INFECTIONS = False
+    for _b in (cfg("nextstrain.builds", []) or []):
+        if not isinstance(_b, dict):
+            continue
+        if _b.get("type") == "strategy":
+            NS_STRATEGY_ARMS += list(_b.get("algorithms") or ALGORITHMS)
+        elif _b.get("type") == "all_infections":
+            NS_ALL_INFECTIONS = True
+    if not NS_STRATEGY_ARMS and not NS_ALL_INFECTIONS:
+        # Nothing declared: keep the previous behaviour of building every
+        # sampling arm, so enabling nextstrain alone still does something.
+        NS_STRATEGY_ARMS = list(ALGORITHMS)
+    NS_ARMS = NS_STRATEGY_ARMS + (["all_infections"] if NS_ALL_INFECTIONS else [])
+
+    NS_CLOCK = _clock_invocations()
+
+    rule nextstrain_config_strategy:
+        """Render, stage and validate the ncov config for one sampling arm.
 
         Validation is the point of making this its own rule: it refuses a
         build whose sequences do not join to its metadata, or whose traits
         cannot be scored, before any hours are spent.
         """
+        wildcard_constraints:
+            algo="|".join(NS_STRATEGY_ARMS) if NS_STRATEGY_ARMS else "$^"
         input:
             fasta=f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}",
             metadata=f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz",
@@ -307,6 +378,24 @@ if cfg("nextstrain.enabled", False):
         shell:
             "phylogas nextstrain-config --config {params.config} "
             "--build-type strategy --algo {wildcards.algo}"
+
+    if NS_ALL_INFECTIONS:
+
+        rule nextstrain_config_all_infections:
+            """The specialised arm: every painted infection plus the all-events
+            line list, capped by the country_17k scheme. Separate from the
+            strategy rule because its inputs differ, not just its subsampling.
+            """
+            input:
+                fasta=PAINTED_FASTA,
+                metadata=ALLEVENTS,
+            output:
+                configfile=f"{NS_DIR}/{NS_STAGE}/all_infections/config.yaml",
+            params:
+                config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
+            shell:
+                "phylogas nextstrain-config --config {params.config} "
+                "--build-type all_infections"
 
     rule nextstrain_build:
         """Run the ncov workflow through the Nextstrain CLI.
@@ -320,13 +409,15 @@ if cfg("nextstrain.enabled", False):
         Set nextstrain.runner: snakemake to bypass the CLI and call snakemake
         directly, which needs the full ncov environment already active.
         """
+        wildcard_constraints:
+            arm="|".join(NS_ARMS) if NS_ARMS else "$^"
         input:
-            configfile=f"{NS_DIR}/{NS_STAGE}/{{algo}}/config.yaml",
+            configfile=f"{NS_DIR}/{NS_STAGE}/{{arm}}/config.yaml",
         output:
-            auspice=f"{cfg('nextstrain.outdir')}/{{algo}}/auspice.json",
+            auspice=f"{NS_OUT}/{{arm}}/auspice.json",
         params:
             ns_dir=NS_DIR,
-            rel_config=f"{NS_STAGE}/{{algo}}/config.yaml",
+            rel_config=f"{NS_STAGE}/{{arm}}/config.yaml",
             runner=NS_RUNNER,
         threads: 8
         shell:
@@ -337,8 +428,49 @@ if cfg("nextstrain.enabled", False):
                 snakemake --snakefile {params.ns_dir}/Snakefile                     --configfile {input.configfile}                     --cores {threads} --rerun-incomplete
             fi
             mkdir -p $(dirname {output.auspice})
-            cp {params.ns_dir}/auspice/*_{wildcards.algo}.json {output.auspice}
+            cp {params.ns_dir}/auspice/*_{wildcards.arm}.json {output.auspice}
             """
+
+    if NS_CLOCK:
+
+        rule clock_estimates:
+            """Measure, infer and record the molecular clock rate per arm.
+
+            One rule rather than one per arm, because the CLI accumulates into
+            a single CSV -- replacing any existing row for the same
+            (arm, quantity) -- so concatenating ragged per-arm files is
+            unnecessary.
+
+            The builds are inputs only when the mode needs them: `truth` is
+            tree-free and reads the painted sequences directly, while
+            `inferred` and `operational` need a finished ncov build.
+            """
+            input:
+                fasta=PAINTED_FASTA,
+                metadata=PAINTED_META,
+                auspice=([f"{NS_OUT}/{a}/auspice.json" for a in NS_ARMS]
+                         if any(m in ("all", "inferred", "operational")
+                                for m in NS_CLOCK) else []),
+            output:
+                csv=f"{BENCH_DIR}/clock_estimates.csv",
+            params:
+                config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
+                arms=" ".join(NS_ARMS),
+                modes=" ".join(NS_CLOCK),
+                ns_dir=NS_DIR,
+                project=PROJECT,
+            shell:
+                r"""
+                for arm in {params.arms}; do
+                  for mode in {params.modes}; do
+                    phylogas benchmark clock --config {params.config}                         --arm "$arm" --mode "$mode"                         --build-dir {params.ns_dir}/results/{params.project}_"$arm"                         --out {output.csv} || true
+                  done
+                done
+                # The loop tolerates per-arm failures -- a missing augur, say --
+                # but the target must exist for the DAG, and an empty file is
+                # more honest than a stale one.
+                test -f {output.csv} || : > {output.csv}
+                """
 
 
 # --------------------------------------------------------------------------

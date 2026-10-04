@@ -162,6 +162,9 @@ def cmd_paint(args) -> int:
     elif model == "poor":
         cmd.append("--poor")
 
+    if pick(gp + "emit_reference", getattr(args, "emit_reference", None), False):
+        cmd.append("--emit_reference")
+
     if pick(gp + "proportional", args.proportional, True):
         cmd.append("--proportional")
     else:
@@ -234,6 +237,30 @@ def cmd_subset_fasta(args) -> int:
 # --------------------------------------------------------------------------
 # phylogas check-join
 # --------------------------------------------------------------------------
+def _context_ids(explicit=None):
+    """Sequence ids that legitimately have no line-list row.
+
+    The reference and the clade anchor are analysis *context*, not simulated
+    infections, so they never appear in the TwinSampler line list. With
+    `genetic_painter.emit_reference` on, the painted FASTA carries the
+    reference -- and a join check that counted it as unmatched would block a
+    build over a record that is supposed to be there.
+
+    Read from cfg/nextstrain/reference_id.txt, which is also what ncov's
+    subsampling `include` uses, so the two cannot drift apart.
+    """
+    if explicit:
+        return {i.strip() for i in explicit if i.strip()}
+    out = set()
+    f = _REPO_ROOT / "cfg" / "nextstrain" / "reference_id.txt"
+    if f.is_file():
+        for line in f.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                out.add(line)
+    return out
+
+
 def _open_text(path):
     """Open a possibly-compressed text file. These stages mix .xz, .gz and plain."""
     import gzip
@@ -308,10 +335,13 @@ def cmd_check_join(args) -> int:
                  f"{' ...' if len(cols) > 12 else ''}")
     meta_ids = set(meta_vals)
 
-    missing = header_set - meta_ids
+    context = _context_ids(args.ignore_ids)
+    exempt = header_set & context
+    missing = (header_set - meta_ids) - context
     extra = meta_ids - header_set
-    matched = len(header_set) - len(missing)
-    pct = 100.0 * matched / len(header_set) if header_set else 0.0
+    matched = len(header_set) - len(missing) - len(exempt)
+    denom = len(header_set) - len(exempt)
+    pct = 100.0 * matched / denom if denom else 0.0
 
     print(f"FASTA    : {fasta}")
     print(f"           {len(headers):,} records, {len(header_set):,} distinct ids")
@@ -325,7 +355,10 @@ def cmd_check_join(args) -> int:
         print(f"           WARNING: {len(meta_vals) - len(meta_ids):,} duplicate "
               f"'{args.column}' values ({len(meta_vals):,} rows). ncov expects "
               f"one row per sequence.")
-    print(f"\nMatched  : {matched:,} / {len(header_set):,}  ({pct:.2f}%)")
+    print(f"\nMatched  : {matched:,} / {denom:,}  ({pct:.2f}%)")
+    if exempt:
+        print(f"Context  : {len(exempt):,} exempt (reference/clade anchor, no "
+              f"line-list row by design): {', '.join(sorted(exempt))}")
     print(f"Unmatched: {len(missing):,} sequences with no metadata row")
     print(f"Spare    : {len(extra):,} metadata rows with no sequence  (harmless; ncov filters them)")
 
@@ -346,7 +379,7 @@ def cmd_check_join(args) -> int:
             print("     shifts the year in every id.")
             print(f"  FASTA    e.g.  {sorted(header_set)[0]}")
             print(f"  metadata e.g.  {sorted(extra)[0]}")
-        print(f"\nFAIL: {len(missing):,} of {len(header_set):,} sequences would be dropped.")
+        print(f"\nFAIL: {len(missing):,} of {denom:,} sequences would be dropped.")
         return 1
 
     print("\nOK: every sequence has a metadata row.")
@@ -479,9 +512,20 @@ def cmd_nextstrain_config(args) -> int:
         sys.exit(f"ERROR: {metadata} has no '{args.column}' column.\n"
                  f"       columns: {', '.join(meta_cols[:12])}"
                  f"{' ...' if len(meta_cols) > 12 else ''}")
-    missing = set(seq_ids) - set(meta_vals)
-    print(f"Join     : {len(set(seq_ids)) - len(missing):,} / {len(set(seq_ids)):,} "
-          f"sequences have a metadata row")
+    context = _context_ids(args.ignore_ids)
+    exempt = set(seq_ids) & context
+    missing = (set(seq_ids) - set(meta_vals)) - context
+    denom = len(set(seq_ids)) - len(exempt)
+    print(f"Join     : {denom - len(missing):,} / {denom:,} sequences have a "
+          f"metadata row"
+          + (f"  ({len(exempt)} context record(s) exempt)" if exempt else ""))
+    if exempt and args.build_type != "all_infections":
+        # Both inputs then carry the root. data/reference/reference.fasta is
+        # byte-identical to ncov's copy, so whichever ncov keeps is the same
+        # sequence -- harmless, just redundant.
+        print(f"  note: this arm already contains {', '.join(sorted(exempt))}, "
+              f"which reference_data also supplies (identical sequence, so "
+              f"harmless).")
     if missing:
         print("\nSequences ncov would drop:", file=sys.stderr)
         for sid in sorted(missing)[:5]:
@@ -1080,8 +1124,9 @@ def _find_fips(root: Path):
 # --------------------------------------------------------------------------
 def cmd_benchmark(args) -> int:
     """Score inferred phylodynamics against the simulation's ground truth."""
-    from .benchmark import runner
-
+    # Imported per branch, not up front: `benchmark clock` needs neither
+    # networkx nor the mugration machinery, and requiring them would make a
+    # clock estimate impossible in an environment that only has augur.
     if args.what == "truth":
         from .benchmark.truth_runner import score_samples
         score_samples(
@@ -1090,22 +1135,236 @@ def cmd_benchmark(args) -> int:
             out_csv=args.out, stride_weeks=args.stride_weeks,
         )
     elif args.what == "mugration":
+        from .benchmark import runner
         runner.benchmark_mugration(
             truth_json=args.truth, samples=args.samples, infections=args.infections,
             out_csv=args.out, state_col=args.state_col,
             duration_years=args.duration_years, save_matrices=args.save_matrices,
         )
     elif args.what == "sequence":
+        from .benchmark import runner
         runner.benchmark_sequence(
             painted_fasta=args.painted, infections=args.infections,
             out_csv=args.out, max_pairs=args.max_pairs,
         )
     elif args.what == "compare":
+        from .benchmark import runner
         runner.benchmark_compare(
             truth_json=args.truth, simulated_json=args.simulated,
             augur_json=args.augur, out_csv=args.out, state_col=args.state_col,
         )
+    elif args.what == "clock":
+        return _benchmark_clock(args)
     return 0
+
+
+def _benchmark_clock(args) -> int:
+    """Measure, infer and record the molecular clock rate.
+
+    Three quantities, kept apart on purpose. docs/clock_modes.md says which
+    answers which question; the short version is that comparing TreeTime's
+    simulated estimate directly to its real-data estimate conflates the
+    simulation's physics with TreeTime's inference error, and mu_truth is what
+    separates them.
+
+    The arm matters as much as the mode: root-to-tip regression depends on
+    which tips are present, so a rate fitted on a sampled arm is partly a
+    property of the sampler, not of the simulation.
+    """
+    import csv
+
+    from .benchmark import clock as clk
+
+    cfg = _load_config(args) if args.config else None
+    arm = args.arm or "all_infections"
+    want = (["truth", "inferred", "operational"] if args.mode == "all"
+            else [args.mode])
+
+    def _cfgget(dotted, default=None):
+        return cfg.get(dotted, default=default) if cfg is not None else default
+
+    comp = _cfgget("genetic_painter.compression", "xz")
+    ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
+    prefix = _cfgget("genetic_painter.output_prefix")
+
+    results = []
+
+    # --- mu_truth: no tree, no inference --------------------------------
+    if "truth" in want:
+        fasta = args.fasta or (f"{prefix}.sequences.fasta{ext}" if prefix else None)
+        meta = args.metadata or (f"{prefix}.metadata.tsv{ext}" if prefix else None)
+        ref = args.reference or _cfgget("genetic_painter.reference_fasta")
+        missing = [n for n, v in (("--fasta", fasta), ("--metadata", meta),
+                                  ("--reference", ref)) if not v or not Path(v).exists()]
+        if missing:
+            print(f"  truth: skipped, need {', '.join(missing)}", file=sys.stderr)
+        else:
+            print(f"  truth: {fasta}")
+            res = clk.root_to_tip(
+                fasta, ref, meta,
+                date_col=args.date_field, id_col=args.column,
+                max_records=args.max_records,
+                # Same estimator either way; only the label differs. On real
+                # sequences this is the cheapest and most comparable number
+                # available -- no TreeTime on either side -- and it needs only
+                # a `strain` and a `date` column.
+                quantity="mu_truth" if args.kind == "simulated" else "mu_real_observed")
+            results.append(clk.format_row(arm, res))
+
+    # --- mu_sim / mu_real: unconstrained augur refine --------------------
+    if "inferred" in want:
+        build = args.build_dir
+        if not build:
+            ns_dir = _cfgget("nextstrain.dir", "")
+            project = _cfgget("project_name", "phylogas")
+            if ns_dir:
+                build = str(Path(ns_dir) / "results" / f"{project}_{arm}")
+        if not build or not Path(build).is_dir():
+            print(f"  inferred: skipped, no ncov build directory "
+                  f"(pass --build-dir; expected results/<project>_<arm>)",
+                  file=sys.stderr)
+        else:
+            res = _refine_unconstrained(Path(build), args, clk)
+            if res:
+                results.append(clk.format_row(arm, res))
+
+    # --- mu_operational: what ncov assumed -------------------------------
+    if "operational" in want:
+        bl = args.branch_lengths
+        if not bl and args.build_dir:
+            bl = str(Path(args.build_dir) / "branch_lengths.json")
+        if not bl or not Path(bl).exists():
+            print("  operational: skipped, no branch_lengths.json "
+                  "(pass --branch-lengths)", file=sys.stderr)
+        else:
+            results.append(clk.format_row(arm, clk.operational_rate(bl)))
+
+    if not results:
+        print("\nNothing computed. Every requested quantity was missing its "
+              "inputs; see the messages above.", file=sys.stderr)
+        return 1
+
+    # --- report ----------------------------------------------------------
+    print()
+    for r in results:
+        if r.get("error"):
+            print(f"  {r.get('quantity', '?'):<16} ERROR: {r['error']}")
+            continue
+        rate = r.get("rate_subs_per_site_per_year")
+        r2 = r.get("r_squared")
+        line = f"  {r['quantity']:<16} {rate:.4e} subs/site/year"
+        if r2 is not None and not isinstance(r2, str):
+            line += f"   R2={r2:.3f}"
+        if r.get("tips"):
+            line += f"   n={r['tips']:,}  span={r.get('date_span_days')}d"
+        print(line)
+
+    # Only measurements go in the results file; failures were reported above.
+    measured = [r for r in results if not r.get("error")]
+    if not measured:
+        print("\nNo quantity could be computed.", file=sys.stderr)
+        return 1
+
+    out = args.out or str(Path(str(_cfgget("benchmark.outdir", "results/05_benchmarks")))
+                          / "clock_estimates.csv")
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    # Accumulate: one row per (arm, quantity), so arms can be added one at a
+    # time and the sampling-bias comparison reads straight off the file.
+    existing, fieldnames = [], []
+    if Path(out).exists():
+        with open(out) as fh:
+            rd = csv.DictReader(fh)
+            fieldnames = list(rd.fieldnames or [])
+            keys = {(r["arm"], r.get("quantity")) for r in measured
+                    if r.get("quantity")}
+            existing = [r for r in rd if (r.get("arm"), r.get("quantity")) not in keys]
+    for r in measured:
+        for k in r:
+            if k not in fieldnames:
+                fieldnames.append(k)
+    with open(out, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
+        w.writeheader()
+        for r in existing + measured:
+            w.writerow(r)
+    print(f"\nWrote: {out}  ({len(existing) + len(measured)} rows)")
+
+    if any(r.get("quantity") == "mu_operational" for r in measured):
+        print("\nNote: mu_operational was assumed by ncov, not measured. It "
+              "cannot support\n      a claim about the simulation's rate -- "
+              "see docs/clock_modes.md.")
+    return 0
+
+
+def _refine_unconstrained(build: Path, args, clk):
+    """Run augur refine with no --clock-rate over ncov's own intermediates.
+
+    ncov cannot be configured to do this: its refine rule reads
+    config["refine"]["clock_rate"] with [] and passes --clock-rate
+    unconditionally, so omitting the key leaves its 0.0008 default in force.
+    Hence a separate invocation over the files that rule consumes.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    tree = build / "tree_raw.nwk"
+    aln = build / "filtered.fasta"
+    meta = next((build / n for n in ("metadata_adjusted.tsv.xz",
+                                     "metadata_adjusted.tsv") if (build / n).exists()),
+                None)
+    for label, f in (("tree_raw.nwk", tree), ("filtered.fasta", aln)):
+        if not f.exists():
+            print(f"  inferred: skipped, {build}/{label} not found "
+                  f"(has the ncov build run?)", file=sys.stderr)
+            return None
+    if meta is None:
+        print(f"  inferred: skipped, no metadata_adjusted.tsv[.xz] in {build}",
+              file=sys.stderr)
+        return None
+    if shutil.which("augur") is None:
+        print("  inferred: skipped, `augur` not on PATH. Inside the Nextstrain "
+              "runtime:\n             nextstrain shell <ncov-dir>",
+              file=sys.stderr)
+        return None
+
+    tmp = Path(tempfile.mkdtemp(prefix="phylogas-clock-"))
+    node_data = tmp / "branch_lengths.json"
+    cmd = [
+        "augur", "refine",
+        "--tree", str(tree),
+        "--alignment", str(aln),
+        "--metadata", str(meta),
+        "--output-tree", str(tmp / "tree.nwk"),
+        "--output-node-data", str(node_data),
+        "--timetree",
+        "--coalescent", str(args.coalescent),
+        "--date-inference", "marginal",
+        "--divergence-unit", "mutations",
+        "--date-confidence",
+        "--no-covariance",
+    ]
+    # clock_filter_iqd deviation from the fitted line prunes valid branches
+    # when the rate is being fitted rather than assumed, and prunes different
+    # amounts per arm. Off by default here; --clock-filter-iqd to re-enable.
+    if args.clock_filter_iqd:
+        cmd += ["--clock-filter-iqd", str(args.clock_filter_iqd)]
+
+    print(f"  inferred: augur refine (unconstrained) on {build.name}")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-4:]
+        print("  inferred: augur refine failed:\n    " + "\n    ".join(tail),
+              file=sys.stderr)
+        return None
+
+    res = clk.operational_rate(node_data)
+    if res.get("error"):
+        return res
+    res["quantity"] = "mu_sim" if args.kind == "simulated" else "mu_real"
+    res["method"] = "augur refine, no --clock-rate (root-to-tip fit by TreeTime)"
+    res["node_data"] = str(node_data)
+    return res
 
 
 def cmd_assign_variants(args) -> int:
@@ -1417,6 +1676,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="metadata column holding the id (default: strain)")
     sp.add_argument("--max-report", dest="max_report", type=int, default=10,
                     help="how many unmatched ids to print (default: 10)")
+    sp.add_argument("--ignore-ids", dest="ignore_ids", nargs="+", default=None,
+                    help="ids allowed to have no metadata row. Defaults to "
+                         "cfg/nextstrain/reference_id.txt (the reference and "
+                         "clade anchor, which are context rather than infections).")
     sp.set_defaults(func=cmd_check_join)
 
     # -- nextstrain-config -------------------------------------------------
@@ -1437,6 +1700,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--scheme", default=None, help="override the subsampling scheme")
     sp.add_argument("--column", default="strain",
                     help="metadata column holding the sequence id (default: strain)")
+    sp.add_argument("--ignore-ids", dest="ignore_ids", nargs="+", default=None,
+                    help="ids allowed to have no metadata row (default: "
+                         "cfg/nextstrain/reference_id.txt)")
     sp.set_defaults(func=cmd_nextstrain_config)
 
     # -- status (start here) ----------------------------------------------
@@ -1468,6 +1734,10 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["entropy_analysis", "generate_sequence", "both"])
     sp.add_argument("--align-fasta", dest="align_fasta")
     sp.add_argument("--seed-fasta", dest="seed_fasta")
+    sp.add_argument("--emit-reference", dest="emit_reference",
+                    action="store_true", default=None,
+                    help="Write the reference as the first output record. Off by "
+                         "default; Nextstrain supplies its own root.")
     sp.add_argument("--location", default=None,
                     help="JSON location block; overrides genetic_painter.location")
     sp.add_argument("--reference-location", dest="reference_location", default=None,
@@ -1586,6 +1856,39 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--augur", required=True, help="Traits JSON from `augur traits`")
     b.add_argument("--out", default=None)
     b.add_argument("--state-col", dest="state_col", default="county")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser("clock",
+                        help="Molecular clock rate: measured, inferred and assumed")
+    b.add_argument("--config", "-c", default=None)
+    b.add_argument("--mode", default="all",
+                   choices=["truth", "inferred", "operational", "all"],
+                   help="truth: tree-free root-to-tip from the painted sequences. "
+                        "inferred: unconstrained augur refine on an ncov build. "
+                        "operational: the rate ncov assumed. Default: all.")
+    b.add_argument("--arm", default=None,
+                   help="which arm these numbers describe (default: all_infections). "
+                        "Fitting on a sampled arm measures the sampler too -- see "
+                        "docs/clock_modes.md")
+    b.add_argument("--kind", default="simulated", choices=["simulated", "real"],
+                   help="labels the inferred rate mu_sim or mu_real")
+    b.add_argument("--fasta", default=None, help="sequences for --mode truth")
+    b.add_argument("--metadata", default=None, help="metadata for --mode truth")
+    b.add_argument("--reference", default=None,
+                   help="reference FASTA (default: genetic_painter.reference_fasta)")
+    b.add_argument("--build-dir", dest="build_dir", default=None,
+                   help="ncov results/<build> directory, for --mode inferred")
+    b.add_argument("--branch-lengths", dest="branch_lengths", default=None,
+                   help="branch_lengths.json, for --mode operational")
+    b.add_argument("--date-field", dest="date_field", default="date")
+    b.add_argument("--column", default="strain", help="metadata id column")
+    b.add_argument("--coalescent", default="skyline")
+    b.add_argument("--clock-filter-iqd", dest="clock_filter_iqd", type=float, default=0,
+                   help="0 (default) disables it. With the rate being fitted, the "
+                        "filter prunes valid branches, and by differing amounts per arm.")
+    b.add_argument("--max-records", dest="max_records", type=int, default=None,
+                   help="stop after N sequences (for a quick look at a huge FASTA)")
+    b.add_argument("--out", default=None, help="CSV (default: <benchmark.outdir>/clock_estimates.csv)")
     b.set_defaults(func=cmd_benchmark)
 
     # -- assign-variants ---------------------------------------------------

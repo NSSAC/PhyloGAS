@@ -173,7 +173,25 @@ genetic_painter:
   # <data_dir>/<state>/seeds, so a different state or lineage needs no edit
   # here; point it at a staged file if you have one.
   seed_fasta: "{seeds.output_folder}/Virginia_B_1_617_2_seed_sequences.fasta"
+  # Used only to emit the reference as the first output record (see
+  # emit_reference). The ancestral genomes come from seed_fasta, not from here.
   reference_fasta: "{data_dir}/reference/reference.fasta"
+
+  # Write the reference as the first record of the output FASTA and metadata.
+  #
+  # reference_fasta is headed "Wuhan/Hu-1/2019", which is what ncov's
+  # refine.root names, so with this on the painted FASTA is self-rooting --
+  # usable by augur or TreeTime directly, no Nextstrain install needed.
+  #
+  # Off by default because the --linelist-filter output sets do not get it,
+  # so the sets would disagree about whether the root is present. Through ncov
+  # it is redundant anyway (reference_data supplies the root), though harmless
+  # now that reference_fasta is byte-identical to ncov's copy. Turn it on for
+  # standalone use.
+  #
+  # Either way the clock metrics read reference_fasta directly, not this
+  # record, so mu_truth is unaffected.
+  emit_reference: false
   output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"
 
   # Which EpiHiper exit states to paint. A prefix captures every age-group
@@ -276,6 +294,26 @@ nextstrain:
   stage_subdir: "data/phylogas"
 
   outdir: "{results_dir}/04_nextstrain_builds"
+
+  # Molecular clock. The two modes answer different questions and are not
+  # interchangeable -- docs/clock_modes.md is the decision record.
+  #
+  #   operational - ncov's de facto prior (0.0008 / 0.0004). Real and
+  #                 simulated data get the IDENTICAL distortion, which is what
+  #                 makes their trees comparable. Cannot support a claim about
+  #                 the simulation's own rate: the rate was assumed.
+  #   generative  - rate fitted from the data. Runs as a separate step
+  #                 (`phylogas benchmark clock`) because ncov's refine rule
+  #                 passes --clock-rate unconditionally and so cannot be told
+  #                 to infer it.
+  #   both        - the operational tree plus clock_estimates.csv carrying
+  #                 mu_truth, mu_sim and mu_operational.
+  #
+  # Fit the generative mode on the all_infections arm: root-to-tip regression
+  # depends on which tips are present, so on a sampled arm the number is a
+  # property of the sampler as much as of the simulation.
+  clock:
+    mode: "both"
 
   # Which arms to build.
   #   strategy       - one build per BeyondBaseline sampling arm. The focal set

@@ -4,8 +4,9 @@
 # Wuhan/Hu-1/2019 is what refine.root expects; if subsampling drops it the
 # tree cannot be rooted. 21L is the clade anchor.
 #
-# This file previously read "Wuhan-Hu-1/2019" -- the hyphenated spelling used
-# by PhyloGAS's own data/reference/reference.fasta header -- which matches
-# nothing here, so --include kept nothing.
+# data/reference/reference.fasta carries this same id, so a painted FASTA
+# produced with genetic_painter.emit_reference is self-rooting. These ids are
+# also what `phylogas check-join` exempts from the metadata join, since they
+# are analysis context rather than simulated infections.
 Wuhan/Hu-1/2019
 21L

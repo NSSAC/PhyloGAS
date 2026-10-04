@@ -912,3 +912,217 @@ which has no `nextstrain-pathogen.yaml` and so is a clone-and-build workflow.
 See the README's "Optional: Nextstrain" section. `phylogas status` reports the
 checkout and the CLI, distinguishing "not installed" from "installed but no
 runtime set up".
+
+---
+
+## Clock rate: three quantities, two modes (2026-10-03)
+
+Full decision record in `docs/clock_modes.md`. The mechanics:
+
+```bash
+phylogas benchmark clock --config config.yaml --arm all_infections --mode all
+phylogas benchmark clock --config config.yaml --mode truth      # no ncov run needed
+phylogas benchmark clock --config config.yaml --arm surs --mode inferred
+```
+
+| quantity | from | comparable to real data |
+|---|---|---|
+| `mu_truth` | root-to-tip vs date, Hamming from the reference, tree-free | yes |
+| `mu_sim` / `mu_real` | `augur refine` with no `--clock-rate` | yes |
+| `mu_operational` | the rate ncov assumed, read back from `branch_lengths.json` | n/a -- assumed, not measured |
+
+Why root-to-tip and not the substitutions the painter placed: root-to-tip is
+what TempEst and TreeTime regress and what the ~8e-4 subs/site/year literature
+figure derives from, so it is the only form comparable to real data. Counting
+placed substitutions counts *events*, including back-mutations and repeat hits
+no real root-to-tip plot can see. Their ratio is a saturation diagnostic.
+
+Validated against synthetic sequences evolved at a known 8.0e-4: recovered
+7.94e-4, a 0.7% error, R2 0.76 over a 300-day span.
+
+### Why mu_truth exists at all
+
+`rate_limited` has no clock parameter. It is per replication cycle
+(`mutation_rate_per_cycle = 3.40e-6`, Poisson draws per transmission, burst
+sizes 10-1000), so the per-site-per-year rate is emergent from the painter's
+parameters *and* EpiHiper's transmission timing -- the generation interval does
+half the work and lives outside PhyloGAS. The rate has to be measured; there is
+no number to look up, and nothing to pin `clock_rate` to.
+
+With mu_truth in hand the comparison decomposes. `mu_sim` vs `mu_truth` asks
+whether TreeTime recovers a known clock; `mu_truth` vs `mu_real` asks whether
+the simulation's evolution resembles reality. Comparing `mu_sim` to `mu_real`
+directly -- the obvious two-way comparison -- conflates them.
+
+### Two things the mode changes besides the prior
+
+`clock_filter_iqd` defaults to **0** in the inferred step. It measures
+deviation from the fitted line, so with the rate being fitted it prunes valid
+branches, and by differing amounts per arm -- manufacturing a difference
+between sampling strategies that is an artefact of filtering.
+
+**The arm matters as much as the mode.** Root-to-tip regression depends on
+which tips are present, so a rate fitted on a `strategy` arm is partly a
+property of the sampler. Fit on `all_infections` to describe the simulation;
+fit per `strategy` arm and the spread is itself a benchmark result -- how much
+each sampling design biases the rate estimate, which an empirical study cannot
+ask because real surveillance has one realised scheme.
+
+### Also fixed
+
+`cmd_benchmark` imported `benchmark.runner` up front, which pulls in networkx
+and the mugration machinery. `benchmark clock` needs neither, so a clock
+estimate was impossible in an environment that had augur but not networkx. The
+imports are now per branch.
+
+---
+
+## Wiring the declared config into `phylogas run` (2026-10-03)
+
+Four config keys existed but nothing read them, so the commands worked by hand
+while `phylogas run` only did the strategy arms with the operational clock.
+
+| key | was | now |
+|---|---|---|
+| `nextstrain.builds` | declarative; the Snakefile hardcoded `strategy`/`{algo}` | read to derive the arm list |
+| `nextstrain.clock.mode` | nothing read it | maps to `benchmark clock` invocations |
+| the `all_infections` arm | `nextstrain-config` accepted it; no rule existed | its own rule, with its own inputs |
+| `benchmark clock` | not a rule | `rule clock_estimates`, a target of `rule all` |
+
+`nextstrain.builds` expands a `strategy` entry to one arm per algorithm
+(inheriting `sampling.algorithms` when the entry names none) and an
+`all_infections` entry to a single arm. An empty or absent list falls back to
+every sampling arm, so enabling nextstrain alone still does something.
+
+The two config rules are separate rather than one wildcard rule because the
+arms differ in their *inputs*, not only their subsampling: strategy arms take
+the sampled FASTA and that arm's samples CSV, `all_infections` takes the
+painted FASTA and the all-events line list. The strategy rule carries a
+`wildcard_constraints` on the configured algorithms so the two cannot be
+ambiguous.
+
+`rule clock_estimates` is one rule rather than one per arm, because the CLI
+accumulates into a single CSV and replaces any existing row for the same
+(arm, quantity) -- so there is no ragged per-arm concatenation to do. The
+builds are inputs only when the mode needs them: `truth` is tree-free and
+reads the painted sequences directly.
+
+**A bug this turned up:** an unrecognised `clock.mode` left `rule all` asking
+for `clock_estimates.csv` while creating no rule to produce it -- a DAG error
+with a confusing message. The mode-to-invocations mapping is now module-level
+and shared by both, and an unknown mode raises at parse time naming the valid
+ones. Verified for all three modes that the requested targets and the rules
+that exist agree.
+
+---
+
+## The painter no longer emits the reference record
+
+`--emit_reference` (off by default) restores it.
+
+It was written only to the unfiltered output set, never to the
+`--linelist-filter` sets, so the painted FASTA carried a record with no row in
+the TwinSampler line list -- which `phylogas check-join` correctly reports as
+one unmatched sequence on the `all_infections` arm. Removing it makes that
+join clean.
+
+Nothing needed it:
+
+| worry | why it holds |
+|---|---|
+| does Nextstrain still get a root? | yes -- its own `reference_data` input carries `Wuhan/Hu-1/2019`, which is what `refine.root` names. The emitted record was named after the header of `data/reference/reference.fasta` (`Wuhan-Hu-1/2019`, hyphenated), so it never satisfied the root anyway |
+| can mu_truth still find the reference? | yes -- it reads `genetic_painter.reference_fasta`, which is committed to this repository, not the FASTA's first record |
+| can we get it back? | `--emit_reference`, or `genetic_painter.emit_reference: true` |
+
+Correcting something stated earlier in this file's history: `--reference` is
+**not** the ancestral genome the painter mutates from. `align_ref` is used only
+in the emission block; the ancestral sequences come from `seed_fasta`. With
+emission off, `--reference` matters only to the clock metrics.
+
+---
+
+## The reference id now matches ncov's root (2026-10-03)
+
+`data/reference/reference.fasta` was headed `Wuhan-Hu-1/2019`. ncov's
+`refine.root` names `Wuhan/Hu-1/2019`. One character, and it meant the
+reference PhyloGAS ships could never serve as a tree root.
+
+Renamed to the slash form. The sequence is unchanged (md5 `105c82802b67`,
+29,903 bp) -- only the header.
+
+What this buys: with `genetic_painter.emit_reference: true` the painted FASTA
+is **self-rooting**. augur or TreeTime can root it directly, with no
+Nextstrain installation and no separate reference input, which is what makes
+the mutation-rate work possible standalone.
+
+### Three consequences, all handled
+
+**1. The two reference copies are the same sequence, masked differently.**
+`cfg/nextstrain/references_sequences.fasta` masks the first 100 and last 50
+bases to `N` -- standard ncov practice for unreliable genome termini. Ours does
+not. Identical at all 29,750 unmasked positions. So they are interchangeable in
+substance, but not byte-identical, and now they share a name.
+
+**2. Emitting it would have failed the join check.** The TwinSampler line list
+has no row for the reference -- it is analysis context, not a simulated
+infection -- so `check-join` counted it as an unmatched sequence, which
+`nextstrain-config` treats as a blocking error. Both now exempt the ids in
+`cfg/nextstrain/reference_id.txt`, which is the same file ncov's subsampling
+`include` reads, so the two cannot drift. `--ignore-ids` overrides.
+
+```
+Matched  : 2 / 2  (100.00%)
+Context  : 1 exempt (reference/clade anchor, no line-list row by design): Wuhan/Hu-1/2019
+```
+
+A genuine mismatch still fails, and the denominator excludes the exempt
+records rather than flattering the percentage.
+
+**3. Emitting it into an ncov build duplicates the root.** Both inputs would
+carry `Wuhan/Hu-1/2019`; ncov dedupes by strain and keeps one, so which
+masking survives is not obvious. `nextstrain-config` now warns when it sees
+the root in an arm's FASTA and points at `emit_reference: false`.
+
+So: **off when running through ncov** (reference_data supplies a
+terminus-masked root), **on for standalone** augur/TreeTime work. Either way
+the clock metrics read `reference_fasta` directly, so `mu_truth` is unaffected.
+
+Also renamed in the gitignored `data/example_data/reference.fasta`, for local
+runs that point there. Historical files -- `experiments/*.snakemake.log`,
+notebook outputs, BeyondBaseline's `development_dialog.json` -- keep the old
+spelling as records of past runs.
+
+---
+
+## The reference is now byte-identical to ncov's (2026-10-03)
+
+`data/reference/reference.fasta` carries ncov's exact
+`references_sequences.fasta` record: the same 29,903 bases with the first 100
+and last 50 masked to `N` (md5 `bdb4ec6a5b30`). Previously ours was unmasked
+(`105c82802b67`), identical at every unmasked position but not byte-equal.
+
+So emitting the reference into an ncov build is now harmless rather than
+merely warned about -- whichever copy ncov keeps after deduping by strain is
+the same sequence. `nextstrain-config` says so instead of cautioning.
+
+### This changed the rate arithmetic
+
+`hamming_to_reference` skips any position that is not an unambiguous base on
+both sides, so divergence is measured over the **29,750 unmasked sites**, not
+29,903. The per-site rate therefore divides by the comparable-site count:
+dividing by the raw genome length would deflate it by 0.51% -- a systematic
+error, not noise.
+
+`comparable_sites` is now a function in `benchmark/clock.py`, and both numbers
+appear in the result row. Verified: the unit conversion round-trips exactly,
+and a synthetic run at a known 8.0e-4 recovers 7.85e-4 over a 300-day span
+(within seed-to-seed variation; an earlier run with different noise gave
+7.94e-4).
+
+### Doc correction
+
+`docs/clock_modes.md` claimed `mu_placed` -- the painter's own count of
+substitutions placed, as a saturation diagnostic -- was computed alongside
+`mu_truth`. It is not. Implementing it needs per-record accounting the painter
+does not do, so it is now marked **not implemented** in both the quantity
+table and comparison row 5.
