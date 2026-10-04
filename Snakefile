@@ -10,8 +10,14 @@
 # Stage numbering matches the results/ directory layout in the README.
 # ===========================================================================
 
+import json as _json
 import os
 from pathlib import Path
+
+try:                                    # the import path is stable, but do not
+    from snakemake.exceptions import WorkflowError   # die at parse time over it
+except ImportError:                     # pragma: no cover
+    WorkflowError = ValueError
 
 configfile: "config.yaml"
 
@@ -161,6 +167,18 @@ def _nextstrain_targets():
     return targets
 
 
+def _required_path(dotted: str) -> str:
+    """A config path that must be set, for use in an `input:` block.
+
+    An empty value reaching `input:` becomes a nameless missing file, so fail
+    at parse time naming the key instead.
+    """
+    value = str(cfg(dotted, "") or "").strip()
+    if not value:
+        raise WorkflowError(f"{dotted} is not set, and simulate_linelist requires it.")
+    return value
+
+
 rule all:
     """Default target: painted genomes plus every requested sampled subset."""
     input:
@@ -253,14 +271,16 @@ rule simulate_linelist:
     Provided by the TwinSampler package (installed via environment.yml).
     """
     input:
+        # Required by simulate_linelist, so inputs rather than params:
+        # Snakemake checks them when it builds the DAG.
         graph=cfg("epihiper.output_csv"),
         people=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
+        households=_required_path("population.household_file"),
+        rucc=_required_path("population.rucc_file"),
+        ascertain=_required_path("ascertainment.parameters"),
     output:
         linelist=LINELIST,
     params:
-        households=cfg("population.household_file", ""),
-        rucc=cfg("population.rucc_file", ""),
-        ascertain=cfg("ascertainment.parameters", ""),
         start_date=cfg("genetic_painter.start_date"),
         start_tick=cfg("genetic_painter.start_tick"),
         stop_tick=(cfg("genetic_painter.start_tick", 0) + cfg("genetic_painter.num_ticks", 0)),
@@ -278,15 +298,24 @@ rule simulate_linelist:
         region=LOCATION.get("region", "North America"),
         division=LOCATION.get("division", "Virginia"),
         division_abbr=LOCATION.get("divisionAbbr", "VA"),
+        # One variant only, applied before the time filter.
+        target_variant_arg=(
+            f" --target_variant {cfg('ascertainment.target_variant')}"
+            if str(cfg("ascertainment.target_variant", "") or "").strip() else ""),
+        prefix_override=_json.dumps(
+            cfg("ascertainment.prefix_override",
+                ["A", "P", "I", "dM", "hM"])),
     shell:
         "simulate_linelist --epihiper {input.graph} --people {input.people} "
-        "--households {params.households} --rucc {params.rucc} "
-        "--ascertain {params.ascertain} --start_date {params.start_date} "
+        "--households {input.households} --rucc {input.rucc} "
+        "--ascertain {input.ascertain} --start_date {params.start_date} "
         "--start_tick {params.start_tick} --stop_tick {params.stop_tick} "
         "--out {output.linelist} --seed {params.seed} --output_all_events "
         "--schedule_input {params.schedule} --variant_mode {params.variant_mode} "
         "--country {params.country:q} --region {params.region:q} "
-        "--division {params.division:q} --division_abbr {params.division_abbr:q}"
+        "--division {params.division:q} --division_abbr {params.division_abbr:q} "
+        "--prefix_override {params.prefix_override:q}"
+        "{params.target_variant_arg}"
 
 
 # --------------------------------------------------------------------------

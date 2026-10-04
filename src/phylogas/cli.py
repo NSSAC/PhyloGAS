@@ -1596,6 +1596,45 @@ def _resolve_stage(key, cfgkey, cfg):
     return None, None, None
 
 
+# Flags the Snakefile passes to simulate_linelist that older TwinSampler
+# builds do not accept. argparse rejects an unknown flag with exit status 2
+# and "unrecognized arguments", which names the flag but not the cause, so
+# `status` probes for it instead of letting a sweep discover it per job.
+_TS_REQUIRED_FLAGS = ("--division_abbr",)
+
+
+def _report_twinsampler() -> None:
+    """Report the TwinSampler CLI, and whether it is new enough.
+
+    PhyloGAS and TwinSampler are separate repos installed separately, so an
+    install can lag a PhyloGAS pull. Being on PATH is not enough: the
+    geography flags arrived in TwinSampler bf8e68b, and without them
+    `simulate_linelist` exits 2 before doing any work.
+    """
+    import shutil
+    import subprocess
+
+    label = "TwinSampler"
+    exe = shutil.which("simulate_linelist")
+    if exe is None:
+        print(f"  [MISS] {label:28s} simulate_linelist not on PATH")
+        print("         pip install -e /path/to/TwinSampler")
+        return
+    try:
+        helptext = subprocess.run([exe, "--help"], capture_output=True,
+                                  text=True, timeout=60).stdout
+    except Exception as exc:
+        print(f"  [MISS] {label:28s} simulate_linelist not runnable: {exc}")
+        return
+
+    stale = [f for f in _TS_REQUIRED_FLAGS if f not in helptext]
+    if stale:
+        print(f"  [MISS] {label:28s} too old: no {', '.join(stale)}")
+        print("         cd /path/to/TwinSampler && git pull && pip install -e .")
+    else:
+        print(f"  [okay] {label:28s} {exe}")
+
+
 def _report_nextstrain(cfg) -> None:
     """Report the external Nextstrain dependency: the checkout and the CLI.
 
@@ -1691,6 +1730,8 @@ def cmd_status(args) -> int:
             if note:
                 print(f"         {note}")
             missing.append((label, nxt.format(state=state, config=cfg_path)))
+
+    _report_twinsampler()
 
     if cfg.get("nextstrain.enabled", default=False):
         _report_nextstrain(cfg)

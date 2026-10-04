@@ -1375,3 +1375,242 @@ byte-identical to `data/reference/reference.fasta` (md5 `bdb4ec6a5b30...`).
 
 If a future build wants a clade anchor, it should belong to the variant being
 simulated; the comment in `reference_id.txt` now says so.
+
+## `status` now probes the TwinSampler version (2026-10-04)
+
+First cluster run of `simulate_linelist` through the Snakefile failed:
+
+```
+simulate_linelist: error: unrecognized arguments:
+  --country USA --region North America --division Virginia --division_abbr VA
+```
+
+Not a PhyloGAS bug. The geography flags are TwinSampler `bf8e68b`, pushed and
+on `origin/main`, but the cluster's TwinSampler install predated it. PhyloGAS
+and TwinSampler are separate repos installed separately, so a PhyloGAS pull
+can leave the sibling behind -- and a non-editable `pip install .` means even
+a TwinSampler `git pull` does not update the entry point.
+
+The failure mode is what makes this worth guarding. argparse exits 2 with
+"unrecognized arguments", which names the flags but not the cause, and it
+happens per job -- so a sweep discovers it once per arm rather than once.
+
+`phylogas status` now reports TwinSampler alongside the other dependencies,
+and being on PATH is not treated as sufficient: it runs
+`simulate_linelist --help` and checks for each flag in `_TS_REQUIRED_FLAGS`
+(currently `--division_abbr`, the newest of the four). Three states:
+
+| State | Reported |
+| --- | --- |
+| not installed | `[MISS] simulate_linelist not on PATH` + install hint |
+| installed, too old | `[MISS] too old: no --division_abbr` + pull-and-reinstall hint |
+| current | `[okay]` with the resolved path |
+
+Add to `_TS_REQUIRED_FLAGS` whenever the Snakefile starts passing a flag that
+an older TwinSampler would reject; that keeps the check honest without a
+version-number handshake between the two repos.
+
+## Versions derived from git in TwinSampler and BeyondBaseline (2026-10-04)
+
+Both declared `version = "0.1.0"` statically while being installed from git
+URLs. That is what let the cluster run a TwinSampler without the geography
+flags for eight hours after `bf8e68b` was pushed: `pip install --upgrade
+git+...@main` resolves the URL, finds the same 0.1.0 it already has, and
+no-ops. The install was stale and said nothing.
+
+Both now use setuptools-scm (`dynamic = ["version"]`, `setuptools-scm>=8` in
+build requires), so every commit is a distinct version and `--upgrade` has
+something to compare.
+
+### The tag is not optional, and v0.1.0 is the wrong tag
+
+Neither repo had any tags. Verified against PEP 440 with an installed 0.1.0:
+
+| situation | version produced | `pip install --upgrade` |
+| --- | --- | --- |
+| no tags at all | `0.1.devN+g<hash>` | **refused as a downgrade** |
+| tag HEAD `v0.1.0` | `0.1.0` | **already satisfied, still stale** |
+| tag HEAD `v0.2.0` | `0.2.0` | installs |
+| next commit after `v0.2.0` | `0.2.1.devN+g<hash>` | installs |
+
+So the no-tag default is strictly worse than the static version, and
+re-tagging the current state v0.1.0 reproduces the original no-op. v0.2.0 is
+also the honest number: new required CLI flags are an interface change.
+
+`fallback_version = "0.1.0.dev0+unknown"` covers a build with no git metadata.
+Neither repo reads its own `__version__` or uses `importlib.metadata`, so
+nothing at runtime depends on the value.
+
+## TwinSampler shipped without its county FIPS table (2026-10-04)
+
+With the geography flags finally installed, `simulate_linelist` got through
+46.8M events and 491,535 transmission chains, then died:
+
+```
+FileNotFoundError: .../envs/phylogas_env/lib/python3.11/Data/county_fips.csv
+```
+
+`demographics_module.py` built the path as
+`os.path.join(script_dir, "../../Data/county_fips.csv")`. In a checkout those
+two `..` land on the repo root. Installed, the package lives at
+`site-packages/linelist_generation/`, so they climb straight out of it into
+`lib/python3.11/`. The table was never declared as package data either, so it
+was absent from every non-editable install -- the path was wrong *and* the
+file was missing. Only an editable install from a full checkout ever worked,
+which is why this surfaced the moment the install was fixed.
+
+Three changes:
+
+| Change | Why |
+| --- | --- |
+| `Data/county_fips.csv` -> `scripts/linelist_generation/data/county_fips.csv` | package data has to live inside the package |
+| `[tool.setuptools.package-data] linelist_generation = ["data/*.csv"]` | so it travels into the wheel |
+| new `county_fips_path()` using `importlib.resources` | correct under installed, editable and run-as-script layouts; falls back to the pre-move location for an un-pulled checkout |
+
+Verified resolving both as an importable package and as a directly executed
+file: 3,235 rows, 134 of them Virginia -- consistent with the ~133 county
+states the mugration trait has to model.
+
+`simulate_linelist` now calls `county_fips_path()` immediately after
+`parse_args()`. The loader was previously constructed only after the whole
+EpiHiper file had been read and filtered, so a missing table cost six minutes
+before failing; now it is two seconds. `Data/get_county_table.py` writes to
+its own cwd, so the move does not affect the generator.
+
+## `county_fips` never existed, and RUCC had been silently skipped (2026-10-04)
+
+With the FIPS table finally installed, `simulate_linelist` reached the
+decoration step and raised `KeyError: 'county_fips'` at
+`simulate_linelist.py:138`.
+
+`county_fips` is read in six places in TwinSampler and **produced nowhere**.
+It was supposed to arrive from the input file, but
+`DemographicsLoader.COLUMN_MAPPINGS` mapped `admin2` -> `county`, so the
+column never existed under that name. Git says which side moved: `6b347ce`
+introduced the mapping to `county`, and the later `0073588` ("generate county
+name from county_fips") changed one line from
+
+```python
+decorated_df['county'] = decorated_df["county"].map(loader.fips_to_name_dict)...
+```
+
+to read `decorated_df["county_fips"]` instead -- pointing it at a column
+nothing creates.
+
+### The quieter half of the bug
+
+The RUCC merge immediately above it is guarded:
+
+```python
+if "county_fips" in decorated_df.columns:     # never true
+    ... merge rucc_df on county_fips ...
+print("Successfully decorated data with person, household, and RUCC info.")
+```
+
+That guard has never fired, so `rucc_code` was always absent -- while the
+print claimed RUCC had been merged. `ascertainment_module.py:71-91` derives
+`location_type` from `rucc_code` and falls back to a default when it is
+missing, so **every line list produced so far used the fallback**, including
+the one behind the current painted genomes and the 8.54e-4 clock measurement.
+Worth re-running once this lands; the ascertainment should now vary by
+rural/urban class as intended.
+
+### Fix
+
+The first diagnosis was wrong and is recorded here because the wrong fix looks
+plausible. Mapping `admin2 -> county_fips` assumes admin2 is a 5-digit county
+code. It is not. The real file shapes:
+
+```
+persontrait: pid,gender,county,home_latitude,...,hid,age,...
+             361190001,1,Accomack VA,37.93,...,159646428,50,...
+household:   admin1,admin2,admin3,admin4,hid,hh_size,...
+             51,1,90100,1,159646428,2,...
+```
+
+Three facts follow:
+
+1. **The persontrait file already has `county`, holding names** in exactly the
+   format of `county_fips.csv`'s own `county` column. No FIPS lookup is needed
+   to produce it; the names are the input, not the output.
+2. **The household file has no county column.** `admin1` is the 2-digit state
+   FIPS and `admin2` the county's code *within* that state -- 51 and 1 for
+   Accomack. The 5-digit code is the two concatenated and zero-padded
+   separately, `51` + `001`. Zero-padding admin2 alone, as the old code did,
+   turns county 1 into `00001` and matches nothing.
+3. **The original `admin2 -> county` mapping caused the collision.** Only the
+   household file has admin2, so renaming it to `county` made both frames
+   carry that column, and the merge on hid produced `county_x`/`county_y`,
+   leaving no `county`. That is why `decorated_df["county"]` failed and why
+   0073588 repointed it at `county_fips` instead of fixing the merge. This
+   path has never worked on this input.
+
+So `admin2` is no longer mapped at all, and a new `resolve_county()` resolves
+both columns explicitly: `county` is taken as given when the persontrait file
+supplies it, and `county_fips` is composed from admin1/admin2, falling back to
+reverse-mapping the county name through the same FIPS table when the admin
+columns are absent.
+
+| Guard | Catches |
+| --- | --- |
+| no county_fips, no admin1/admin2, no county name -> `KeyError` listing columns | an input shape none of the three strategies fit |
+| every composed code empty -> `ValueError` | admin columns present but unusable |
+| zero RUCC matches -> `ValueError` | the silent fallback to a default `location_type` |
+| county name disagrees with admin1+admin2 -> warning with examples | a wrong hid merge, which nothing else would reveal |
+| unmapped codes -> warning with a count | partial coverage hidden behind `.fillna("Unknown")` |
+
+The name/FIPS cross-check is the useful one: persontrait names and household
+admin codes are independent, so agreement is real evidence the hid merge is
+right. It is skipped when county_fips was reverse-mapped from the name, where
+agreement would be tautological.
+
+`_fips_part()` routes through `pd.to_numeric` before padding because a left
+merge leaves these as floats, and `str(51.0).zfill(2)` is `"51.0"`.
+
+### `skiprows=1` was dropping a person
+
+`process_epihiper` passes `skiprows=1`, but line 1 of the persontrait file is
+the header. Verified on the real header shape: the C engine promotes the first
+data row to be the header (`['361190001', '1', 'Accomack VA', ...]`), while
+pandas' pyarrow engine keeps the header and drops the first *person* instead.
+The run reached the county code at all, and printed no pyarrow warning, so it
+took the second path -- pid 361190001 has been silently missing from every
+line list, one record short with nothing failing.
+
+`DemographicsLoader` now checks whether line 1 names identifiers
+(`pid`/`hid`/`admin1`) and ignores `skiprows` when it does. Silently: skipping
+a line that names identifiers is never right, so there is no judgement call to
+report. The flag still works for files that really do open with a banner.
+
+All of these stay quiet when they pass. An earlier revision printed the header
+override and "county name and admin1+admin2 agree on all N rows" on every run,
+which is cruft -- the signal is the anomaly, and a line that always prints
+trains you to stop reading it. Only the warnings and the raises speak.
+
+Verified against both real file shapes: 3 persontrait rows in and 3 out,
+`county` surviving the hid merge, `51`+`001` -> `51001` and `51`+`059` ->
+`51059`, and the name/FIPS cross-check agreeing on every row. Float inputs,
+NaN from an unmatched merge, disagreeing names and a no-strategy frame all
+exercised.
+
+
+## Components spanned both variants; `target_variant` now wired (2026-10-04)
+
+`find_components` reported 491,535 chains against 3,641 importations because
+the component graph matched `startswith("E")` across both variants of
+EpiHiper's disease model, and variant 1 starts at tick 47 -- 81 ticks before
+the window, so its chains cross the start boundary and fragment. Measured:
+E2 first appears at tick 128 (the window start) with 3,306 in-window
+importations; E1 at tick 47 with 335. 3,306 + 335 = 3,641.
+
+Fixed by passing `--target_variant` (new `ascertainment.target_variant`) and
+`--prefix_override` (key existed, never passed), and by correcting
+TwinSampler's default `"dm"` -> `"dM"`, which prefixed no state and so dropped
+every death-medical event from the ascertainable set. Expect components to
+fall to ~3,306.
+
+Required file paths moved from `params:` to `input:` so Snakemake checks them
+at DAG build. A missing `ascertainment.parameters` previously surfaced only
+after the full EpiHiper pass -- eleven minutes to report an absent file. The
+file itself now lives at `data/ascertainment_parameters.yaml`, copied from
+TwinSampler, where it was unpackaged and so unreachable from an install.

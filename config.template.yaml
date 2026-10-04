@@ -252,6 +252,15 @@ ascertainment:
   # Variant assignment moved to PhyloGAS; TwinSampler now emits component_id
   # only. See benchmark.variant_mode below.
   variant_mode: "just_components"
+
+  # Which variant's states to keep. Applied before the time filter and before
+  # component labelling, so it also decides which variant the transmission
+  # components describe. Matched as "<variant>_" within the state name.
+  # Leave empty only for a single-variant run.
+  target_variant: 2
+
+  # Ascertainable state prefixes, matched with startswith. Keep the variant
+  # suffix in step with target_variant. Note dM, not dm.
   prefix_override: ["A2", "P2", "I2", "dM2", "hM2"]
   output: "{results_dir}/02_simulated_linelists/linelist.csv"
 
