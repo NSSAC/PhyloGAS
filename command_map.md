@@ -1354,3 +1354,24 @@ substitutions against a comparable seed-to-seed spread.
 - `--max-records` help now says it truncates in file order rather than
   sampling. It breaks out of the read loop, so on a tick-ordered FASTA it
   biases toward early infections.
+
+## `21L` removed from the reference context (2026-10-04)
+
+`cfg/nextstrain/references_*` and `reference_id.txt` carried a second record,
+`21L` (Omicron BA.2, dated 2021-11-01), added as a "clade anchor" when these
+files came over from the Omicron-era ncov configs (see the `reference_id.txt`
+row above).
+
+In a Delta-wave build it does not belong. Neither reference record has a
+`division`, so `strategy_focal_context`'s context query
+`division != '{division}'` selects both, and the tree gets a lone BA.2 tip five
+months after the simulation ends -- distorting the topology and pulling on the
+`inferred` clock rate.
+
+Removed from all three files. The root needs nothing extra: ncov's
+`combine_samples` always appends `files.include` (`defaults/include.txt`,
+which lists `Wuhan/Hu-1/2019`), and the Wuhan record is unchanged and still
+byte-identical to `data/reference/reference.fasta` (md5 `bdb4ec6a5b30...`).
+
+If a future build wants a clade anchor, it should belong to the variant being
+simulated; the comment in `reference_id.txt` now says so.

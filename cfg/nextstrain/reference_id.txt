@@ -2,11 +2,15 @@
 # names as they appear in references_metadata.tsv / references_sequences.fasta.
 #
 # Wuhan/Hu-1/2019 is what refine.root expects; if subsampling drops it the
-# tree cannot be rooted. 21L is the clade anchor.
+# tree cannot be rooted.
+#
+# No clade anchor. 21L (Omicron BA.2, 2021-11-01) came over from the
+# Omicron-era configs; in a Delta-wave build it was picked up as context,
+# putting a lone BA.2 tip five months after the simulation ends. Add an
+# anchor here only if it belongs to the variant being simulated.
 #
 # data/reference/reference.fasta carries this same id, so a painted FASTA
 # produced with genetic_painter.emit_reference is self-rooting. These ids are
 # also what `phylogas check-join` exempts from the metadata join, since they
 # are analysis context rather than simulated infections.
 Wuhan/Hu-1/2019
-21L
