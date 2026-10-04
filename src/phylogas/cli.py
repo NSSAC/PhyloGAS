@@ -586,10 +586,21 @@ def cmd_nextstrain_config(args) -> int:
     print(f"Wrote    : {out}")
 
     runner = str(cfg.get("nextstrain.runner", default="nextstrain"))
-    cmd = (f"nextstrain build {ns_dir} --configfile {arm_rel / 'config.yaml'}"
-           if runner == "nextstrain" else
-           f"snakemake --snakefile {ns_dir / 'Snakefile'} "
-           f"--configfile {ns_dir / arm_rel / 'config.yaml'} --cores all")
+    if runner == "nextstrain":
+        cmd = f"nextstrain build {ns_dir} --configfile {arm_rel / 'config.yaml'}"
+    else:
+        # --directory because ncov writes auspice/ and results/ relative to the
+        # working directory, not to the Snakefile. --use-conda because every
+        # ncov rule carries `conda: config["conda_environment"]`, which is
+        # inert without it -- and with it, ncov's own pinned augur/nextclade
+        # are used instead of whatever happens to be on PATH.
+        prefix = str(cfg.get("nextstrain.conda_prefix", default="") or "")
+        cmd = (f"snakemake --snakefile {ns_dir / 'Snakefile'} "
+               f"--directory {ns_dir} "
+               f"--configfile {ns_dir / arm_rel / 'config.yaml'} "
+               f"--use-conda "
+               + (f"--conda-prefix {prefix} " if prefix else "")
+               + "--cores all")
     print(f"\nRun with:\n  {cmd}")
     return 0
 

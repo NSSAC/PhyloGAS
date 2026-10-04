@@ -1168,3 +1168,54 @@ and it only works because ncov loads the user `--configfile` first and merges
 Recommended sequence, now in the README: installer -> `nextstrain setup
 <runtime>` -> `check-setup --set-default` -> `git clone ncov` -> set
 `nextstrain.dir`.
+
+## The three conda environments, and the snakemake runner fix (2026-10-03)
+
+Writing the install guidance surfaced a question we had not answered: the
+instructions now mention two conda environments (PhyloGAS's and the one
+`nextstrain setup conda` builds), so should they be unified? No -- and
+checking ncov turned up a third, plus a bug.
+
+| # | Environment | Owner | Holds |
+| --- | --- | --- | --- |
+| 1 | PhyloGAS | us | `phylogas`, pandas, scipy, sklearn, networkx, snakemake |
+| 2 | `$NEXTSTRAIN_HOME/runtimes/conda/env` | Nextstrain CLI | augur, auspice, nextclade |
+| 3 | `<ncov>/workflow/envs/nextstrain.yaml` | ncov | `augur=22.4.0`, `nextclade=3.9.0`, `iqtree=2.2.0.3`, `epiweeks=2.1.2` |
+
+Environment 3 was the one we had missed. Every rule in ncov's
+`main_workflow.smk` carries `conda: config["conda_environment"]`, which
+`ncov/Snakefile:132` absolutizes against the Snakefile's own directory. Those
+directives are **inert unless snakemake is run with `--use-conda`**, and
+`nextstrain build` does not pass it -- so under the CLI route environment 2
+serves augur and environment 3 is never materialized.
+
+Not merging is the right call: environment 2 is a managed artifact that
+`nextstrain update` rebuilds, and PhyloGAS never imports augur -- it shells out
+to `nextstrain build`. A subprocess boundary gains nothing from a shared
+environment and would force augur's numpy/pandas/biopython pins into the same
+solve as scipy and sklearn. The `ambient` runtime is the supported way to have
+one environment, and it is the trade we decline.
+
+### Two bugs in the snakemake runner
+
+The `runner: "snakemake"` branch had never worked:
+
+| Bug | Why |
+| --- | --- |
+| missing `--directory` | ncov writes `auspice/{prefix}_{build}.json` and `results/...` relative to **CWD**, not to the Snakefile. Run from the PhyloGAS project directory, ncov's outputs scatter into our tree and the rule's `cp {ns_dir}/auspice/*_{arm}.json` finds nothing. `nextstrain build <dir>` chdirs for us, which is why only this branch was affected |
+| missing `--use-conda` | without it the `conda:` directives are ignored and `augur`/`nextclade`/`iqtree` must be on the `PATH` of the PhyloGAS environment -- i.e. the branch silently *required* the env merge we just argued against. With it, ncov's own pins are used and environment 1 needs only snakemake plus conda |
+
+The `--configfile` is also now passed as `{ns_dir}/{rel_config}`, since
+`--configfile` resolves against the invocation CWD rather than `--directory`.
+
+### New key: `nextstrain.conda_prefix`
+
+`--use-conda` re-solves environment 3 per working directory, which is a
+multi-GB solve we do not want repeated per arm. The key maps to
+`--conda-prefix` (the same thing `SNAKEMAKE_CONDA_PREFIX` sets); empty means
+let snakemake decide (`.snakemake/conda` under the ncov checkout). Only read by
+the snakemake runner.
+
+`NEXTSTRAIN_HOME` is documented in the README for the same class of reason --
+environment 2 is multi-GB and `~/.nextstrain` is the wrong place for it on a
+cluster with a quota'd or non-shared `$HOME`.

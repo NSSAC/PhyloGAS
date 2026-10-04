@@ -138,7 +138,7 @@ is why the config names a directory rather than hardcoding ncov.
 > afterwards.
 
 **Bypassing the CLI.** If you would rather drive ncov's Snakefile directly —
-already-activated conda environment, site Snakemake profile, your own cluster
+already-activated environment, site Snakemake profile, your own cluster
 submission — set:
 
 ```yaml
@@ -149,6 +149,49 @@ nextstrain:
 PhyloGAS then invokes `snakemake` in the ncov directory instead of
 `nextstrain build`, and the CLI is not needed at all. The default is
 `"nextstrain"`.
+
+#### How many conda environments is this, really?
+
+Three, and keeping them separate is deliberate:
+
+| Environment | Owned by | Holds |
+| --- | --- | --- |
+| PhyloGAS | you | `phylogas`, pandas, scipy, scikit-learn, networkx, snakemake |
+| `$NEXTSTRAIN_HOME/runtimes/conda/env` | the Nextstrain CLI | augur, auspice, nextclade — built by `nextstrain setup conda` |
+| `<ncov>/workflow/envs/nextstrain.yaml` | ncov | pinned `augur`, `nextclade`, `iqtree`, `epiweeks` |
+
+Do not try to merge them. The CLI's runtime is a managed artifact at a
+CLI-chosen path, and `nextstrain update` rebuilds it — anything you install
+there disappears. More to the point, PhyloGAS never *imports* augur: it shells
+out to `nextstrain build`. The coupling is a subprocess boundary, so one
+environment buys nothing and costs you a shared dependency solve in which
+augur's numpy/pandas/biopython pins have to satisfy scipy and scikit-learn too.
+
+Which of the three is live depends on the runner:
+
+- **`runner: "nextstrain"`** (default) — the CLI's runtime provides augur.
+  ncov's per-rule `conda:` directives are inert, because `nextstrain build`
+  does not pass `--use-conda`. Environments 1 and 2; PhyloGAS needs only
+  `nextstrain` on `PATH`.
+- **`runner: "snakemake"`** — PhyloGAS passes `--use-conda`, so snakemake
+  builds environment 3 from ncov's own pinned spec. Environments 1 and 3, and
+  the CLI is not installed at all. PhyloGAS's environment needs `snakemake`
+  and a working `conda`/`mamba`, *not* augur.
+
+That second case is why `--use-conda` is passed rather than left off: without
+it, `augur`, `nextclade` and `iqtree` would have to be on the `PATH` of the
+PhyloGAS environment, which is exactly the merge described above. With it,
+ncov's pins stay in ncov's environment.
+
+Two environment variables worth setting on a cluster:
+
+- **`SNAKEMAKE_CONDA_PREFIX`** (or `nextstrain.conda_prefix`, which maps to
+  `--conda-prefix`). Without a shared prefix, `--use-conda` re-solves
+  environment 3 per working directory. Point it at one path and the solve
+  happens once and is reused across every arm and every sweep.
+- **`NEXTSTRAIN_HOME`** — relocates environment 2, which is multi-GB. Set it
+  to scratch or project space if `$HOME` is quota'd or is not mounted on
+  compute nodes. (`NEXTSTRAIN_RUNTIMES` moves just the runtimes.)
 
 Per arm, PhyloGAS renders and validates a config of its own:
 

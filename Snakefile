@@ -336,6 +336,12 @@ if cfg("nextstrain.enabled", False):
     NS_DIR    = cfg("nextstrain.dir", "")
     NS_STAGE  = cfg("nextstrain.stage_subdir", "data/phylogas")
     NS_RUNNER = cfg("nextstrain.runner", "nextstrain")
+    # Only meaningful for runner: snakemake. Snakemake builds ncov's own
+    # workflow/envs/nextstrain.yaml per working directory unless told to share
+    # one prefix, and that env is a multi-GB solve we do not want repeated per
+    # arm. Empty means "let snakemake decide" (.snakemake/conda under the ncov
+    # checkout).
+    NS_CONDA_PREFIX = cfg("nextstrain.conda_prefix", "")
     NS_OUT    = cfg("nextstrain.outdir", f"{RESULTS}/04_nextstrain_builds")
 
     # nextstrain.builds decides which arms exist. A `strategy` entry expands to
@@ -419,13 +425,21 @@ if cfg("nextstrain.enabled", False):
             ns_dir=NS_DIR,
             rel_config=f"{NS_STAGE}/{{arm}}/config.yaml",
             runner=NS_RUNNER,
+            conda_prefix=(f"--conda-prefix {NS_CONDA_PREFIX}"
+                          if NS_CONDA_PREFIX else ""),
         threads: 8
         shell:
             r"""
             if [ "{params.runner}" = "nextstrain" ]; then
-                nextstrain build {params.ns_dir}                     --configfile {params.rel_config}                     --cores {threads} --rerun-incomplete
+                nextstrain build {params.ns_dir} \
+                    --configfile {params.rel_config} \
+                    --cores {threads} --rerun-incomplete
             else
-                snakemake --snakefile {params.ns_dir}/Snakefile                     --configfile {input.configfile}                     --cores {threads} --rerun-incomplete
+                snakemake --snakefile {params.ns_dir}/Snakefile \
+                    --directory {params.ns_dir} \
+                    --configfile {params.ns_dir}/{params.rel_config} \
+                    --use-conda {params.conda_prefix} \
+                    --cores {threads} --rerun-incomplete
             fi
             mkdir -p $(dirname {output.auspice})
             cp {params.ns_dir}/auspice/*_{wildcards.arm}.json {output.auspice}

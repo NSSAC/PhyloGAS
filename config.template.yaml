@@ -284,8 +284,18 @@ nextstrain:
   # (docker / conda / singularity / ambient) from
   #   nextstrain setup <runtime> && nextstrain check-setup --set-default
   # so the same config works on a laptop and on the cluster. "snakemake"
-  # bypasses the CLI and needs the full ncov environment already active.
+  # bypasses the CLI and drives ncov's Snakefile directly.
   runner: "nextstrain"
+
+  # Only used by runner: "snakemake". That path passes --use-conda, so every
+  # ncov rule runs in ncov's own pinned environment
+  # (workflow/envs/nextstrain.yaml: augur, nextclade, iqtree) rather than
+  # needing those on PATH beside PhyloGAS. Snakemake otherwise rebuilds that
+  # environment per working directory; set a shared prefix so the solve
+  # happens once and is reused across arms and sweeps. Maps to
+  # --conda-prefix, the same thing SNAKEMAKE_CONDA_PREFIX sets.
+  #   conda_prefix: "/scratch/$USER/snakemake-conda"
+  conda_prefix: ""
 
   # Where, inside the ncov checkout, `phylogas nextstrain-config` stages this
   # project's inputs and writes each arm's config. It stages rather than
