@@ -70,10 +70,14 @@ phylogas --help
 
 ### Optional: Nextstrain, for the phylodynamic stage
 
-Only needed for `nextstrain.enabled: true`. Two pieces, and installing one does
-not bring the other.
+Only needed for `nextstrain.enabled: true`. **Two things, both required**: the
+Nextstrain CLI *and* a clone of the ncov workflow. Installing the CLI does not
+get you the workflow, and `nextstrain check-setup` passing says nothing about
+whether you have one — it checks runtimes, not pathogens. That is the usual
+place people get stuck.
 
-**1. The CLI**, which runs the workflow:
+**1. The CLI** — the tooling layer (`augur`, `auspice`, `nextclade`, and the
+runtime that hosts them):
 
 ```bash
 # Linux / WSL
@@ -85,13 +89,23 @@ nextstrain setup conda        # or: docker, singularity, ambient, aws-batch
 nextstrain check-setup --set-default
 ```
 
-Going through the CLI rather than a hand-built conda environment is deliberate:
-`check-setup --set-default` picks the runtime, so one config runs unchanged on a
+Going through the CLI rather than a hand-built environment is deliberate:
+`--set-default` records the runtime, so one PhyloGAS config runs unchanged on a
 laptop with Docker and on an HPC with Singularity or conda. PhyloGAS only needs
 `nextstrain` on `PATH` — it never has to know which runtime you chose.
 
-**2. The ncov workflow**, which is a separate clone. ncov ships no
-`nextstrain-pathogen.yaml`, so it is not a CLI-managed pathogen:
+Two notes on runtime choice:
+
+- `nextstrain setup conda` has the CLI build and own a conda environment for
+  you. This is the usual choice on a cluster where Docker is unavailable.
+- `ambient` means "whatever environment Nextstrain CLI is itself running in",
+  i.e. *you* manage it. Pick this only if you have already conda-installed
+  `augur`/`auspice` yourself and want the CLI to use them as-is. If you ran
+  `nextstrain setup conda`, you want `conda`, not `ambient`.
+
+**2. The ncov workflow** — the analysis layer, a separate clone. ncov ships no
+`nextstrain-pathogen.yaml`, so it is not a CLI-managed pathogen and
+`nextstrain setup` will not fetch it:
 
 ```bash
 git clone https://github.com/nextstrain/ncov.git
@@ -105,11 +119,38 @@ nextstrain:
   dir: "/path/to/ncov"
 ```
 
-`phylogas status` reports both pieces and tells you which step is outstanding.
-Note each pathogen is its own workflow repository (ncov, measles, avian-flu…),
-which is why the config names the directory rather than hardcoding ncov.
+The clone is not a formality. PhyloGAS's `cfg/nextstrain/ncov/base.yaml` is a
+*deviations* file: it overrides 2 of ncov's 13 `files` entries and leaves 15 of
+20 top-level config keys untouched, so the run depends on ncov's own
+`defaults/parameters.yaml`, its reference and annotation, its clade and colour
+tables, and its workflow rules and scripts. ncov's config merge loads your
+`--configfile` first and then merges `defaults/parameters.yaml` underneath it,
+which is what makes a deviations file work.
 
-Per arm, PhyloGAS then renders and validates a config of its own:
+`phylogas status` reports both pieces and tells you which one is outstanding.
+Each pathogen is its own workflow repository (ncov, measles, avian-flu…), which
+is why the config names a directory rather than hardcoding ncov.
+
+> **Network at build time.** ncov's main workflow runs
+> `nextclade dataset get --name sars-cov-2`, so the first build needs outbound
+> network from wherever the workflow executes. On a compute node without egress,
+> fetch the dataset on a login node first (or pre-populate the cache) and submit
+> afterwards.
+
+**Bypassing the CLI.** If you would rather drive ncov's Snakefile directly —
+already-activated conda environment, site Snakemake profile, your own cluster
+submission — set:
+
+```yaml
+nextstrain:
+  runner: "snakemake"
+```
+
+PhyloGAS then invokes `snakemake` in the ncov directory instead of
+`nextstrain build`, and the CLI is not needed at all. The default is
+`"nextstrain"`.
+
+Per arm, PhyloGAS renders and validates a config of its own:
 
 ```bash
 phylogas nextstrain-config --config config.yaml --build-type strategy --algo surs

@@ -1126,3 +1126,45 @@ substitutions placed, as a saturation diagnostic -- was computed alongside
 `mu_truth`. It is not. Implementing it needs per-record accounting the painter
 does not do, so it is now marked **not implemented** in both the quantity
 table and comparison row 5.
+
+## Install guidance: two layers, both required (2026-10-03)
+
+The README's "Optional: Nextstrain" section was correct but understated, and
+the failure mode it did not guard against is the common one: install the CLI,
+watch `nextstrain check-setup` pass, and then be baffled that there is no
+workflow to run. `check-setup` selects and validates a **runtime**; it never
+obtains a **pathogen workflow**. ncov ships no `nextstrain-pathogen.yaml`, so
+`nextstrain setup` will not fetch it either. The clone is mandatory.
+
+It is also not a formality. Checked against a local ncov clone:
+
+| Inherited from ncov | Extent |
+| --- | --- |
+| `files` entries | `base.yaml` overrides 2 of 13 -- we take `include`, `exclude` (360 KB), `reference_seq.gb`, `reference_seq.fasta`, `annotation.gff`, `color_ordering.tsv` (669 KB), `color_schemes.tsv` (3.9 MB), `description.md`, `clades.tsv`, `clade_display_names.yml`, `sites_ignored_for_tree_topology.txt` |
+| top-level config keys | 15 of 20 untouched (`ancestral`, `genes`, `mask`, `tree`, `priorities`, `frequencies`, `nextclade_dataset`, `sanitize_metadata`, `strip_strain_prefixes`, ...) |
+| `defaults/` | 5.6 MB |
+| scripts and rules | 32 scripts plus the workflow itself |
+
+So `cfg/nextstrain/ncov/base.yaml` is a deviations file in the strict sense,
+and it only works because ncov loads the user `--configfile` first and merges
+`defaults/parameters.yaml` underneath it.
+
+### Three things now stated that were not
+
+- **`ambient` vs `conda`.** `ambient` is "whatever environment Nextstrain CLI
+  is itself running in" -- user-managed. Someone who ran
+  `nextstrain setup conda` wants `conda`; `ambient` is for someone who
+  conda-installed `augur`/`auspice` themselves. Relevant for cluster testing,
+  where conda is the realistic runtime.
+- **`nextstrain.runner: "snakemake"`.** Already implemented (Snakefile:338,
+  `cli.py:588`) but undocumented. Bypasses the CLI entirely and calls
+  `snakemake` in the ncov directory, for an already-activated environment or a
+  site Snakemake profile.
+- **Build-time network.** `workflow/snakemake_rules/main_workflow.smk:473` runs
+  `nextclade dataset get --name sars-cov-2`. A compute node without egress will
+  fail there, so the dataset has to be fetched on a login node first. This is
+  not a PhyloGAS requirement and cannot be configured away from our side.
+
+Recommended sequence, now in the README: installer -> `nextstrain setup
+<runtime>` -> `check-setup --set-default` -> `git clone ncov` -> set
+`nextstrain.dir`.
