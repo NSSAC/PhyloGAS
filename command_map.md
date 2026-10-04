@@ -1603,7 +1603,14 @@ the window, so its chains cross the start boundary and fragment. Measured:
 E2 first appears at tick 128 (the window start) with 3,306 in-window
 importations; E1 at tick 47 with 335. 3,306 + 335 = 3,641.
 
-Fixed by passing `--target_variant` (new `ascertainment.target_variant`) and
+`ascertainment.target_variant` defaults to the variant token in
+`genetic_painter.painted_prefix` ("E2" -> "2") rather than to empty. An
+existing config therefore needs no new key, and the painter and the line list
+cannot drift into describing different epidemics -- a missing key would
+otherwise have silently restored the both-variants behaviour. The key remains
+available as an override.
+
+Fixed by passing `--target_variant` (derived, see above) and
 `--prefix_override` (key existed, never passed), and by correcting
 TwinSampler's default `"dm"` -> `"dM"`, which prefixed no state and so dropped
 every death-medical event from the ascertainable set. Expect components to

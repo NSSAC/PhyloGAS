@@ -253,11 +253,13 @@ ascertainment:
   # only. See benchmark.variant_mode below.
   variant_mode: "just_components"
 
-  # Which variant's states to keep. Applied before the time filter and before
-  # component labelling, so it also decides which variant the transmission
-  # components describe. Matched as "<variant>_" within the state name.
-  # Leave empty only for a single-variant run.
-  target_variant: 2
+  # Which variant's states to keep. Applied before the time filter and
+  # before component labelling, so it also decides which variant the
+  # transmission components describe. Matched as "<variant>_" within the
+  # state name. Defaults to the variant token in
+  # genetic_painter.painted_prefix, so the painter and the line list cannot
+  # describe different epidemics. Set it only to override that.
+  #   target_variant: 2
 
   # Ascertainable state prefixes, matched with startswith. Keep the variant
   # suffix in step with target_variant. Note dM, not dm.

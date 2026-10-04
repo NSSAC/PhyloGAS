@@ -167,6 +167,23 @@ def _nextstrain_targets():
     return targets
 
 
+def _target_variant() -> str:
+    """Which variant's states to keep.
+
+    Defaults to the variant token in genetic_painter.painted_prefix ("E2" ->
+    "2") so the painter and the line list cannot end up describing different
+    epidemics, and so an existing config needs no new key. Empty for a
+    single-variant model whose states carry no variant token.
+    """
+    explicit = str(cfg("ascertainment.target_variant", "") or "").strip()
+    if explicit:
+        return explicit
+    painted = str(cfg("genetic_painter.painted_prefix", "") or "")
+    m = re.search(r"(\d+)$", painted)
+    return m.group(1) if m else ""
+
+
+
 def _required_path(dotted: str) -> str:
     """A config path that must be set, for use in an `input:` block.
 
@@ -299,9 +316,8 @@ rule simulate_linelist:
         division=LOCATION.get("division", "Virginia"),
         division_abbr=LOCATION.get("divisionAbbr", "VA"),
         # One variant only, applied before the time filter.
-        target_variant_arg=(
-            f" --target_variant {cfg('ascertainment.target_variant')}"
-            if str(cfg("ascertainment.target_variant", "") or "").strip() else ""),
+        target_variant_arg=(f" --target_variant {_target_variant()}"
+                            if _target_variant() else ""),
         prefix_override=_json.dumps(
             cfg("ascertainment.prefix_override",
                 ["A", "P", "I", "dM", "hM"])),
