@@ -659,8 +659,9 @@ if cfg("nextstrain.enabled", False):
                     --cores {threads} --rerun-incomplete
             fi
             mkdir -p $(dirname {output.auspice})
-            # Not *_{arm}.json: that also matches the _tip-frequencies and
-            # _root-sequence siblings, which would cp three files onto one path.
+            # Spelled out rather than globbed on the arm suffix: a glob also
+            # matches the _tip-frequencies and _root-sequence siblings, which
+            # would cp three files onto one destination path.
             cp {params.ns_dir}/auspice/{params.json_prefix}_{params.project}_{wildcards.arm}.json \
                {output.auspice}
             """
