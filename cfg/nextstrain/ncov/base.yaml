@@ -41,8 +41,29 @@ filter:
   # the subsampling scheme below.
 
 refine:
-  # Deviations from ncov: coalescent opt -> skyline, clock_filter_iqd 8 -> 4.
-  coalescent: "skyline"
+  # Deviations from ncov: clock_filter_iqd 8 -> 4. The coalescent stays on
+  # ncov's "opt".
+  #
+  # This was "skyline" until a 14,400-tip surs build failed in TreeTime:
+  #   Coalescent:optimize_skyline:...failed: message: Iteration limit
+  #   success: False  status: 9  nit: 100  nfev: 2214
+  # The fit was flat, not divergent -- finite objective, order-1 gradients,
+  # still inching when it hit the 100-iteration cap. Skyline fits a
+  # piecewise-constant Ne trajectory, and at ~8e-4 subs/site/year over a
+  # 36-week window most internal branches are near zero and many sequences are
+  # identical, so adjacent brackets are barely distinguishable and the
+  # likelihood has no gradient to climb. "opt" fits a single effective size and
+  # is identifiable on this tree shape.
+  #
+  # Not a clock misspecification: mu_truth measured 8.5443e-04 against the
+  # 0.0008 prior, which with clock_std_dev 0.0004 is 0.14 SD out.
+  #
+  # Nothing downstream reads the coalescent trajectory -- the clock comparison
+  # re-runs refine on its own, and the mugration and prevalence metrics do not
+  # use coalescent priors. Comparing the skyline Ne curve against the ABM's
+  # true incidence would be a real analysis and would want skyline back, but it
+  # does not exist yet.
+  coalescent: "opt"
   clock_filter_iqd: 4
 
   # clock_rate / clock_std_dev are deliberately NOT set, which means ncov's

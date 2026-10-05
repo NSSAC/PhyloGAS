@@ -140,6 +140,28 @@ Running the generative mode on a `strategy` arm and reporting the result as
 through that sampling strategy*. On the `all_infections` arm the rate is a
 property of the simulation. Same command, different claim.
 
+### Why `--arm` does not currently change `mu_truth`
+
+In `truth` mode `--arm` is only a label on the output row. `_benchmark_clock`
+defaults its FASTA to `genetic_painter.output_prefix`.sequences.fasta -- the
+*full painted set* -- so `mu_truth` is simulation-wide whatever arm it is filed
+under, and the Snakefile's per-arm loop writes the same value once per arm.
+
+That is the right number, but it is right by default rather than by design, and
+the trap above makes it look as though the arm were doing the work. Two
+consequences worth knowing before anyone "fixes" it:
+
+- Pointing that default at an arm's subset would silently turn every `mu_truth`
+  row into the sampler-dependent quantity this section warns against.
+- `mu_sim` (`inferred`) *does* depend on the arm, because it re-runs refine on
+  that arm's build directory. So one row of the CSV varies by arm and the other
+  does not, which is correct but reads as an inconsistency.
+
+Row 1 of the table wants `all_infections` for `mu_sim`, not for `mu_truth`. If
+`nextstrain.builds` has no `all_infections` entry -- it is commented out by
+default -- then `mu_sim` is only ever measured on sampled arms, and row 1's
+comparison cannot be made. `mu_truth` is unaffected.
+
 ---
 
 ## 4. Applying this to real surveillance
