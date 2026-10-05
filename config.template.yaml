@@ -264,7 +264,10 @@ ascertainment:
   # Ascertainable state prefixes, matched with startswith. Keep the variant
   # suffix in step with target_variant. Note dM, not dm.
   prefix_override: ["A2", "P2", "I2", "dM2", "hM2"]
-  output: "{results_dir}/02_simulated_linelists/linelist.csv"
+  # The extension decides compression: .csv.xz writes xz, .csv writes
+  # plain. 1.5M rows is worth compressing, and pandas reads it back
+  # transparently downstream.
+  output: "{results_dir}/02_simulated_linelists/linelist.csv.xz"
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +279,18 @@ sampling:
   replicates: 5
   no_replacement: true
   outdir: "{results_dir}/03_sampled_datasets"
+
+  # Which recipe feeds the Nextstrain tree. A recipe is one
+  # (scenario x algorithm) pair; BeyondBaseline runs every scenario per call
+  # and names each sample file after the recipe. Ids are its own --
+  # `scenarios-recipes` prints the index, and the string here must match one.
+  #
+  # STUB, not fully wired. Only the scenario half of the first entry is used,
+  # paired with each algorithm in `algorithms` above, so there is one tree per
+  # algorithm. To honour the list properly -- several recipes, or "all" -- a
+  # {recipe} wildcard has to run through subset_fasta and nextstrain.builds so
+  # that a tree exists per recipe rather than per algorithm.
+  nextstrain_recipes: ["4S-4_LL-P__surs"]
 
 
 # ---------------------------------------------------------------------------

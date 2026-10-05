@@ -184,6 +184,68 @@ def _target_variant() -> str:
 
 
 
+def _scenario_slugs() -> list:
+    """Scenario slugs BeyondBaseline writes a sample file for, per algorithm.
+
+    A recipe id is "<scenario slug>__<algorithm slug>" and the {algo} wildcard
+    already carries the algorithm slug, so these compose into output templates
+    without needing an input function. Read from BeyondBaseline's registry so
+    the two cannot drift; falls back to the configured scenario alone when it
+    is not importable, which keeps the DAG buildable with PhyloGAS only.
+    """
+    try:
+        from scenarios_simulation.recipes import all_recipes, split_recipe
+    except ImportError:
+        return [_ns_scenario_slug()]
+    return sorted({split_recipe(r)[0] for r in all_recipes()},
+                  key=lambda x: (len(x), x))
+
+
+def _ns_scenario_slug() -> str:
+    """Scenario half of the recipe carried into the phylodynamic stage.
+
+    STUB. Only the first configured recipe is honoured, and only its scenario
+    half: it is paired with each entry of sampling.algorithms, so there is one
+    tree per algorithm rather than per recipe. Selecting recipes individually,
+    or "all", needs a {recipe} wildcard threaded through subset_fasta and
+    nextstrain.builds -- see sampling.nextstrain_recipes in the config.
+    """
+    recipes = cfg("sampling.nextstrain_recipes", []) or []
+    if isinstance(recipes, str):
+        recipes = [recipes]
+    if not recipes:
+        raise WorkflowError(
+            'sampling.nextstrain_recipes is empty. Set it to a recipe id from '
+            '`scenarios-recipes`, e.g. ["4S-4_LL-P__surs"].')
+    first = str(recipes[0])
+    if "__" not in first:
+        raise WorkflowError(
+            f"sampling.nextstrain_recipes[0] is {first!r}, which is not a "
+            f"recipe id. Expected '<scenario>__<algorithm>' as printed by "
+            f"`scenarios-recipes`.")
+    return first.split("__", 1)[0]
+
+
+def _pkg_version(dist: str) -> str:
+    """Installed version of a sibling package, for use as a rule `params`.
+
+    Snakemake invalidates an output when a rule's params change, but it tracks
+    files -- not the code that produced them. TwinSampler and BeyondBaseline
+    are installed separately, so reinstalling one left its outputs looking
+    current: a line list built with a swapped age map, or samples keyed on an
+    all-NaN denominator, both survived a rerun untouched and had to be deleted
+    by hand. Both now derive their version from git, so every commit changes
+    this string and the affected stage rebuilds on its own.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(dist)
+    except PackageNotFoundError:
+        # The rule's own command will fail with something clearer.
+        return "absent"
+
+
 def _required_path(dotted: str) -> str:
     """A config path that must be set, for use in an `input:` block.
 
@@ -194,6 +256,12 @@ def _required_path(dotted: str) -> str:
     if not value:
         raise WorkflowError(f"{dotted} is not set, and simulate_linelist requires it.")
     return value
+
+
+# Resolved once: scenario slugs are config- and registry-derived, not
+# wildcard-derived.
+_SCENARIO_SLUGS = _scenario_slugs()
+_NS_SCENARIO_SLUG = _ns_scenario_slug()
 
 
 rule all:
@@ -321,6 +389,9 @@ rule simulate_linelist:
         prefix_override=_json.dumps(
             cfg("ascertainment.prefix_override",
                 ["A", "P", "I", "dM", "hM"])),
+        # Not passed to the command; present so a TwinSampler reinstall
+        # invalidates this line list.
+        twin_sampler_version=_pkg_version("twin-sampler"),
     shell:
         "simulate_linelist --epihiper {input.graph} --people {input.people} "
         "--households {input.households} --rucc {input.rucc} "
@@ -346,12 +417,19 @@ rule sample_scenarios:
         linelist=LINELIST,
         population=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
     output:
-        samples=f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz",
+        # One file per scenario: BeyondBaseline runs the whole sweep per
+        # invocation, so all of them are declared rather than left as
+        # untracked siblings of a single named output.
+        samples=[f"{SAMPLE_DIR}/{slug}__{{algo}}_samples.csv.xz"
+                 for slug in _SCENARIO_SLUGS],
     params:
         outdir=SAMPLE_DIR,
         batch=cfg("sampling.batch_size", 400),
         seed=cfg("random_seed", 42),
         norepl="--no-replacement" if cfg("sampling.no_replacement", True) else "",
+        # Not passed to the command; present so a BeyondBaseline reinstall
+        # invalidates these samples.
+        beyond_baseline_version=_pkg_version("beyond-baseline"),
     shell:
         "scenarios-runner --linelist {input.linelist} "
         "--population {input.population} --outdir {params.outdir} "
@@ -366,7 +444,8 @@ rule subset_fasta:
     """Pull the selected strains out of the full ground-truth FASTA."""
     input:
         fasta=PAINTED_FASTA,
-        samples=f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz",
+        # The one recipe carried into the tree, not all six.
+        samples=f"{SAMPLE_DIR}/{_NS_SCENARIO_SLUG}__{{algo}}_samples.csv.xz",
     output:
         fasta=f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}",
     shell:

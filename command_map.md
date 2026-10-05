@@ -1621,3 +1621,212 @@ at DAG build. A missing `ascertainment.parameters` previously surfaced only
 after the full EpiHiper pass -- eleven minutes to report an absent file. The
 file itself now lives at `data/ascertainment_parameters.yaml`, copied from
 TwinSampler, where it was unpackaged and so unreachable from an install.
+
+## Ascertainment age bands were wrong for two of five strata (2026-10-04)
+
+`ascertainment_module._map_abm_state_to_model_inputs` mapped EpiHiper state
+suffixes to the age bands the ascertainment parameters are keyed on:
+
+```python
+age_map = {'p': '0-17', 'a': '18-49', 'o': '50-64', 's': '65+'}
+```
+
+The disease model states the real meanings in its own `ann:label` fields:
+
+| code | `ann:label` | correct band | was | multiplier error |
+| --- | --- | --- | --- | --- |
+| `_p` | preschool (0-4) | 0-17 | 0-17 | - |
+| `_s` | school-aged (5-17) | 0-17 | **65+** | **3.58x too high** |
+| `_a` | adult (18-49) | 18-49 | 18-49 | - |
+| `_o` | older adult (50-64) | 50-64 | 50-64 | - |
+| `_g` | golden-aged (65+) | 65+ | **unmapped -> 18-49** | **2.15x too low** |
+
+The two extreme classes were effectively swapped, in the two largest
+multipliers the model has (0.60 and 2.15). Same provenance as the `dm` typo:
+an older state diagram where `s` meant senior and `_g` did not exist.
+
+This is not cosmetic. It changes *who enters the line list*, so every sampling
+strategy was drawing from a pool that over-represented school-age children and
+under-represented over-65s -- which lands directly on the equity evaluations
+and any age-stratified comparison. Every line list produced before this is
+affected.
+
+Fixed, with the mapping now stated as `AGE_CODE_TO_BAND` alongside the labels
+it comes from, and an unknown code raising instead of defaulting -- silent
+defaulting is exactly how `_g` went unnoticed. Severity classification is
+unchanged and verified across A/P/I/hM/dM/Vent/D/R states.
+
+The authoritative answer was in `disease.json` all along, which is the
+argument for the disease-model binding: parse the labels rather than
+transcribe them.
+
+## `--out` was silently renamed, so Snakemake saw its output as missing (2026-10-04)
+
+`simulate_linelist` finished the work -- 1,506,801 rows -- then failed:
+
+```
+Wrote 1,506,801 rows to .../linelist.csv.xz for seed 43
+MissingOutputException ... results/va_delta_wave/02_simulated_linelists/linelist.csv (missing locally)
+```
+
+It always compressed, appending ".xz" to a path ending in ".csv", so a caller
+declaring `linelist.csv` as its output never saw the file it asked for.
+
+`--out` is now honoured as given, with compression taken from the extension
+(`.csv.xz` -> xz, `.csv.gz` -> gzip, `.csv` -> plain). Two latent bugs went
+with it, both from stripping ".csv" by string replacement:
+
+| path | was | now |
+| --- | --- | --- |
+| per-seed name from `linelist.csv.xz` | `linelist_seed43.csv.xz.xz` | `linelist_seed43.csv.xz` |
+| sibling artefacts from `linelist.csv.xz` | `linelist.xz_mugration.json` | `linelist_mugration.json` |
+
+`_split_csv_suffix` handles the stem, compression and extension in one place.
+
+`ascertainment.output` in the template is now `linelist.csv.xz`, asking for
+compression explicitly; `pd.read_csv` in BeyondBaseline reads it by extension,
+so nothing downstream changes. An existing config saying `.csv` still works
+and simply writes plain CSV.
+
+## BeyondBaseline could not key its population denominator (2026-10-04)
+
+`scenarios-runner` crashed on `KeyError: 'county_fips'` while building the
+group key for the population frame. The stratifiers are TwinSampler's
+normalized names (`age_group`, `smh_race`, `county_fips`, `sex`) but
+BeyondBaseline reads the raw persontrait CSV, which has `county` and `gender`.
+
+Two problems, one visible and one not.
+
+### county_fips does not exist on the population side
+
+The line list has it because TwinSampler composes it from the household
+file's `admin1`+`admin2`. The persontrait file alone cannot supply it. Both
+frames do carry `county` as a name, from the same column of the same file, so
+the stratifier alias now resolves to `county` -- values match by construction
+and no FIPS derivation is needed.
+
+### smh_race became all-NaN in the denominator
+
+```python
+pop_df["smh_race"] = pop_df["smh_race"].astype(str).map(
+    {"W": "White", "B": "Black", "L": "Latino", "A": "Asian", "O": "Other"})
+```
+
+The persontrait file already holds expanded names (`smh_race` = "White"),
+which are not keys in that dict, and `.map()` without a fallback yields NaN.
+So every population row's race was NaN while the line list kept "White" --
+the group keys could never match, and each KL metric was computed against an
+effectively empty denominator. It produced numbers, not errors. Fixed with
+`.fillna(pop_df["smh_race"])`, the same shape of fallback
+`DemographicsLoader` uses for sex and race.
+
+Verified against the real file's values: `gender` 1/2 maps fine, `smh_race`
+"White"/"Black" previously went to NaN and now passes through.
+
+### The guard
+
+`_check_stratifier_overlap` now runs after both group keys are built and
+raises when a stratifier's categories are disjoint, or when either side has
+no usable values. This is the class of bug that cannot be caught downstream:
+a KL divergence against a denominator that cannot match is a number, not a
+failure. Exercised against all-NaN race (caught), matching frames (passes),
+and a name-versus-FIPS mismatch (caught).
+
+## Sibling package versions as rule params (2026-10-04)
+
+Snakemake tracks files, not the code that produced them. TwinSampler and
+BeyondBaseline install separately, so reinstalling one left its outputs
+looking current. Twice in one day that meant a stale artefact survived a
+rerun and had to be deleted by hand -- once a line list built with the
+swapped age map (confirmed after the fact from its own age composition:
+Student 23.4%, Senior 12.0%, matching the buggy prediction), once samples
+keyed on an all-NaN race denominator.
+
+`_pkg_version()` reads `importlib.metadata.version` and is attached as a
+`params` entry to the rule that depends on that package:
+
+| rule | param | invalidated by |
+| --- | --- | --- |
+| `simulate_linelist` | `twin_sampler_version` | a TwinSampler reinstall |
+| `sample_scenarios` | `beyond_baseline_version` | a BeyondBaseline reinstall |
+
+Neither reaches the shell command. They exist so that `--rerun-triggers`,
+which includes `params` by default, sees the change. This works because both
+packages now derive their version from git, so every commit produces a
+distinct string -- with the previous static `0.1.0` the param would never
+have moved.
+
+`PackageNotFoundError` returns `"absent"` rather than raising, so the rule's
+own command produces the clearer error. Note the mechanism is inert in an
+environment where the package is not pip-installed, since `"absent"` is
+itself stable.
+
+PhyloGAS is not tracked this way: it is an editable install whose version is
+fixed at install time, so a commit does not change it. Snakefile edits are
+already covered by the `code` rerun trigger.
+
+This is deliberately conservative -- any TwinSampler commit now rebuilds the
+line list, even one unrelated to ascertainment. `--rerun-triggers mtime`
+opts out for a single run.
+
+## Recipes: a BeyondBaseline-owned id the PhyloGAS config refers to (2026-10-04)
+
+`sample_scenarios` failed with `MissingOutputException`: it declared one
+`{algo}_samples.csv.xz` while BeyondBaseline had written six files, one per
+scenario, named `linelist.csv__seed43_scenario5_SURS_samples.csv.xz`. A
+cardinality mismatch, not just a naming one -- BeyondBaseline's unit of work
+is (scenario x algorithm), PhyloGAS's DAG assumed algorithm alone.
+
+### The id
+
+A **recipe** is one (scenario x algorithm) pair. `recipes.py` derives the id
+from `SCENARIOS` and the algorithm list, so neither repo spells it out:
+
+```
+4S-4_LL-P__surs        scenario slug __ algorithm slug
+```
+
+The scenario slug comes from `SCEN_LABELS` ("4S-4(LL,P)" -> "4S-4_LL-P"),
+keeping the target-distribution part so a filename or config entry is legible
+without consulting the index. The algorithm slug matches the spelling already
+used in `sampling.algorithms` (`lasso_greedy`, not `LASSO-Greedy`).
+
+`scenarios-recipes` prints the index; 42 recipes over 6 scenarios and 7
+algorithms. `resolve()` rejects an unknown id with near-misses rather than a
+KeyError.
+
+Sample files are now `<recipe id>_samples.csv.xz`. Previously the stem was
+`Path(linelist).stem` -- which for `linelist.csv.xz` is `linelist.csv` --
+plus the seed, so the name was neither predictable nor referable.
+
+`SCEN_LABELS` moved from `run_all_scenarios` to `scenarios_config`, and the
+algorithm names to `ALGORITHM_NAMES` there, so listing recipes does not import
+scipy or sklearn. `sampling_algorithms` asserts its registry matches that
+tuple, so a sampler added to one and not the other fails loudly instead of
+being absent from every recipe id.
+
+### The PhyloGAS side, deliberately a stub
+
+```yaml
+sampling:
+  nextstrain_recipes: ["4S-4_LL-P__surs"]
+```
+
+Only the **scenario half** of the first entry is honoured, paired with each
+entry of `sampling.algorithms`, giving one tree per algorithm. Honouring the
+list properly -- several recipes, or "all" -- needs a `{recipe}` wildcard
+through `subset_fasta` and `nextstrain.builds` so a tree exists per recipe.
+Both the config comment and `_ns_scenario_slug()` say so.
+
+A recipe id is `<scenario>__<algo>` and the `{algo}` wildcard already carries
+the algorithm slug, so these compose into plain output templates --
+`{slug}__{{algo}}_samples.csv.xz` -- rather than needing an input function.
+Snakemake does not accept a function in `output:` at all.
+
+`sample_scenarios` now declares all six scenario files per algorithm instead
+of one, so none are untracked siblings. `subset_fasta` consumes only the
+chosen recipe's.
+
+Verified: slugs derived from the registry, the chosen recipe resolved, and an
+absent key, an empty list and a non-recipe string each rejected with the
+command that lists valid ids.
