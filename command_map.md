@@ -1830,3 +1830,67 @@ chosen recipe's.
 Verified: slugs derived from the registry, the chosen recipe resolved, and an
 absent key, an empty list and a non-recipe string each rejected with the
 command that lists valid ids.
+
+## The all_infections arm could not work on a first run (2026-10-04)
+
+`nextstrain.builds` accepts `- type: all_infections` -- the control arm, where
+no sampler intervened: every painted infection plus the all-events line list,
+capped by ncov's own `country_17k` scheme rather than by a sampling budget. It
+has no recipe, because it has no scenario and no algorithm. The code path
+existed and had never been enabled.
+
+Checking it turned up three things.
+
+### The paths agree
+
+`_ascertainment_base()` strips `.csv.xz` by regex, which matches TwinSampler's
+new `_split_csv_suffix`, so moving `ascertainment.output` to `.csv.xz` did not
+break the derived sibling names. It would have under the old string-replace.
+
+### An unguarded input
+
+Every other use of `ALLEVENTS` is defensive (`if ALLEVENTS:` or
+`ALLEVENTS or ""`). The arm's `metadata=` was the one bare reference, so a
+missing file became `input: metadata=None` rather than a message naming it.
+
+### The real problem: existence checked at parse time
+
+`ALLEVENTS` comes from `resolve_benchmark`, which returns the path **only if
+the file already exists**. But the all-events table is written by
+`simulate_linelist` *during the run*. On a clean project:
+
+1. parse -> file absent -> `ALLEVENTS = None`
+2. `simulate_linelist` runs and writes it
+3. too late, the DAG was built without it
+
+So the arm silently vanished on a first run and appeared only on a second.
+Same for the three benchmark rules, where skipping is defensible -- `auto`
+means "score it if it is there" -- but for an arm explicitly requested in
+config it is a trap.
+
+### Fix: two names for two questions
+
+| name | means | used by |
+| --- | --- | --- |
+| `ALLEVENTS_OUT` | where the table **will be** written, derived, no existence check | `simulate_linelist`'s declared output, and the all_infections arm's input |
+| `ALLEVENTS` | whether a table is there **to score**, honouring `benchmark.allevents: none` | the optional benchmark rules |
+
+`ALLEVENTS_OUT` derives from `LINELIST` rather than from the raw config key:
+TwinSampler builds the sibling from whatever `--out` it was handed, and `--out`
+is `LINELIST`, so deriving it the same way means they cannot disagree. It also
+inherits LINELIST's fallback instead of collapsing to `""` when the key is
+absent, which `_ascertainment_base()` does.
+
+Declaring it as an output has a second benefit: the all-events table was an
+untracked sibling, which is why stale copies had to be deleted by hand twice
+today. Snakemake now tracks and cleans it.
+
+`linelist_mugration.json` is deliberately left undeclared. It is written
+conditionally -- skipped with a warning when `county` is missing -- and while
+`resolve_county` now guarantees `county`, declaring it would couple the DAG to
+that guarantee.
+
+Verified by executing the Snakefile's module-level block against the real
+config: `ALLEVENTS_OUT` resolves to a path while `ALLEVENTS` is None on a
+machine without the file, which is exactly the split intended -- the benchmark
+rules skip, the arm still wires up.

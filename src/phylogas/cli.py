@@ -446,6 +446,30 @@ def _stage(src: Path, dest: Path) -> str:
     return how
 
 
+def _ns_recipe_scenario(cfg) -> str:
+    """Scenario half of the recipe the phylodynamic stage is built from.
+
+    BeyondBaseline names its sample files `<scenario>__<algo>_samples.csv.xz`,
+    so the algorithm alone does not identify a file. The Snakefile's
+    `_ns_scenario_slug` resolves this the same way; both read
+    sampling.nextstrain_recipes so the two cannot drift. Returns "" when no
+    recipe is configured, leaving the caller to fall back and report the
+    missing file itself.
+    """
+    recipes = cfg.get("sampling.nextstrain_recipes", default=[]) or []
+    if isinstance(recipes, str):
+        recipes = [recipes]
+    if not recipes:
+        return ""
+    first = str(recipes[0])
+    if "__" not in first:
+        sys.exit(f"ERROR: sampling.nextstrain_recipes[0] is {first!r}, which is "
+                 f"not a recipe id.\n"
+                 f"       Expected '<scenario>__<algorithm>' as printed by "
+                 f"`scenarios-recipes`.")
+    return first.split("__", 1)[0]
+
+
 def cmd_nextstrain_config(args) -> int:
     """Render one ncov config for one arm, stage its inputs, and validate.
 
@@ -492,7 +516,10 @@ def cmd_nextstrain_config(args) -> int:
         comp = cfg.get("genetic_painter.compression", default="xz")
         ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
         aligned = Path(args.aligned) if args.aligned else sample_dir / f"{project}.{arm}.fasta{ext}"
-        metadata = Path(args.metadata) if args.metadata else sample_dir / f"{arm}_samples.csv.xz"
+        scenario = _ns_recipe_scenario(cfg)
+        default_meta = sample_dir / (f"{scenario}__{arm}_samples.csv.xz"
+                                     if scenario else f"{arm}_samples.csv.xz")
+        metadata = Path(args.metadata) if args.metadata else default_meta
         scheme = args.scheme or "strategy_focal_context"
     else:
         prefix = cfg.get("genetic_painter.output_prefix", default=None)

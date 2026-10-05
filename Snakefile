@@ -114,6 +114,24 @@ BENCH_DIR     = cfg("benchmark.outdir", f"{RESULTS}/05_benchmarks")
 ALGORITHMS    = cfg("sampling.algorithms", ["surs"])
 
 # Resolved once so every rule and the printed summary agree.
+# Two different questions, so two names.
+#
+# ALLEVENTS_OUT is where simulate_linelist WILL write the all-events table:
+# derived from ascertainment.output, no existence check. Declared as that
+# rule's output and depended on by the all_infections arm, so the arm works on
+# a clean project.
+#
+# ALLEVENTS is whether a file is there to SCORE, which is what the optional
+# benchmark rules ask -- `benchmark.allevents: none` opts out, and `auto` on a
+# project that has not run yet simply skips them. Resolving the arm's
+# dependency that way meant it silently vanished on a first run and only
+# appeared on a second, because the file it needs is produced during the run
+# that would have used it.
+# Derived from LINELIST, not from the raw config key: TwinSampler builds this
+# sibling from whatever --out it was given, and --out is LINELIST. Deriving it
+# the same way means the two cannot disagree, and it inherits LINELIST's
+# fallback instead of collapsing to "" when the key is absent.
+ALLEVENTS_OUT = re.sub(r"\.csv(\.gz|\.xz)?$", "", str(LINELIST)) + "_allevents.csv.xz"
 ALLEVENTS = resolve_benchmark("benchmark.allevents", "allevents")
 MUGRATION = resolve_benchmark("benchmark.truth_mugration", "mugration")
 
@@ -365,6 +383,10 @@ rule simulate_linelist:
         ascertain=_required_path("ascertainment.parameters"),
     output:
         linelist=LINELIST,
+        # Written because the shell always passes --output_all_events.
+        # Declared so Snakemake tracks and cleans it, and so the
+        # all_infections arm can depend on it rather than on its existence.
+        allevents=ALLEVENTS_OUT,
     params:
         start_date=cfg("genetic_painter.start_date"),
         start_tick=cfg("genetic_painter.start_tick"),
@@ -518,7 +540,7 @@ if cfg("nextstrain.enabled", False):
             """
             input:
                 fasta=PAINTED_FASTA,
-                metadata=ALLEVENTS,
+                metadata=ALLEVENTS_OUT,
             output:
                 configfile=f"{NS_DIR}/{NS_STAGE}/all_infections/config.yaml",
             params:
