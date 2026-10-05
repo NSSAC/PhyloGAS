@@ -446,28 +446,29 @@ def _stage(src: Path, dest: Path) -> str:
     return how
 
 
-def _ns_recipe_scenario(cfg) -> str:
-    """Scenario half of the recipe the phylodynamic stage is built from.
+def _resolve_recipe(rid: str) -> str:
+    """Canonical form of a recipe id, via BeyondBaseline's registry.
 
-    BeyondBaseline names its sample files `<scenario>__<algo>_samples.csv.xz`,
-    so the algorithm alone does not identify a file. The Snakefile's
-    `_ns_scenario_slug` resolves this the same way; both read
-    sampling.nextstrain_recipes so the two cannot drift. Returns "" when no
-    recipe is configured, leaving the caller to fall back and report the
-    missing file itself.
+    An id the registry has collapsed -- a target-blind algorithm is named by
+    the axes it reads, so "4S-4_LL-P__surs" became "4S__surs" -- is
+    translated, and an id it does not know at all is an error naming the
+    index. Without the registry installed the id is taken at its word, which
+    keeps this usable in a PhyloGAS-only checkout.
     """
-    recipes = cfg.get("sampling.nextstrain_recipes", default=[]) or []
-    if isinstance(recipes, str):
-        recipes = [recipes]
-    if not recipes:
-        return ""
-    first = str(recipes[0])
-    if "__" not in first:
-        sys.exit(f"ERROR: sampling.nextstrain_recipes[0] is {first!r}, which is "
-                 f"not a recipe id.\n"
-                 f"       Expected '<scenario>__<algorithm>' as printed by "
-                 f"`scenarios-recipes`.")
-    return first.split("__", 1)[0]
+    try:
+        from scenarios_simulation.recipes import aliases, all_recipes
+    except ImportError:
+        return rid
+    known = all_recipes()
+    if rid in known:
+        return rid
+    alias = aliases().get(rid)
+    if alias is not None:
+        print(f"  note: {rid} -> {alias} "
+              f"(that algorithm ignores the target distribution)")
+        return alias
+    sys.exit(f"ERROR: {rid!r} is not a recipe id.\n"
+             f"       `scenarios-recipes` lists all {len(known)}.")
 
 
 def cmd_nextstrain_config(args) -> int:
@@ -496,10 +497,19 @@ def cmd_nextstrain_config(args) -> int:
 
     # --- what this arm is -------------------------------------------------
     project = str(cfg.get("project_name", default="phylogas"))
-    arm = args.algo if args.build_type == "strategy" else "all_infections"
-    if args.build_type == "strategy" and not args.algo:
-        sys.exit("ERROR: --algo is required for --build-type strategy "
-                 "(it names which sampling arm to build).")
+    if args.build_type == "strategy":
+        if getattr(args, "algo", None) and not args.recipe:
+            sys.exit("ERROR: --algo was replaced by --recipe, which names a "
+                     "scenario and an algorithm together.\n"
+                     "       An algorithm alone no longer identifies a build: "
+                     "1S__surs and 4S__surs are different trees.\n"
+                     "       `scenarios-recipes` lists the ids.")
+        if not args.recipe:
+            sys.exit("ERROR: --recipe is required for --build-type strategy "
+                     "(it names which sampled set to build).")
+        arm = _resolve_recipe(str(args.recipe))
+    else:
+        arm = "all_infections"
     build_name = f"{project}_{arm}"
 
     loc = cfg.get("genetic_painter.location", default={}) or {}
@@ -515,11 +525,13 @@ def cmd_nextstrain_config(args) -> int:
                                               "/03_sampled_datasets")))
         comp = cfg.get("genetic_painter.compression", default="xz")
         ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
-        aligned = Path(args.aligned) if args.aligned else sample_dir / f"{project}.{arm}.fasta{ext}"
-        scenario = _ns_recipe_scenario(cfg)
-        default_meta = sample_dir / (f"{scenario}__{arm}_samples.csv.xz"
-                                     if scenario else f"{arm}_samples.csv.xz")
-        metadata = Path(args.metadata) if args.metadata else default_meta
+        # Both named by the recipe: subset_fasta writes
+        # <project>.<recipe>.fasta and BeyondBaseline writes
+        # <recipe>_samples.csv.xz, so one id locates the pair.
+        aligned = (Path(args.aligned) if args.aligned
+                   else sample_dir / f"{project}.{arm}.fasta{ext}")
+        metadata = (Path(args.metadata) if args.metadata
+                    else sample_dir / f"{arm}_samples.csv.xz")
         scheme = args.scheme or "strategy_focal_context"
     else:
         prefix = cfg.get("genetic_painter.output_prefix", default=None)
@@ -1819,10 +1831,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--config", "-c", default="config.yaml")
     sp.add_argument("--build-type", dest="build_type", required=True,
                     choices=["strategy", "all_infections"],
-                    help="strategy: a BeyondBaseline sampling arm (needs --algo). "
+                    help="strategy: one BeyondBaseline recipe (needs --recipe). "
                          "all_infections: the full painted set with the 17k cap.")
-    sp.add_argument("--algo", default=None,
-                    help="sampling algorithm, for --build-type strategy")
+    sp.add_argument("--recipe", default=None,
+                    help="recipe id, for --build-type strategy, as printed by "
+                         "`scenarios-recipes` (e.g. 4S__surs)")
+    sp.add_argument("--algo", default=None, help=argparse.SUPPRESS)
     sp.add_argument("--dir", default=None, help="ncov checkout (default: nextstrain.dir)")
     sp.add_argument("--base", default=None,
                     help="base config (default: cfg/nextstrain/ncov/base.yaml)")

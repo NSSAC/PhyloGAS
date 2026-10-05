@@ -10,8 +10,10 @@
 # Stage numbering matches the results/ directory layout in the README.
 # ===========================================================================
 
+import functools as _functools
 import json as _json
 import os
+import sys
 from pathlib import Path
 
 try:                                    # the import path is stable, but do not
@@ -169,16 +171,7 @@ def _nextstrain_targets():
     if not cfg("nextstrain.enabled", False):
         return []
     out = cfg("nextstrain.outdir", f"{RESULTS}/04_nextstrain_builds")
-    arms = []
-    for b in (cfg("nextstrain.builds", []) or []):
-        if not isinstance(b, dict):
-            continue
-        if b.get("type") == "strategy":
-            arms += list(b.get("algorithms") or ALGORITHMS)
-        elif b.get("type") == "all_infections":
-            arms.append("all_infections")
-    arms = arms or list(ALGORITHMS)
-    targets = [f"{out}/{a}/auspice.json" for a in arms]
+    targets = [f"{out}/{a}/auspice.json" for a in _ns_arms()]
     # Only ask for the CSV when a rule will exist to produce it.
     if _clock_invocations():
         targets.append(f"{BENCH_DIR}/clock_estimates.csv")
@@ -202,46 +195,129 @@ def _target_variant() -> str:
 
 
 
-def _scenario_slugs() -> list:
-    """Scenario slugs BeyondBaseline writes a sample file for, per algorithm.
+def _recipe_scenario(rid: str) -> str:
+    """Scenario half of a recipe id."""
+    return rid.split("__", 1)[0] if "__" in rid else rid
 
-    A recipe id is "<scenario slug>__<algorithm slug>" and the {algo} wildcard
-    already carries the algorithm slug, so these compose into output templates
-    without needing an input function. Read from BeyondBaseline's registry so
-    the two cannot drift; falls back to the configured scenario alone when it
-    is not importable, which keeps the DAG buildable with PhyloGAS only.
+
+def _sample_recipes() -> list:
+    """Every recipe BeyondBaseline writes a sample file for, this run.
+
+    The registry decides, not a scenario x algorithm cross product: a
+    target-blind algorithm contributes one recipe per stride rather than one
+    per scenario, so the product would declare outputs that are never
+    written. Restricted to sampling.algorithms, which is what the runner is
+    told to run.
     """
+    want = {str(a).strip().lower() for a in (ALGORITHMS or []) if str(a).strip()}
     try:
-        from scenarios_simulation.recipes import all_recipes, split_recipe
+        from scenarios_simulation.recipes import all_recipes
     except ImportError:
-        return [_ns_scenario_slug()]
-    return sorted({split_recipe(r)[0] for r in all_recipes()},
-                  key=lambda x: (len(x), x))
+        # No registry: fall back to the recipes the tree needs, which is the
+        # minimum that keeps the DAG buildable with PhyloGAS alone.
+        return [r for r in _ns_recipes() if _recipe_algo(r) in want]
+
+    return [r for r in all_recipes() if _recipe_algo(r) in want]
 
 
-def _ns_scenario_slug() -> str:
-    """Scenario half of the recipe carried into the phylodynamic stage.
+def _sample_files() -> list:
+    """Paths of those sample files."""
+    return [f"{SAMPLE_DIR}/{r}_samples.csv.xz" for r in _sample_recipes()]
 
-    STUB. Only the first configured recipe is honoured, and only its scenario
-    half: it is paired with each entry of sampling.algorithms, so there is one
-    tree per algorithm rather than per recipe. Selecting recipes individually,
-    or "all", needs a {recipe} wildcard threaded through subset_fasta and
-    nextstrain.builds -- see sampling.nextstrain_recipes in the config.
+
+@_functools.lru_cache(maxsize=None)
+def _ns_recipes() -> tuple:
+    """Recipe ids carried into the phylodynamic stage, one tree each.
+
+    "all" means every id BeyondBaseline's registry knows. An id that the
+    registry has collapsed -- a target-blind algorithm names only the axes it
+    reads -- is translated to its canonical form here, so an older config
+    keeps working and the DAG still builds exactly one tree per sample.
     """
-    recipes = cfg("sampling.nextstrain_recipes", []) or []
-    if isinstance(recipes, str):
-        recipes = [recipes]
-    if not recipes:
+    want = cfg("sampling.nextstrain_recipes", []) or []
+    if isinstance(want, str):
+        want = [want]
+    want = [str(w).strip() for w in want if str(w).strip()]
+    if not want:
         raise WorkflowError(
-            'sampling.nextstrain_recipes is empty. Set it to a recipe id from '
-            '`scenarios-recipes`, e.g. ["4S-4_LL-P__surs"].')
-    first = str(recipes[0])
-    if "__" not in first:
-        raise WorkflowError(
-            f"sampling.nextstrain_recipes[0] is {first!r}, which is not a "
-            f"recipe id. Expected '<scenario>__<algorithm>' as printed by "
-            f"`scenarios-recipes`.")
-    return first.split("__", 1)[0]
+            'sampling.nextstrain_recipes is empty. Set it to one or more '
+            'recipe ids from `scenarios-recipes`, e.g. ["4S__surs"], or '
+            '"all".')
+
+    try:
+        from scenarios_simulation.recipes import all_recipes, aliases
+    except ImportError:
+        # PhyloGAS-only checkout: take the config at its word. "all" cannot be
+        # expanded without the registry, so say which import is missing.
+        if any(w.lower() == "all" for w in want):
+            raise WorkflowError(
+                'sampling.nextstrain_recipes is "all", which needs '
+                "BeyondBaseline's recipe registry to expand. Install "
+                "BeyondBaseline, or list the recipe ids explicitly.")
+        return tuple(dict.fromkeys(want))
+
+    known, alias = all_recipes(), aliases()
+    if any(w.lower() == "all" for w in want):
+        if len(want) > 1:
+            raise WorkflowError(
+                'sampling.nextstrain_recipes mixes "all" with specific ids; '
+                "use one or the other.")
+        # Only the algorithms this run samples: a recipe for an algorithm
+        # absent from sampling.algorithms has no sample file to build from.
+        algos = {str(a).strip().lower() for a in (ALGORITHMS or [])}
+        every = [r for r in known if _recipe_algo(r) in algos]
+        if not every:
+            raise WorkflowError(
+                f'sampling.nextstrain_recipes is "all", but no recipe matches '
+                f"sampling.algorithms ({sorted(algos)}). Known algorithms: "
+                f"{sorted({_recipe_algo(r) for r in known})}.")
+        return tuple(every)
+
+    out = []
+    for w in want:
+        rid = w if w in known else alias.get(w)
+        if rid is None:
+            raise WorkflowError(
+                f"sampling.nextstrain_recipes has {w!r}, which is not a "
+                f"recipe id. `scenarios-recipes` lists all {len(known)}.")
+        if rid != w:
+            # Collapsed: several grid cells share one sample, so two entries
+            # could name the same tree. Deduplicated below.
+            print(f"note: nextstrain_recipes {w!r} -> {rid!r} "
+                  f"(that algorithm ignores the target distribution)",
+                  file=sys.stderr)
+        out.append(rid)
+    return tuple(dict.fromkeys(out))
+
+
+def _recipe_algo(rid: str) -> str:
+    """Algorithm half of a recipe id, which is what BeyondBaseline samples by."""
+    return rid.split("__", 1)[1] if "__" in rid else rid
+
+
+def _ns_all_infections() -> bool:
+    """Whether the control arm is requested.
+
+    nextstrain.builds no longer carries an algorithm list -- which recipes get
+    a tree is sampling.nextstrain_recipes -- so the only thing left to read
+    from it is whether the all_infections arm is on.
+    """
+    for b in (cfg("nextstrain.builds", []) or []):
+        if isinstance(b, dict) and b.get("type") == "all_infections":
+            return True
+    return False
+
+
+def _ns_arms() -> list:
+    """Every arm that gets a tree: one per recipe, plus the control if on.
+
+    An arm name is a recipe id, which is also the sample filename stem and the
+    ncov build suffix, so one string identifies the tree end to end.
+    """
+    if not cfg("nextstrain.enabled", False):
+        return []
+    return list(_ns_recipes()) + (["all_infections"]
+                                  if _ns_all_infections() else [])
 
 
 def _pkg_version(dist: str) -> str:
@@ -276,18 +352,15 @@ def _required_path(dotted: str) -> str:
     return value
 
 
-# Resolved once: scenario slugs are config- and registry-derived, not
-# wildcard-derived.
-_SCENARIO_SLUGS = _scenario_slugs()
-_NS_SCENARIO_SLUG = _ns_scenario_slug()
-
-
 rule all:
     """Default target: painted genomes plus every requested sampled subset."""
     input:
         PAINTED_FASTA,
         PAINTED_META,
-        expand(f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}", algo=ALGORITHMS),
+        # One subset per recipe that gets a tree. The subset exists to feed
+        # the tree, so when nextstrain is off there is nothing to subset.
+        expand(f"{SAMPLE_DIR}/{PROJECT}.{{recipe}}.fasta{_EXT}",
+               recipe=[a for a in _ns_arms() if a != "all_infections"]),
         _nextstrain_targets(),
 
 
@@ -439,16 +512,19 @@ rule sample_scenarios:
         linelist=LINELIST,
         population=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
     output:
-        # One file per scenario: BeyondBaseline runs the whole sweep per
-        # invocation, so all of them are declared rather than left as
-        # untracked siblings of a single named output.
-        samples=[f"{SAMPLE_DIR}/{slug}__{{algo}}_samples.csv.xz"
-                 for slug in _SCENARIO_SLUGS],
+        # Every sample file the run produces, from BeyondBaseline's registry.
+        # One rule rather than one per algorithm: the runner loops scenarios
+        # x algorithms internally, so invoking it once per algorithm would
+        # re-walk the whole scenario sweep each time. Registry-derived rather
+        # than a cross product because a target-blind algorithm writes one
+        # file per stride, not one per scenario.
+        samples=_sample_files(),
     params:
         outdir=SAMPLE_DIR,
         batch=cfg("sampling.batch_size", 400),
         seed=cfg("random_seed", 42),
         norepl="--no-replacement" if cfg("sampling.no_replacement", True) else "",
+        algorithms=" ".join(str(a) for a in ALGORITHMS),
         # Not passed to the command; present so a BeyondBaseline reinstall
         # invalidates these samples.
         beyond_baseline_version=_pkg_version("beyond-baseline"),
@@ -456,7 +532,7 @@ rule sample_scenarios:
         "scenarios-runner --linelist {input.linelist} "
         "--population {input.population} --outdir {params.outdir} "
         "--batch-size {params.batch} --seed {params.seed} {params.norepl} "
-        "--save-samples --algorithms {wildcards.algo}"
+        "--save-samples --algorithms {params.algorithms}"
 
 
 # --------------------------------------------------------------------------
@@ -466,10 +542,12 @@ rule subset_fasta:
     """Pull the selected strains out of the full ground-truth FASTA."""
     input:
         fasta=PAINTED_FASTA,
-        # The one recipe carried into the tree, not all six.
-        samples=f"{SAMPLE_DIR}/{_NS_SCENARIO_SLUG}__{{algo}}_samples.csv.xz",
+        samples=f"{SAMPLE_DIR}/{{recipe}}_samples.csv.xz",
     output:
-        fasta=f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}",
+        # Named by recipe, not algorithm: two recipes can share an algorithm
+        # (1S__surs and 4S__surs), and an algorithm-named output would have
+        # them overwrite each other.
+        fasta=f"{SAMPLE_DIR}/{PROJECT}.{{recipe}}.fasta{_EXT}",
     shell:
         "phylogas subset-fasta -m {input.samples} -f {input.fasta} -o {output.fasta}"
 
@@ -494,20 +572,9 @@ if cfg("nextstrain.enabled", False):
     # one arm per algorithm (defaulting to sampling.algorithms); an
     # `all_infections` entry is a single arm with its own inputs and its own
     # subsampling scheme.
-    NS_STRATEGY_ARMS = []
-    NS_ALL_INFECTIONS = False
-    for _b in (cfg("nextstrain.builds", []) or []):
-        if not isinstance(_b, dict):
-            continue
-        if _b.get("type") == "strategy":
-            NS_STRATEGY_ARMS += list(_b.get("algorithms") or ALGORITHMS)
-        elif _b.get("type") == "all_infections":
-            NS_ALL_INFECTIONS = True
-    if not NS_STRATEGY_ARMS and not NS_ALL_INFECTIONS:
-        # Nothing declared: keep the previous behaviour of building every
-        # sampling arm, so enabling nextstrain alone still does something.
-        NS_STRATEGY_ARMS = list(ALGORITHMS)
-    NS_ARMS = NS_STRATEGY_ARMS + (["all_infections"] if NS_ALL_INFECTIONS else [])
+    NS_STRATEGY_ARMS = _ns_recipes()
+    NS_ALL_INFECTIONS = _ns_all_infections()
+    NS_ARMS = _ns_arms()
 
     NS_CLOCK = _clock_invocations()
 
@@ -519,17 +586,18 @@ if cfg("nextstrain.enabled", False):
         cannot be scored, before any hours are spent.
         """
         wildcard_constraints:
-            algo="|".join(NS_STRATEGY_ARMS) if NS_STRATEGY_ARMS else "$^"
+            recipe=("|".join(re.escape(r) for r in NS_STRATEGY_ARMS)
+                    if NS_STRATEGY_ARMS else "$^")
         input:
-            fasta=f"{SAMPLE_DIR}/{PROJECT}.{{algo}}.fasta{_EXT}",
-            metadata=f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz",
+            fasta=f"{SAMPLE_DIR}/{PROJECT}.{{recipe}}.fasta{_EXT}",
+            metadata=f"{SAMPLE_DIR}/{{recipe}}_samples.csv.xz",
         output:
-            configfile=f"{NS_DIR}/{NS_STAGE}/{{algo}}/config.yaml",
+            configfile=f"{NS_DIR}/{NS_STAGE}/{{recipe}}/config.yaml",
         params:
             config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
         shell:
             "phylogas nextstrain-config --config {params.config} "
-            "--build-type strategy --algo {wildcards.algo}"
+            "--build-type strategy --recipe {wildcards.recipe}"
 
     if NS_ALL_INFECTIONS:
 
@@ -562,7 +630,8 @@ if cfg("nextstrain.enabled", False):
         directly, which needs the full ncov environment already active.
         """
         wildcard_constraints:
-            arm="|".join(NS_ARMS) if NS_ARMS else "$^"
+            arm=("|".join(re.escape(a) for a in NS_ARMS)
+                 if NS_ARMS else "$^")
         input:
             configfile=f"{NS_DIR}/{NS_STAGE}/{{arm}}/config.yaml",
         output:
@@ -573,6 +642,8 @@ if cfg("nextstrain.enabled", False):
             runner=NS_RUNNER,
             conda_prefix=(f"--conda-prefix {NS_CONDA_PREFIX}"
                           if NS_CONDA_PREFIX else ""),
+            project=PROJECT,
+            json_prefix=cfg("nextstrain.auspice_json_prefix", "ncov"),
         threads: 8
         shell:
             r"""
@@ -588,7 +659,10 @@ if cfg("nextstrain.enabled", False):
                     --cores {threads} --rerun-incomplete
             fi
             mkdir -p $(dirname {output.auspice})
-            cp {params.ns_dir}/auspice/*_{wildcards.arm}.json {output.auspice}
+            # Not *_{arm}.json: that also matches the _tip-frequencies and
+            # _root-sequence siblings, which would cp three files onto one path.
+            cp {params.ns_dir}/auspice/{params.json_prefix}_{params.project}_{wildcards.arm}.json \
+               {output.auspice}
             """
 
     if NS_CLOCK:
@@ -663,7 +737,7 @@ if ALLEVENTS:
  rule benchmark_truth:
       """Score sampled sets against ABM ground truth."""
       input:
-          samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
+          samples=_sample_files(),
           infections=f"{BENCH_DIR}/allevents_variants.csv.xz",
       output:
           csv=f"{BENCH_DIR}/AUC_truth_rankings.csv",
@@ -686,7 +760,7 @@ if MUGRATION and ALLEVENTS:
         input:
             truth=MUGRATION or "",
             infections=ALLEVENTS or "",
-            samples=expand(f"{SAMPLE_DIR}/{{algo}}_samples.csv.xz", algo=ALGORITHMS),
+            samples=_sample_files(),
         output:
             csv=f"{BENCH_DIR}/Mugration_Metrics.csv",
         params:

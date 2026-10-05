@@ -290,7 +290,15 @@ sampling:
   # algorithm. To honour the list properly -- several recipes, or "all" -- a
   # {recipe} wildcard has to run through subset_fasta and nextstrain.builds so
   # that a tree exists per recipe rather than per algorithm.
-  nextstrain_recipes: ["4S-4_LL-P__surs"]
+  # Which recipes get a Nextstrain tree. One tree per entry; "all" means
+  # every id `scenarios-recipes` prints. A recipe is a scenario and an
+  # algorithm together, because the algorithm alone does not identify a
+  # sampled set -- 1S__surs and 4S__surs are different trees.
+  #
+  # An algorithm that ignores the target distribution is named by the axes it
+  # actually reads, so SURS is 4S__surs rather than 4S-4_LL-P__surs. The older
+  # spelling still resolves, with a note.
+  nextstrain_recipes: ["4S__surs"]
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +361,9 @@ nextstrain:
   #                    is the experiment: what does the tree look like with
   #                    complete ascertainment up to that point?
   builds:
+    # Which recipes get a tree is sampling.nextstrain_recipes; this list only
+    # says whether the all_infections control arm is on.
     - type: strategy
-      algorithms: ["surs", "lasso_greedy"]
     # - type: all_infections
 
 

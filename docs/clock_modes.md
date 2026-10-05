@@ -296,3 +296,44 @@ it is the variance explained that falls.
   starts from the configured reference and ncov roots on the same sequence.
 - **`mu_real` needs a matched period.** Unmatched windows make the comparison
   meaningless.
+- **Tip dates are onset dates, not collection dates, and not detection
+  dates.** Three dates exist, all from `base_date + (tick - start_tick)`. The
+  painter filters `exit_state` on `genetic_painter.painted_prefix` ("E2"), so
+  the painted metadata is dated at *exposure*. TwinSampler filters on
+  `prefix_override` (`A`, `P`, `I`, `dM`, `hM`) and dates on that event, so the
+  line list -- and therefore everything ncov sees, via the sample CSV and
+  `metadata_adjusted.tsv.xz` -- is dated at entry into a clinical state. A
+  detection or report date does not exist anywhere in the chain: ascertainment
+  draws a Bernoulli to decide inclusion and never shifts a date, and ncov's
+  `adjust_regional_meta.py` does not touch dates either.
+
+  A real GISAID `date` is specimen collection, which lags onset. Nothing here
+  models that lag, so simulated tips sit earlier in the natural history than
+  real ones. For the clock this is close to a constant offset -- it moves the
+  intercept, not the slope -- but anything reading absolute dates (epi curves,
+  time to detection, Rt) inherits a systematic shift.
+
+- **`mu_truth` and `mu_sim` are dated differently, and it does not matter.**
+  `mu_truth` reads the painted metadata (exposure dates); the tree is built
+  from the line list (onset dates). Measured over 1,138,109 line-list rows the
+  gap is 5.01 days, SD 0.477, with 89.2% at exactly 5 days. Treating the
+  difference as errors-in-variables, the slope attenuates by 0.057% on a 69-day
+  window and 0.004% on a 252-day one -- against a 6.8% gap between the measured
+  8.5443e-04 and the 0.0008 prior, four orders of magnitude too small to
+  affect the comparison. Recorded because the asymmetry is real and someone
+  will notice it; it needs no correction.
+
+  The *shape* is worth knowing separately: 3 days occurs 35,960 times against
+  4 days' 4,498, non-monotonic around the mode. That is distinct routes through
+  the state machine, not a dwell-time distribution being sampled -- a
+  structural fact about `disease.json` recoverable from the line list without
+  parsing the model.
+
+- **The latent period is near-deterministic, which makes dating easier here
+  than on real data.** Delta's incubation period is roughly 4 days median with
+  an SD of 2-3 days, lognormal; here the exposure-to-onset SD is 0.48 days. So
+  TreeTime is being asked to date tips whose true dates carry almost none of
+  the noise real tips carry. This does not threaten `mu_sim` vs `mu_truth`,
+  which is internal, but it bounds what that recovery validates: it shows
+  TreeTime can recover a known clock on an easy dating problem, not that it
+  will on a real one.
