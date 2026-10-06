@@ -143,7 +143,7 @@ for the record rather than deleted.
 
 | Config key | What it is | Where it comes from | Status |
 |---|---|---|---|
-| `population.rucc_file` | `Ruralurbancontinuumcodes2023.csv` | **USDA ERS**, not Dataverse | **Resolved.** A pinned copy is committed at `data/`; `fetch-data --with-rucc` refreshes it from the agency. `fetch-data` only reports it as outstanding when no copy is found |
+| `population.rucc_file` | `Ruralurbancontinuumcodes2023.csv` | **USDA ERS**, not Dataverse | **Resolved.** A pinned copy ships inside TwinSampler (`linelist_generation/data/`), its only consumer, and is used when this key is empty (the default). `fetch-data --with-rucc` downloads the current edition to `data/` for use as an override |
 | `genetic_painter.align_fasta` | the training MSA, under `data/training_sequences/` | Cov-Spectrum, which serves **open** sequences | **Resolved.** `fetch-data --with-training-sequences` runs `seq_prep.py` bulk mode over `training.date_from`/`date_to` (default: the painter's own window) and writes this path. No redistribution constraint — we store no sequences ourselves and the query returns public data. Left out of git only because it is large and exactly reproducible from the configured window |
 | `genetic_painter.entropy_thresholds` | stage 00 under `results_dir` | Written by `phylogas train` | Output, not input. A pre-trained map could also be shipped in `data/example_data/` and pointed at — worth doing as a convenience, not as a licensing workaround |
 | `genetic_painter.probability_matrix` | stage 00 under `results_dir` | Same | Same; 3.6 MB for the Virginia Delta map |

@@ -197,7 +197,6 @@ Please do not spend time on these; they are known.
 | Seed dating | Imported-seed divergence trends *down* with import date in the VA run, which suggests the importation schedule does not pair each seed with its real collection date. Under investigation. |
 | Metadata ownership | Chain/component ids come from TwinSampler while sequences come from the painter; who should own the joined metadata is open — [`docs/design/metadata_ownership.md`](docs/design/metadata_ownership.md). |
 | `benchmark compare` | Exercised only with two augur files. The simulated-parsimony side needs `--save-matrices` output from a real run. |
-| RUCC file | Not on Dataverse. Fetch from USDA ERS yourself. |
 | UVA Dataverse | Unstable as of 2026-09-30: website 502, metadata API 500, file API ~50% 503. Downloads usually succeed on retry. If you have the files on a cluster, see [`docs/staging_local_data.md`](docs/staging_local_data.md). |
 | Seed coverage | The bundled seed FASTA is Virginia Delta (3,322 seqs). Other states under-cover -- WA has 3,721 E2 importations. Use `--with-seeds`. |
 | Scale | One state, one replicate (VA, 5.35M infections) verified end to end on a cluster. Other states and multi-replicate runs are not. |

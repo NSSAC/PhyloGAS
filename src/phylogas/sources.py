@@ -289,7 +289,8 @@ def _stream_to_file(url: str, dest: Path, timeout: int, label: str,
 # --------------------------------------------------------------------------
 # USDA Economic Research Service: rural-urban continuum codes
 # --------------------------------------------------------------------------
-# A pinned copy ships in data/; this is only for refreshing it. USDA ERS works
+# A pinned copy ships inside TwinSampler (linelist_generation/data/), which
+# uses it by default; this URL is only for fetching a newer edition. USDA ERS works
 # are US federal government publications and therefore public domain
 # (17 U.S.C. 105). No checksum is pinned because the agency revises the file
 # in place without versioning the URL.

@@ -76,9 +76,10 @@ population:
   # County FIPS -> name lookup (small; committed to the repo).
   fips_file: "{data_dir}/county_fips.csv"
 
-  # USDA ERS rural-urban continuum codes. NOT on Dataverse; fetch separately
-  # from https://www.ers.usda.gov/data-products/rural-urban-continuum-codes/
-  rucc_file: "{data_dir}/Ruralurbancontinuumcodes2023.csv"
+  # USDA ERS rural-urban continuum codes. TwinSampler ships the 2023 table and
+  # uses it by default; set this only to run against another edition
+  # (`phylogas fetch-data --with-rucc` downloads the current one to data/).
+  rucc_file: ""
 
 
 # ---------------------------------------------------------------------------

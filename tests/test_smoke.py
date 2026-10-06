@@ -320,13 +320,20 @@ def test_output_paths_match_compression():
     assert _output_paths("p", None) == ("p.sequences.fasta", "p.metadata.tsv")
 
 
-def test_rucc_file_present_and_parses():
-    """The pinned USDA RUCC copy must be committed and loadable."""
+def test_twinsampler_bundles_rucc():
+    """TwinSampler must ship the RUCC table: the Snakefile omits --rucc unless
+    population.rucc_file is set. An older TwinSampler still requires the flag,
+    so a stale install fails the linelist rule with argparse's
+    "--rucc is required" -- caught here instead."""
     import pandas as pd
 
-    rucc = Path(__file__).resolve().parents[1] / "data" / "Ruralurbancontinuumcodes2023.csv"
-    assert rucc.is_file(), "data/Ruralurbancontinuumcodes2023.csv is missing"
-    df = pd.read_csv(rucc, encoding="latin1")
+    pytest.importorskip("linelist_generation")
+    try:
+        from linelist_generation.rucc_utils import bundled_rucc_path
+    except ImportError:
+        pytest.fail("installed TwinSampler predates the bundled RUCC table; "
+                    "pip install --upgrade git+https://github.com/NSSAC/TwinSampler.git")
+    df = pd.read_csv(bundled_rucc_path(), encoding="latin1")
     assert {"FIPS", "State", "County_Name", "Attribute", "Value"} <= set(df.columns)
     assert (df["Attribute"] == "RUCC_2023").any(), "no RUCC_2023 rows"
 

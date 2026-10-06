@@ -340,6 +340,16 @@ def _pkg_version(dist: str) -> str:
         return "absent"
 
 
+def _rucc_override(wildcards) -> dict:
+    """population.rucc_file as a named input, or nothing.
+
+    TwinSampler ships the USDA 2023 table and uses it when --rucc is omitted,
+    so this key is only for running against a different edition.
+    """
+    value = str(cfg("population.rucc_file", "") or "").strip()
+    return {"rucc": value} if value else {}
+
+
 def _required_path(dotted: str) -> str:
     """A config path that must be set, for use in an `input:` block.
 
@@ -447,12 +457,15 @@ rule simulate_linelist:
     Provided by the TwinSampler package (installed via environment.yml).
     """
     input:
+        # Optional override of the RUCC table TwinSampler bundles. Present
+        # as an input only when configured, so a refreshed file still
+        # triggers a rerun.
+        unpack(_rucc_override),
         # Required by simulate_linelist, so inputs rather than params:
         # Snakemake checks them when it builds the DAG.
         graph=cfg("epihiper.output_csv"),
         people=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
         households=_required_path("population.household_file"),
-        rucc=_required_path("population.rucc_file"),
         ascertain=_required_path("ascertainment.parameters"),
     output:
         linelist=LINELIST,
@@ -487,9 +500,11 @@ rule simulate_linelist:
         # Not passed to the command; present so a TwinSampler reinstall
         # invalidates this line list.
         twin_sampler_version=_pkg_version("twin-sampler"),
+        rucc_arg=lambda wc, input: (f" --rucc {input.rucc}"
+                                    if "rucc" in input.keys() else ""),
     shell:
         "simulate_linelist --epihiper {input.graph} --people {input.people} "
-        "--households {input.households} --rucc {input.rucc} "
+        "--households {input.households}{params.rucc_arg} "
         "--ascertain {input.ascertain} --start_date {params.start_date} "
         "--start_tick {params.start_tick} --stop_tick {params.stop_tick} "
         "--out {output.linelist} --seed {params.seed} --output_all_events "

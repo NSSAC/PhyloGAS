@@ -1012,14 +1012,15 @@ def cmd_fetch_data(args) -> int:
             print(f"    ERROR downloading {key}: {exc}", file=sys.stderr)
             return 1
 
-    # USDA rural-urban continuum codes. A pinned copy ships in data/; this
-    # refreshes it from the agency.
+    # USDA rural-urban continuum codes. TwinSampler bundles the 2023 table;
+    # this fetches the agency's current file for use via population.rucc_file.
     if args.with_rucc:
         dest_root.mkdir(parents=True, exist_ok=True)
         target = dest_root / dv.RUCC_FILENAME
         print(f"\nFetching RUCC codes from USDA ERS ...")
         try:
             dv.download_url(dv.RUCC_URL, target, expect_md5=None)
+            print(f"    To use it, set population.rucc_file: {target}")
             print(f"    NOTE: USDA revises this file in place, so no checksum is")
             print(f"          pinned. Re-running an old analysis against a refreshed")
             print(f"          file may not reproduce; see data/README.md.")
@@ -1125,11 +1126,10 @@ def cmd_fetch_data(args) -> int:
                 except SystemExit as exc:
                     print(f"  demographics build failed: {exc}", file=sys.stderr)
 
-    # Only name what is actually absent. This used to announce the RUCC file
-    # unconditionally, including when a copy was already sitting in data/.
+    # Only name what is actually absent. RUCC is not listed: TwinSampler
+    # bundles it, and an explicitly configured override is checked by
+    # Snakemake as an input.
     outstanding = []
-    if _find_rucc(cfg, dest_root) is None:
-        outstanding.append(f"- {dv.RUCC_FILENAME}  (USDA ERS; --with-rucc)")
     if not args.with_simulations:
         outstanding.append("- EpiHiper simulation replicates    (--with-simulations)")
     if cfg is not None:
@@ -1150,28 +1150,6 @@ def _pick(d: Path, stem: str) -> Path:
     """Return the decompressed file if present, else the .xz (pandas reads both)."""
     plain = d / stem
     return plain if plain.exists() else d / (stem + ".xz")
-
-
-def _find_rucc(cfg, root: Path):
-    """Locate the USDA rural-urban continuum codes, or None.
-
-    Checked in the order a run would actually use: the configured key, the
-    download destination, then the copy bundled in the repository.
-    """
-    from . import sources as dv
-
-    cands = []
-    if cfg is not None:
-        raw = cfg.get("population.rucc_file", default=None)
-        if raw:
-            cands.append(Path(str(raw)).expanduser())
-    cands += [root / dv.RUCC_FILENAME,
-              Path("data") / dv.RUCC_FILENAME,
-              _REPO_ROOT / "data" / dv.RUCC_FILENAME]
-    for c in cands:
-        if c.exists():
-            return c
-    return None
 
 
 def _find_fips(root: Path):
@@ -2209,8 +2187,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "(~0.4-0.6 GB per state). These are the transmission networks "
                          "`phylogas paint` consumes.")
     sp.add_argument("--with-rucc", dest="with_rucc", action="store_true",
-                    help="Refresh Ruralurbancontinuumcodes2023.csv from USDA ERS. "
-                         "A pinned copy already ships in data/.")
+                    help="Download the current Ruralurbancontinuumcodes2023.csv from "
+                         "USDA ERS into data/. Optional: TwinSampler bundles the 2023 "
+                         "table; point population.rucc_file here to use this copy.")
     sp.add_argument("--with-seeds", dest="with_seeds", action="store_true",
                     help="Also fetch per-state seed sequences from Cov-Spectrum. "
                          "Needed for states other than VA: the bundled seed FASTA is "

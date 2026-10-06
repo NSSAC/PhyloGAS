@@ -293,7 +293,7 @@ to run traits at. Three things make that easier than it first appears:
    cannot run on real data anyway. A real arm can legitimately run traits at
    `division`, or at a coarser aggregate.
 2. **Coarsen rather than withhold.** RUCC category or health district is
-   already in the pipeline via `population.rucc_file`, and aggregating county
+   already in the pipeline (TwinSampler's `rucc_code` column), and aggregating county
    up to one of those keeps the comparison meaningful while reducing
    disclosure risk in small counties.
 3. **The same context inputs.** `refine.root: Wuhan/Hu-1/2019` must be
