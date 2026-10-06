@@ -71,7 +71,30 @@ def read_reference(path) -> str:
     raise ValueError(f"no sequence found in {path}")
 
 
-def hamming_to_reference(seq: str, ref: str) -> "int | None":
+# A, C, G, T as ASCII codes. Membership tested by four comparisons rather
+# than np.isin, which is slower for a set this small.
+_A, _C, _G, _T = (ord(c) for c in "ACGT")
+
+
+def _codes(s: str):
+    """Uppercased ASCII codes for a sequence, as a numpy array.
+
+    bytes.upper() rather than str.upper() so the case fold happens in C, and
+    frombuffer rather than fromiter so no per-character Python object is
+    built. Bit tricks on 0x20 would be faster still but corrupt '-' (0x2D),
+    which has to survive as an invalid character rather than become one.
+    """
+    import numpy as np
+
+    return np.frombuffer(s.encode("ascii", "replace").upper(), dtype=np.uint8)
+
+
+def _valid_mask(arr):
+    return ((arr == _A) | (arr == _C) | (arr == _G) | (arr == _T))
+
+
+def hamming_to_reference(seq: str, ref, ref_codes=None,
+                         ref_valid=None) -> "int | None":
     """Observable differences from the reference.
 
     Ambiguity and gaps are skipped rather than counted: a real root-to-tip
@@ -80,11 +103,21 @@ def hamming_to_reference(seq: str, ref: str) -> "int | None":
 
     Returns None if the lengths differ, since that means the record is not
     aligned to the reference and silently comparing it would be wrong.
+
+    Vectorised. The previous version summed a generator over ~30k characters
+    with a set lookup each, which cost about 0.8 ms per record -- 70 minutes
+    for a 5.35M-record painted set, and the reason `max_records` existed at
+    all. `ref_codes`/`ref_valid` let a caller hoist the reference's own arrays
+    out of the loop; without them they are recomputed per call.
     """
+    import numpy as np
+
     if len(seq) != len(ref):
         return None
-    valid = set("ACGT")
-    return sum(1 for a, b in zip(seq.upper(), ref) if a != b and a in valid and b in valid)
+    a = _codes(seq)
+    b = ref_codes if ref_codes is not None else _codes(ref)
+    bv = ref_valid if ref_valid is not None else _valid_mask(b)
+    return int(np.count_nonzero((a != b) & _valid_mask(a) & bv))
 
 
 def read_dates(metadata, date_col="date", id_col="strain") -> dict:
@@ -155,7 +188,8 @@ def per_site_per_year(slope_per_genome_per_day: float, n_sites: int) -> float:
 
 def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
                 max_records=None, quantity="mu_truth",
-                date_min=None, date_max=None, exclude_ids=None) -> dict:
+                date_min=None, date_max=None, exclude_ids=None,
+                reservoir_seed=0) -> dict:
     """Regress divergence-from-reference on sampling date.
 
     The estimator does not care whether the sequences are simulated or real:
@@ -187,6 +221,23 @@ def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
         return {"error": f"no usable dates in {metadata}"}
     drop = {str(i) for i in (exclude_ids or ())}
 
+    # Hoisted: the reference's codes and validity mask do not change per
+    # record, and recomputing them was a third of the per-record work.
+    _ref_codes = _codes(ref)
+    _ref_valid = _valid_mask(_ref_codes)
+
+    # max_records used to `break` after the first N usable records. The
+    # painted FASTA is written in tick order, so that returned the earliest
+    # infections and a compressed date range -- a 69-day span for a 299-day
+    # study, which is how the same data gave 8.5e-04 capped and 2.8e-04
+    # whole. Reservoir sampling instead: every usable record gets an equal
+    # chance of being kept, so the retained sample spans the full window and
+    # the slope is unbiased. Seeded, so a rerun reproduces.
+    import random as _random
+
+    reservoir = _random.Random(reservoir_seed)
+    n_usable = 0
+
     xs, ys = [], []
     n_seen = n_nodate = n_unaligned = n_window = n_excluded = 0
     for sid, seq in _iter_fasta(fasta):
@@ -202,14 +253,19 @@ def root_to_tip(fasta, reference, metadata, date_col="date", id_col="strain",
            (date_max is not None and d > date_max):
             n_window += 1
             continue
-        div = hamming_to_reference(seq, ref)
+        div = hamming_to_reference(seq, ref, _ref_codes, _ref_valid)
         if div is None:
             n_unaligned += 1
             continue
-        xs.append(d.toordinal())
-        ys.append(float(div))
-        if max_records and len(xs) >= max_records:
-            break
+        n_usable += 1
+        if not max_records or len(xs) < max_records:
+            xs.append(d.toordinal())
+            ys.append(float(div))
+        else:
+            j = reservoir.randrange(n_usable)
+            if j < max_records:
+                xs[j] = d.toordinal()
+                ys[j] = float(div)
 
     if len(xs) < 3:
         msg = (f"only {len(xs)} usable records ({n_nodate} without a date, "

@@ -70,6 +70,37 @@ def variant_column(df: pd.DataFrame) -> "str | None":
 # ==========================================================================
 # Ported verbatim from BeyondBaseline run_all_scenarios.py
 # ==========================================================================
+def _one_row_per_infection(inf, where: str):
+    """Collapse an all-events table to one row per infection.
+
+    TwinSampler's allevents file carries one row per *ascertainable clinical
+    state* -- P, I and hM are three detection chances for the ascertainment
+    model -- so counting its rows overcounts infections. On a 36-week Delta
+    wave that was 8,902,620 rows for 5,295,971 infections, 1.68x, and not a
+    uniform inflation: a person's states fall on different ticks, so one
+    infection was counted in up to three different weeks.
+
+    TwinSampler now de-duplicates before writing, so this is belt and braces
+    for an older or hand-made file. `alias_pid` is the infection id and is
+    1:1 with `strain`; `sim_pid` is the person and is not unique, since a
+    quarter of people in this wave have more than one infection.
+    """
+    if "alias_pid" not in inf.columns:
+        return inf
+    n = len(inf)
+    if "sim_tick" in inf.columns:
+        inf = (inf.assign(_order=pd.to_numeric(inf["sim_tick"], errors="coerce"))
+                  .sort_values(["alias_pid", "_order"], kind="mergesort")
+                  .drop_duplicates(subset=["alias_pid"], keep="first")
+                  .drop(columns=["_order"]))
+    else:
+        inf = inf.drop_duplicates(subset=["alias_pid"], keep="first")
+    if len(inf) != n:
+        print(f"  {where}: collapsed {n:,} state rows to {len(inf):,} "
+              f"infections (allevents predates the de-duplication fix)")
+    return inf
+
+
 def build_weekly_infections(infections_path, pop_df, start_date, num_weeks_ref, date_col: str = "date"):
     """
     Build weekly infections history aligned to linelist slicing.
@@ -78,6 +109,7 @@ def build_weekly_infections(infections_path, pop_df, start_date, num_weeks_ref, 
     # Let pandas sniff the delimiter (comma, tab, etc.) and avoid skipping header rows.
     inf = pd.read_csv(infections_path, sep=None, engine="python", dtype={'alias_pid': str, 'alias_contact': str, 'sim_pid': str, 'pid': str, 'contact_pid': str})
     inf.columns = [c.strip() for c in inf.columns]
+    inf = _one_row_per_infection(inf, "weekly infections")
 
     inf = normalize_age_group_col(inf, "age_group")
     if date_col not in inf.columns:
@@ -139,6 +171,7 @@ def build_weekly_variant_counts(
     """
     inf = pd.read_csv(infections_path, sep=None, engine="python", dtype={'alias_pid': str, 'alias_contact': str, 'sim_pid': str, 'pid': str, 'contact_pid': str})
     inf.columns = [c.strip() for c in inf.columns]
+    inf = _one_row_per_infection(inf, "weekly variant counts")
 
     # resolve date column (case-insensitive)
     if date_col not in inf.columns:

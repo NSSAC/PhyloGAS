@@ -1291,7 +1291,10 @@ def _benchmark_clock(args) -> int:
             res = clk.root_to_tip(
                 fasta, ref, meta,
                 date_col=args.date_field, id_col=args.column,
-                max_records=args.max_records,
+                max_records=(args.max_records
+                             if args.max_records is not None
+                             else _cfgget("nextstrain.clock.max_records")),
+                reservoir_seed=int(_cfgget("random_seed", 0) or 0),
                 date_min=dmin, date_max=dmax, exclude_ids=drop,
                 # Same estimator either way; only the label differs. On real
                 # sequences this is the cheapest and most comparable number
@@ -2035,6 +2038,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="0 (default) disables it. With the rate being fitted, the "
                         "filter prunes valid branches, and by differing amounts per arm.")
     b.add_argument("--max-records", dest="max_records", type=int, default=None,
+                   # Sampled across the file, not the first N -- see
+                   # root_to_tip. Falls back to nextstrain.clock.max_records.
                    help="stop after N sequences (for a quick look at a huge FASTA). "
                         "Truncates in file order; it does not sample")
     b.add_argument("--date-min", dest="date_min", default=None,

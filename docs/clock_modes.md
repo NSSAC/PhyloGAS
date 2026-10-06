@@ -296,6 +296,18 @@ it is the variance explained that falls.
   starts from the configured reference and ncov roots on the same sequence.
 - **`mu_real` needs a matched period.** Unmatched windows make the comparison
   meaningless.
+- **`max_records` samples, it does not truncate.** It used to `break` after
+  the first N usable records. The painted FASTA is written in tick order, so
+  that returned the earliest infections and a compressed window: the same data
+  gave 8.5443e-04 over a 69-day span capped at 20,000, and 2.7506e-04 over the
+  full 299 days uncapped -- a 3x discrepancy that was entirely an artefact of
+  the cap. It is now a seeded reservoir sample, so the retained records span
+  the whole window. Any number produced with a cap before 2026-10-05 should be
+  recomputed.
+
+  Capping is also no longer needed for speed. `hamming_to_reference` summed a
+  generator over ~30k characters per record; vectorised, a 5.35M-record set
+  costs about 3 minutes instead of 160.
 - **Tip dates are onset dates, not collection dates, and not detection
   dates.** Three dates exist, all from `base_date + (tick - start_tick)`. The
   painter filters `exit_state` on `genetic_painter.painted_prefix` ("E2"), so

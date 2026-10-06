@@ -352,6 +352,15 @@ nextstrain:
   clock:
     mode: "both"
 
+    # Cap on records used for mu_truth. Sampled uniformly across the painted
+    # set (reservoir), so the date range is preserved and the slope is
+    # unbiased -- unlike the old behaviour, which took the first N in tick
+    # order and compressed a 299-day study into 69 days. Unset means use
+    # every record, which is now affordable: the divergence count is
+    # vectorised, so 5.35M records cost about 3 minutes rather than 160.
+    # Set it only to bound memory or runtime further.
+    #   max_records: 200000
+
   # Which arms to build.
   #   strategy       - one build per BeyondBaseline sampling arm. The focal set
   #                    is taken whole: BeyondBaseline already chose it, and
