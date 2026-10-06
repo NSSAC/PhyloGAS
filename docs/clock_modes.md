@@ -36,13 +36,23 @@ and the decomposition is exact:
 
     mu_truth  =  w * mu_lineage  +  (1 - w) * mu_between_chains
 
-with `w` the share of date variance lying within chains. On the Virginia Delta
-run `w` is small -- most date variance is *between* chains, because chains are
-young relative to the wave -- so the pooled slope is dominated by the
-importation term and sits far below the per-lineage rate. On synthetic data
-with a known 8.0e-4 clock, `mu_lineage` recovers 8.03e-4 while the pooled fit
-returns 2.99e-4, a 2.7x attenuation, and the identity reconstructs the pooled
-number exactly.
+with `w` the share of date variance lying within chains.
+
+**Measured on the Virginia Delta run, w = 0.9870.** Almost all date variance
+lies *within* chains, so the pooled slope is essentially the per-lineage rate:
+`mu_lineage` 2.9285e-04 against pooled `mu_truth` 2.7506e-04. The identity
+holds -- 0.9870 x 2.9285e-04 + 0.0130 x (-1.1216e-03) = 2.7450e-04 against
+2.7506e-04, the 0.2% gap being the ~1% of painted infections with no chain row,
+which the pooled fit includes and the decomposition does not.
+
+An earlier version of this section predicted the opposite, that `w` would be
+small and the pooled slope badly attenuated. That came from synthetic data
+whose chains were short-lived relative to the wave: there `mu_lineage`
+recovered a known 8.0e-4 while the pooled fit returned 2.99e-4, a 32x
+attenuation. The real run's 3,305 chains span most of the wave instead, so the
+attenuation does not arise. The decomposition is still worth computing -- it is
+what establishes that, rather than assuming it -- but on this run the two
+quantities nearly coincide.
 
 **Use pooled `mu_truth` for the `mu_sim` comparison** (both sides are rooted
 on Wuhan and inherit the same mixture) **and `mu_lineage` when the question is

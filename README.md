@@ -18,11 +18,11 @@ PhyloGAS bridges this gap by integrating **agent-based epidemiological simulatio
 
 PhyloGAS is orchestrated via **Snakemake**. The pipeline consists of five primary stages:
 
-1. **Data Acquisition:** Automatically fetches multi-gigabyte synthetic population demographics and EpiHiper transmission dendrograms from the UVA Dataverse.
-2. **The Genetic Painter (`src/genetic_painter/`):** Overlays biologically plausible SARS-CoV-2 viral genomes onto the transmission tree. It utilizes a two part architecture: a "Speedometer" (calibrated Poisson rate-limiting) dictates *how many* mutations occur per transmission, while a "Map" (MSA-derived entropy and substitution matrices) dictates *where* those mutations stably fixate.
-3. **Ascertainment Simulation (Twin Sampler):** Simulates the real-world lag and demographic biases of infection reporting, generating a skewed, realistic line list of cases.
-4. **Adaptive Sampling (Beyond Baseline):** Subsets the line list using Simple Uniform Random Sampling (SURS) and other sampling strategies (such as stratified sampling).
-5. **Reconstruction & Benchmarking:** Runs the sampled sequences through standard public health phylodynamic pipelines (e.g., Nextstrain/TreeTime) and calculates Topological F1-Scores and Cosine Similarities against the absolute ground truth.
+1. **Data Acquisition:** Fetches synthetic population demographics from the UVA Dataverse and EpiHiper simulation replicates from Zenodo, MD5-verified.
+2. **The Genetic Painter (`src/phylogas/painter/`):** Overlays biologically plausible SARS-CoV-2 genomes onto the transmission tree, starting from real imported sequences (the seed FASTA) rather than the reference. A "Speedometer" (calibrated Poisson rate-limiting) dictates *how many* mutations occur per transmission; a "Map" (MSA-derived entropy and substitution matrices) dictates *where* they fixate.
+3. **Ascertainment Simulation ([TwinSampler](https://github.com/NSSAC/TwinSampler)):** Applies severity- and demographics-dependent detection to every infection, producing a biased line list plus the full infection record. It models *who* gets detected, not reporting delay: dates are symptom/state onset.
+4. **Adaptive Sampling ([BeyondBaseline](https://github.com/NSSAC/BeyondBaseline)):** Selects which cases to sequence under a weekly budget — SURS, stratified, greedy and LASSO-based strategies, across stride / pool-window / target scenarios. Each (scenario × algorithm) pair is a **recipe**, e.g. `4S__surs` or `4S-4_LL-P__lasso_greedy`.
+5. **Reconstruction & Benchmarking:** Builds a Nextstrain (augur/TreeTime) tree per chosen recipe, then scores against the ground truth: geographic flow (cosine similarity, topological F1), variant prevalence, painted-sequence sanity, and the molecular clock (the rate the painter actually produced vs. the rate Nextstrain assumed or inferred — see [`docs/clock_modes.md`](docs/clock_modes.md)).
 
 ---
 
@@ -49,9 +49,9 @@ conda activate phylogas_env
 # Install PhyloGAS itself (editable)
 pip install -e .
 ```
-*(`environment.yml` also pulls the `TwinSampler` and `BeyondBaseline` libraries
-directly from GitHub. Those repos each need a `pyproject.toml` for this to work
-- see `docs/salvage_audit.md` if the pip step fails.)*
+*(`environment.yml` also pulls `TwinSampler`, `BeyondBaseline` and
+`pango_aliasor` directly from GitHub. If that pip step fails, report it rather
+than working around it.)*
 
 ### Option B: pip only
 ```bash
@@ -122,9 +122,21 @@ in place and what is missing.
   the checkout the first time it runs, and reuses it afterwards. If compute
   nodes have no outbound access, run the first build from a login node.
 
-`phylogas nextstrain-config` (run for you by `phylogas run`) writes each arm's
-ncov config and copies its inputs into the ncov checkout. It stops with an
-error if any sequence lacks a metadata row.
+`phylogas nextstrain-config` (run for you by `phylogas run`) writes one ncov
+config per **recipe** listed in `sampling.nextstrain_recipes` and copies its
+inputs into the ncov checkout under `data/phylogas/<recipe>/`. It stops with an
+error if any sequence lacks a metadata row. To run it by hand:
+
+```bash
+phylogas nextstrain-config --config config.yaml --build-type strategy --recipe 4S__surs
+```
+
+Builds use a **fixed** clock rate (`clock_rate: 0.0008` in
+`cfg/nextstrain/ncov/base.yaml`, ncov's SARS-CoV-2 default) and
+`coalescent: opt`. The painter's measured rate is lower (about 2.8–2.9e-4 on
+the Virginia Delta run), so dated trees are scaled to the assumed rate, not the
+simulated one. `nextstrain.clock` controls the comparison; see
+`docs/clock_modes.md`.
 
 ---
 
@@ -227,8 +239,28 @@ genetic_painter:
   compression_threads: 8
 
 sampling:
-  algorithms: ["surs", "lasso_greedy"]
+  algorithms: ["surs", "lasso_greedy"]   # recipe slugs; BeyondBaseline names also accepted
   batch_size: 400
+  nextstrain_recipes: ["4S__surs"]       # which recipes get a tree; "all" for every one
+
+nextstrain:
+  enabled: true
+  dir: "/path/to/ncov"
+```
+
+**Recipes.** BeyondBaseline runs every scenario for each algorithm in
+`sampling.algorithms`; `sampling.nextstrain_recipes` picks which of those
+sample sets get subset and built. List the valid ids with `scenarios-recipes`.
+SURS ignores the target, so its recipes are named by stride only (`1S__surs`,
+`4S__surs`); the older `4S-4_LL-P__surs` spelling still resolves.
+
+**Changing an upstream parameter.** Snakemake reruns a rule when its code or
+params change, but not when you delete an intermediate whose downstream
+targets already exist. To force a stage and everything after it, call
+Snakemake directly (add `-n` first to see what would rerun):
+
+```bash
+snakemake --configfile config.yaml --cores all --forcerun simulate_linelist
 ```
 
 ---
@@ -238,13 +270,19 @@ sampling:
 Upon successful completion, PhyloGAS generates a structured `results/` directory:
 
 ```text
-results/
-├── 01_synthetic_genomes/        # Full ground-truth FASTA and Metadata (BGZF compressed)
-├── 02_simulated_linelists/      # Ascertainment-biased case logs
-├── 03_sampled_datasets/         # Subsets of FASTAs based on SURS, LASSO, etc.
-├── 04_nextstrain_builds/        # Auspice JSONs and inferred trees from the pipeline
-└── 05_benchmarks/               # Final CSVs containing Cosine Similarity & F1-Scores
+results/<project_name>/
+├── 00_mutation_model/       # entropy thresholds + substitution matrix (phylogas train)
+├── 01_synthetic_genomes/    # painted FASTA + metadata for every infection (xz)
+├── 02_simulated_linelists/  # linelist.csv.xz (ascertained), linelist_allevents.csv.xz (all infections)
+├── 03_sampled_datasets/     # <recipe>_samples.csv.xz, <project>.<recipe>.fasta.xz
+├── 04_nextstrain_builds/    # <recipe>/auspice.json, one per nextstrain_recipes entry
+└── 05_benchmarks/           # clock_estimates.csv, Mugration_Metrics.csv,
+                             # AUC_truth_rankings.csv, sequence_divergence.csv, ...
 ```
+
+`rule all` produces the painted set, the sampled subsets and (with
+`nextstrain.enabled`) the trees and `clock_estimates.csv`. The other benchmark
+CSVs are separate targets — name them, or use `phylogas benchmark ...`.
 
 ---
 
@@ -271,9 +309,17 @@ PhyloGAS/
 │   └── benchmark/             # Scoring against ABM ground truth
 │       ├── mugration.py       #   parsimony inference on the transmission tree
 │       ├── scoring.py         #   cosine / F1 / pearson / masked MAE
+│       ├── truth_metrics.py   #   weekly infections / variant counts from allevents
+│       ├── clock.py           #   mu_truth, mu_sim, mu_operational
+│       ├── lineage.py         #   within- vs between-chain clock decomposition
 │       └── runner.py          #   batch drivers
-├── docs/salvage_audit.md      # What was rescued from synthetic_biosurveillance
-└── cfg/                       # EpiHiper experiment configs
+├── docs/
+│   ├── clock_modes.md         # what each clock rate measures, and how to read them
+│   ├── design/                # open design questions (e.g. metadata_ownership.md)
+│   └── staging_local_data.md  # using files already on a cluster
+└── cfg/
+    ├── nextstrain/ncov/       # ncov build overrides (clock, coalescent)
+    └── ...                    # EpiHiper experiment configs
 ```
 
 ---
@@ -290,23 +336,25 @@ This project is mid-restructure. What is actually wired up today:
 | 0. Seed acquisition | `phylogas prep-seeds` | Works |
 | 1. Entropy training | `phylogas train` | Works, verified end-to-end |
 | 2. Genetic painting | `phylogas paint` | Works, verified end-to-end |
-| 3. Ascertainment | `simulate_linelist` (TwinSampler) | External; Snakemake rule written, untested here |
-| 4. Adaptive sampling | `scenarios-runner` (BeyondBaseline) | External; requires that repo's `pyproject.toml` |
+| 3. Ascertainment | rule `simulate_linelist` (TwinSampler) | Works, verified at cluster scale |
+| 4. Adaptive sampling | rule `sample_scenarios` (`beyond-baseline-sweep`) | Works; one sample set per recipe (`sampling.replicates` not yet wired) |
 | 5. FASTA subsetting | `phylogas subset-fasta` | Works |
-| 6. Nextstrain | rule `nextstrain_build` | Opt-in, untested (needs an ncov checkout) |
-| 7. Benchmarking | `phylogas benchmark` | Works — mugration scoring verified bit-identical to the pre-split implementation |
+| 6. Nextstrain | rule `nextstrain_build` | Works, opt-in; verified with the Nextstrain CLI on a cluster |
+| 7. Clock benchmark | `phylogas benchmark clock` | Works for `truth` and `operational`; `inferred` (mu_sim) needs augur on `PATH` |
+| 7. Other benchmarks | `phylogas benchmark truth / mugration / sequence` | Work — mugration scoring verified bit-identical to the pre-split implementation |
 | — | `phylogas compare-strategies` | Works — runs a BeyondBaseline sweep, then ranks every strategy |
 | — | Docker / Apptainer | **Not written** |
 
-Verified working: `phylogas train` → `phylogas paint` via Snakemake produces
-29,010 sequences with matching metadata, and a re-run is correctly a no-op.
+Verified end to end on the cluster: the Virginia Delta replicate (ticks
+128–428, 5.35M painted infections) through painting, ascertainment, sampling,
+a `4S__surs` Nextstrain build and `clock_estimates.csv`.
 
 ---
 
 ## 📚 Data Availability & Acknowledgements
-Due to size constraints, the heavy synthetic population data and raw EpiHiper transmission networks are not hosted in this repository. The pipeline automatically pulls necessary files from the UVA Dataverse ([doi:10.18130/V3/5LSDCY](https://dataverse.lib.virginia.edu/dataset.xhtml?persistentId=doi:10.18130/V3/5LSDCY)). 
+Due to size constraints, the synthetic population data and EpiHiper outputs are not hosted in this repository. `phylogas fetch-data` pulls the population files from the UVA Dataverse ([doi:10.18130/V3/5LSDCY](https://dataverse.lib.virginia.edu/dataset.xhtml?persistentId=doi:10.18130/V3/5LSDCY)) and the simulation replicates from Zenodo ([doi:10.5281/zenodo.23067670](https://doi.org/10.5281/zenodo.23067670)).
 
 **Core Components:**
-* **Genetic Painter:** Integrated within `src/genetic_painter/`.
+* **Genetic Painter:** Integrated within `src/phylogas/painter/`.
 * **Twin Sampler:** [github.com/NSSAC/TwinSampler](https://github.com/NSSAC/TwinSampler)
 * **BeyondBaseline:** [github.com/NSSAC/BeyondBaseline](https://github.com/NSSAC/BeyondBaseline)

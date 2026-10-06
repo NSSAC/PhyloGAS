@@ -220,8 +220,8 @@ genetic_painter:
   # Identifiers are read from alias_pid, infection_id, strain, sim_pid or pid.
   #   linelist_filters:
   #     - "{results_dir}/02_simulated_linelists/linelist.csv"
-  #     - "surs={results_dir}/03_sampled_datasets/surs_samples.csv.xz"
-  #     - "lasso50={results_dir}/03_sampled_datasets/LASSO-Greedy_samples.csv.xz"
+  #     - "surs={results_dir}/03_sampled_datasets/4S__surs_samples.csv.xz"
+  #     - "lasso={results_dir}/03_sampled_datasets/4S-4_LL-P__lasso_greedy_samples.csv.xz"
   linelist_filters: []
 
   # -- Metadata --------------------------------------------------------------
@@ -276,20 +276,12 @@ ascertainment:
 sampling:
   algorithms: ["surs", "lasso_greedy"]
   batch_size: 400
+  # Not wired yet: the pipeline draws one sample set per recipe. Kept so
+  # configs that set it still load.
   replicates: 5
   no_replacement: true
   outdir: "{results_dir}/03_sampled_datasets"
 
-  # Which recipe feeds the Nextstrain tree. A recipe is one
-  # (scenario x algorithm) pair; BeyondBaseline runs every scenario per call
-  # and names each sample file after the recipe. Ids are its own --
-  # `scenarios-recipes` prints the index, and the string here must match one.
-  #
-  # STUB, not fully wired. Only the scenario half of the first entry is used,
-  # paired with each algorithm in `algorithms` above, so there is one tree per
-  # algorithm. To honour the list properly -- several recipes, or "all" -- a
-  # {recipe} wildcard has to run through subset_fasta and nextstrain.builds so
-  # that a tree exists per recipe rather than per algorithm.
   # Which recipes get a Nextstrain tree. One tree per entry; "all" means
   # every id `scenarios-recipes` prints. A recipe is a scenario and an
   # algorithm together, because the algorithm alone does not identify a

@@ -845,8 +845,8 @@ snakemake --snakefile .../ncov/Snakefile \
 **New**
 
 ```bash
-phylogas nextstrain-config --config config.yaml --build-type strategy --algo surs
-nextstrain build /path/to/ncov --configfile data/phylogas/surs/config.yaml
+phylogas nextstrain-config --config config.yaml --build-type strategy --recipe 4S__surs
+nextstrain build /path/to/ncov --configfile data/phylogas/4S__surs/config.yaml
 ```
 
 or as part of `phylogas run` with `nextstrain.enabled: true`.

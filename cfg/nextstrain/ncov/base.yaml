@@ -55,8 +55,12 @@ refine:
   # likelihood has no gradient to climb. "opt" fits a single effective size and
   # is identifiable on this tree shape.
   #
-  # Not a clock misspecification: mu_truth measured 8.5443e-04 against the
-  # 0.0008 prior, which with clock_std_dev 0.0004 is 0.14 SD out.
+  # The clock prior is NOT ruled out as a contributor. An earlier note here
+  # cited mu_truth 8.5443e-04 (0.14 SD from the 0.0008 prior); that figure
+  # came from the first-N-records truncation, which squeezed a 299-day study
+  # into 69 days. Measured on the full painted set, mu_truth is 2.75e-04 and
+  # mu_lineage 2.93e-04 -- about 1.3 SD below the prior with clock_std_dev
+  # 0.0004. Whether that mismatch helps break skyline has not been tested.
   #
   # Nothing downstream reads the coalescent trajectory -- the clock comparison
   # re-runs refine on its own, and the mugration and prevalence metrics do not
