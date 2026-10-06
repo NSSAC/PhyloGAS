@@ -1303,6 +1303,57 @@ def _benchmark_clock(args) -> int:
                 quantity="mu_truth" if args.kind == "simulated" else "mu_real_observed")
             results.append(clk.format_row(arm, res))
 
+            # --- decompose the pooled rate ---------------------------
+            # mu_truth mixes the painter's per-lineage rate with the
+            # importation regime: the painter starts chains from real seed
+            # genomes that already carry ~42 substitutions of their own, and
+            # accumulates along time since each chain's import rather than
+            # along calendar date. Pooled is still the right number to
+            # compare against mu_sim, which fits the same shape on the same
+            # Wuhan root -- but on its own it cannot say what rate the
+            # painter produced. These rows split it.
+            #
+            # Simulated data only: real sequences have no component table and
+            # no real_strain, so there is nothing to join.
+            if args.decompose and args.kind == "simulated":
+                from .benchmark import lineage as lin
+
+                comp_path = args.components
+                if comp_path is None and cfg is not None:
+                    try:
+                        comp_path = cfg.ascertainment_outputs().get("allevents")
+                    except Exception:
+                        comp_path = None
+                comps = None
+                if comp_path and Path(comp_path).exists():
+                    print(f"  chains: {comp_path}")
+                    try:
+                        comps = lin.read_components(comp_path)
+                        print(f"          {len(comps):,} infections mapped "
+                              f"to chains")
+                    except ValueError as exc:
+                        print(f"  WARNING: {exc}", file=sys.stderr)
+                else:
+                    print("  chains: not found, so mu_lineage is skipped "
+                          "(pass --components <allevents csv>)",
+                          file=sys.stderr)
+                try:
+                    for row in lin.decompose(
+                            fasta, ref, meta, components=comps,
+                            date_col=args.date_field, id_col=args.column,
+                            date_min=dmin, date_max=dmax, exclude_ids=drop,
+                            takeoff_min=args.takeoff_min,
+                            max_records=(args.max_records
+                                         if args.max_records is not None
+                                         else _cfgget(
+                                             "nextstrain.clock.max_records"))):
+                        results.append(clk.format_row(arm, row))
+                except Exception as exc:          # noqa: BLE001
+                    # The pooled number is the one the DAG depends on; a
+                    # failure here must not take it down with it.
+                    print(f"  WARNING: decomposition failed ({type(exc).__name__}: "
+                          f"{exc}); mu_truth is unaffected", file=sys.stderr)
+
     # --- mu_sim / mu_real: unconstrained augur refine --------------------
     if "inferred" in want:
         build = args.build_dir
@@ -1344,11 +1395,17 @@ def _benchmark_clock(args) -> int:
             continue
         rate = r.get("rate_subs_per_site_per_year")
         r2 = r.get("r_squared")
-        line = f"  {r['quantity']:<16} {rate:.4e} subs/site/year"
+        line = f"  {r['quantity']:<24} {rate:.4e} subs/site/year"
         if r2 is not None and not isinstance(r2, str):
             line += f"   R2={r2:.3f}"
         if r.get("tips"):
-            line += f"   n={r['tips']:,}  span={r.get('date_span_days')}d"
+            line += f"   n={r['tips']:,}"
+        if r.get("date_span_days") is not None:
+            line += f"  span={r['date_span_days']}d"
+        if r.get("chains_fitted"):
+            line += f"  chains={r['chains_fitted']:,}"
+        if r.get("imports") and not r.get("chains_fitted"):
+            line += f"  imports={r['imports']:,}"
         print(line)
 
     # Only measurements go in the results file; failures were reported above.
@@ -1380,6 +1437,23 @@ def _benchmark_clock(args) -> int:
         for r in existing + measured:
             w.writerow(r)
     print(f"\nWrote: {out}  ({len(existing) + len(measured)} rows)")
+
+    by_q = {r.get("quantity"): r for r in measured}
+    if "mu_lineage" in by_q and "mu_between_chains" in by_q:
+        w = by_q["mu_lineage"].get("within_date_variance_share")
+        pooled = by_q.get("mu_truth", {}).get("rate_subs_per_site_per_year")
+        lin_r = by_q["mu_lineage"]["rate_subs_per_site_per_year"]
+        btw_r = by_q["mu_between_chains"]["rate_subs_per_site_per_year"]
+        print(f"\nDecomposition: mu_truth = w*mu_lineage + (1-w)*mu_between_chains")
+        if isinstance(w, float):
+            print(f"      w = {w:.4f} of the date variance lies within chains")
+            print(f"      {w:.4f}*{lin_r:.4e} + {1 - w:.4f}*{btw_r:.4e} "
+                  f"= {w * lin_r + (1 - w) * btw_r:.4e}")
+        if pooled:
+            print(f"      pooled mu_truth = {pooled:.4e}")
+        print("      mu_lineage is the painter's rate; pooled mu_truth is the\n"
+              "      wave's, and is what mu_sim is comparable to. See\n"
+              "      docs/clock_modes.md.")
 
     if any(r.get("quantity") == "mu_operational" for r in measured):
         print("\nNote: mu_operational was assumed by ncov, not measured. It "
@@ -2040,8 +2114,21 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--max-records", dest="max_records", type=int, default=None,
                    # Sampled across the file, not the first N -- see
                    # root_to_tip. Falls back to nextstrain.clock.max_records.
-                   help="stop after N sequences (for a quick look at a huge FASTA). "
-                        "Truncates in file order; it does not sample")
+                   help="fit on at most N sequences (for a quick look at a "
+                        "huge FASTA). Sampled uniformly across the file, so "
+                        "the date range is preserved")
+    b.add_argument("--components", default=None,
+                   help="all-events table carrying component_id, joined on "
+                        "alias_pid to split mu_truth into mu_lineage and "
+                        "mu_between_chains (default: the configured "
+                        "ascertainment allevents output)")
+    b.add_argument("--takeoff-min", dest="takeoff_min", type=int, default=10,
+                   help="tips a chain needs before it counts as having taken "
+                        "off, for the seed-trend rows (default: 10)")
+    b.add_argument("--no-decompose", dest="decompose", action="store_false",
+                   default=True,
+                   help="skip the mu_lineage / seed-trend rows; report the "
+                        "pooled mu_truth alone")
     b.add_argument("--date-min", dest="date_min", default=None,
                    help="earliest date to fit (default for --kind simulated: "
                         "genetic_painter.start_date)")

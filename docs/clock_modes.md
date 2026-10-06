@@ -5,12 +5,14 @@ analysis can be made to disagree *by configuration rather than by biology*, so
 it needs deciding deliberately rather than per run. This document is the
 decision record.
 
-The short version: **run both modes, on different arms, and report three
-numbers rather than two.**
+The short version: **run both modes, on different arms, and report the three
+headline numbers rather than two** -- plus, on simulated data, the
+decomposition in 1a and 1b, which says how much of the headline is evolution
+and how much is the importation regime.
 
 ---
 
-## 1. The three quantities
+## 1. The quantities
 
 | symbol | what it is | how it is obtained | comparable to real data? |
 |---|---|---|---|
@@ -18,7 +20,67 @@ numbers rather than two.**
 | **mu_sim** | TreeTime's estimate from the simulated sequences | `augur refine` with no `--clock-rate`, on ncov's own `tree_raw.nwk` | yes |
 | **mu_real** | TreeTime's estimate from real sequences | the same unconstrained refine on a real-data build | — |
 
-A fourth number would be worth recording but is **not yet implemented**, and is
+### 1a. Decomposing `mu_truth`
+
+`mu_truth` is a *pooled* slope, and pooling hides a split that matters. The
+painter accumulates mutations along time since each chain's own importation,
+not along calendar date, and each chain starts at its seed's divergence rather
+than at zero. So:
+
+| symbol | what it is | how obtained | comparable to real data? |
+|---|---|---|---|
+| **mu_lineage** | the painter's per-lineage rate | within-chain slope, free intercept per chain | no -- real data has no chain labels |
+| **mu_between_chains** | the importation regime's contribution | chain means vs chain mean dates, tip-weighted | no |
+
+and the decomposition is exact:
+
+    mu_truth  =  w * mu_lineage  +  (1 - w) * mu_between_chains
+
+with `w` the share of date variance lying within chains. On the Virginia Delta
+run `w` is small -- most date variance is *between* chains, because chains are
+young relative to the wave -- so the pooled slope is dominated by the
+importation term and sits far below the per-lineage rate. On synthetic data
+with a known 8.0e-4 clock, `mu_lineage` recovers 8.03e-4 while the pooled fit
+returns 2.99e-4, a 2.7x attenuation, and the identity reconstructs the pooled
+number exactly.
+
+**Use pooled `mu_truth` for the `mu_sim` comparison** (both sides are rooted
+on Wuhan and inherit the same mixture) **and `mu_lineage` when the question is
+what the painter generated.** They are not interchangeable and neither is
+wrong.
+
+### 1b. What the seeds themselves contribute
+
+The seed schedule is built from real collection dates, and real Delta genomes
+grew more diverged through 2021, so seed divergence is *correlated with import
+date*. That correlation enters the pooled slope directly, weighted by how many
+tips each chain contributes -- which means the founder lottery reshapes it.
+
+| symbol | what it is |
+|---|---|
+| **mu_seed_trend** | seed divergence vs import date, every importation, unweighted. The real-world trend in what arrived. |
+| **mu_seed_trend_surviving** | the same, restricted to chains that took off. |
+| **mu_seed_trend_weighted** | the same, weighted by tips per chain -- the version that actually enters `mu_truth`. |
+
+The gap between the first and the last is the founder lottery's effect. It is
+the main reason `mu_truth` need not equal what real surveillance of the same
+wave would measure, even though the seeds are real sequences: real surveillance
+applies the same "only lineages that grew get sequenced" filter, but draws its
+own lottery. Two consequences worth stating plainly:
+
+- **Non-overlapping imports.** The seeds are sequenced *local* genomes, so
+  descendants of introductions carrying some local evolution, not the
+  introductions themselves. Their divergence-vs-date trend can differ from the
+  true introductions'.
+- **Chains that never take off.** A seed whose chain fizzles contributes no
+  tips and so drops out of the weighted trend entirely.
+
+Neither affects `mu_sim` vs `mu_truth`, which are computed from the same tips
+and the same chains. Both affect `mu_truth` vs `mu_real_observed`.
+
+---
+
+A further number would be worth recording but is **not yet implemented**, and is
 **not** comparable to real data:
 
 | **mu_placed** | substitutions the painter actually placed, summed along each transmission path | painter accounting -- *not built* | **no** |
@@ -122,12 +184,20 @@ the sampler.
 | 3 | How much does each sampling strategy bias the rate estimate? | generative | every `strategy` arm | `mu_sim(arm)` vs `mu_truth` |
 | 4 | Would our simulated outbreak look right on an Auspice dashboard? | operational | `strategy` arms | trees, clades, traits vs a real build |
 | 5 | Are the simulated sequences saturating? | n/a | `all_infections` | `mu_placed` vs `mu_truth` — **not implemented** |
+| 6 | What rate did the painter actually generate? | generative | `all_infections` | `mu_lineage` vs the literature ~8e-4 |
+| 7 | How much of the wave's apparent rate is importation? | generative | `all_infections` | `w`, with `mu_lineage` vs `mu_between_chains` |
+| 8 | Would real surveillance of this wave measure the same? | generative | `all_infections` | `mu_seed_trend` vs `mu_seed_trend_weighted` |
 
 Rows 1 and 2 are the decomposition that matters. Comparing `mu_sim` to
 `mu_real` directly -- the obvious two-way comparison -- conflates them: a
 discrepancy could be the simulation's physics *or* TreeTime's inference error,
 and you cannot tell which. `mu_truth` separates them, and is available only
 because this is a digital twin.
+
+Rows 6 to 8 come out of `truth` mode in one pass, so they cost nothing extra
+once the chain join is available. Like `mu_truth` they are properties of the
+simulation rather than of an arm -- the FASTA they read is the full painted
+set, so `--arm` only labels the row.
 
 **Row 3 is a benchmark result in its own right**, and belongs with the other
 sampling metrics. It is a question an empirical study cannot ask, because real
@@ -249,17 +319,39 @@ phylogas benchmark clock --config config.yaml --mode truth
 phylogas benchmark clock --config config.yaml --arm surs --mode inferred
 ```
 
+`truth` mode also emits the decomposition of 1a and 1b whenever it can join
+chain membership. It needs `component_id` keyed on `alias_pid`, which lives in
+TwinSampler's all-events table -- the painted metadata has no chain column,
+because the painter writes `real_strain` only for index cases. The path is
+taken from the configured ascertainment output, or named explicitly:
+
+```bash
+phylogas benchmark clock --config config.yaml --mode truth \
+    --components results/<project>/02_simulated_linelists/linelist_allevents.csv.xz
+```
+
+Without it the pooled `mu_truth` is still produced and `mu_lineage` reports
+why it is absent; `--no-decompose` suppresses the extra rows entirely. The
+join holds one entry per infection, so budget roughly a gigabyte of memory for
+a 5M-infection run, or cap the sequence pass with `--max-records`.
+`--takeoff-min` sets how many tips a chain needs before it counts as having
+taken off, for the surviving/weighted seed rows.
+
 Config:
 
 ```yaml
 nextstrain:
   clock:
     mode: both          # operational | generative | both
+    # max_records: 200000   # sampled across the file, not truncated
 ```
 
 Results accumulate in `{benchmark.outdir}/clock_estimates.csv`, one row per
 (arm, quantity), with the slope, the per-site-per-year rate, R^2, the tip
-count and the date span. R^2 and the span are reported because a rate fitted
+count and the date span. The decomposition rows add the chain count, the
+largest and median chain size, and `within_date_variance_share` -- the `w` of
+1a, which is what tells you whether the pooled number is dominated by
+evolution or by importation. R^2 and the span are reported because a rate fitted
 over a narrow window is unreliable regardless of mode, and a short sampling
 window is the usual reason a clock estimate misbehaves.
 
@@ -292,8 +384,27 @@ it is the variance explained that falls.
   interval does half the work and lives outside PhyloGAS. So `mu_truth` must be
   measured; it cannot be looked up. A future model with an explicit time-based
   rate would change this.
-- **Distance-from-reference equals distance-from-root.** True while the painter
-  starts from the configured reference and ncov roots on the same sequence.
+- **Distance-from-reference does NOT equal distance-from-root, and that is
+  all right.** This entry used to claim the equivalence held "while the
+  painter starts from the configured reference". It does not start there.
+  `genetic_painter.reference_fasta` is used only to emit the reference as the
+  first output record; the config says so at that key -- "the ancestral
+  genomes come from seed_fasta, not from here". Every chain begins at a real
+  seed genome already carrying its own divergence from Wuhan: measured at mean
+  41.6, sd 4.7, range 14-57 substitutions across the 3,322 seeds of the
+  Virginia Delta run.
+
+  What rescues the comparison is not that premise but a different one.
+  `refine.root` is `Wuhan/Hu-1/2019`, so TreeTime's root-to-tip distances
+  decompose exactly as the Hamming measure does: a shared Wuhan-to-Delta stem
+  (constant, no effect on slope), plus that chain's seed offset, plus
+  accumulation since its import. Both sides inherit the same seed offsets and
+  the same import mixture, so `mu_sim` vs `mu_truth` remains apples to apples.
+  The estimator is sound; the stated reason was wrong.
+
+  What the old premise did get right is that `mu_truth` cannot be read as the
+  *simulation's* rate. It is the wave's rate under this importation regime.
+  `mu_lineage` is the painter's own rate -- see section 2a.
 - **`mu_real` needs a matched period.** Unmatched windows make the comparison
   meaningless.
 - **`max_records` samples, it does not truncate.** It used to `break` after
