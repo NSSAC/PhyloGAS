@@ -109,6 +109,11 @@ def cmd_paint(args) -> int:
         if not align_fasta:
             found, _ = _training_fasta_path(cfg, args)
             align_fasta = str(found) if found else None
+        else:
+            # The download compresses the alignment, so a config naming the
+            # plain .fasta must still find the .fasta.xz beside it.
+            found = cfg.resolve_variant(align_fasta)
+            align_fasta = str(found) if found else align_fasta
         found, where = _seed_fasta_path(cfg, args)
         if found is not None and where != "genetic_painter.seed_fasta":
             seed_fasta = str(found)
@@ -933,6 +938,28 @@ def _bulk_output_name(state, pango, d_from, d_to, include_sublineages=True) -> s
     return name if include_sublineages else name.replace(".fasta", "_exact.fasta")
 
 
+def _compress_file(src: Path, dst: Path) -> None:
+    """Compress `src` to `dst` (.xz or .gz) and remove `src`.
+
+    Uses the multi-threaded `xz` binary when present; the stdlib otherwise.
+    Written to a temporary name first so an interrupted run never leaves a
+    truncated file under the real name.
+    """
+    tmp = dst.with_name(dst.name + ".part")
+    if dst.suffix == ".xz" and shutil.which("xz"):
+        with open(tmp, "wb") as out:
+            subprocess.run(["xz", "-T0", "-6", "-c", str(src)], stdout=out, check=True)
+    else:
+        import gzip
+        import lzma
+        opener = (lambda p: lzma.open(p, "wb", preset=6)) if dst.suffix == ".xz" \
+            else (lambda p: gzip.open(p, "wb", compresslevel=6))
+        with open(src, "rb") as fin, opener(tmp) as fout:
+            shutil.copyfileobj(fin, fout, 1 << 20)
+    tmp.replace(dst)
+    src.unlink()
+
+
 def _training_fasta_path(cfg, args=None):
     """Locate the bulk training alignment. Returns ``(found_or_None, target)``.
 
@@ -1126,23 +1153,19 @@ def cmd_fetch_data(args) -> int:
                 # Bulk mode names its own output; move it onto the configured
                 # align_fasta path so `train` finds it without config edits.
                 produced = target.parent / _bulk_output_name(state, pango, d_from, d_to, sub)
-                if produced.exists() and produced.resolve() == target.resolve():
-                    print(f"    saved: {target}")
-                elif produced.exists():
-                    if target.suffix in (".xz", ".gz", ".bz2", ".zst"):
-                        # Bulk mode writes plain FASTA; renaming it onto a
-                        # compressed name would misreport the format.
-                        print(f"    wrote {produced}")
-                        print(f"    NOTE: genetic_painter.align_fasta names a "
-                              f"{target.suffix} file. Compress it, or point the "
-                              f"key at {produced}.")
-                    else:
-                        produced.replace(target)
-                        # seq_prep.py has just announced its own filename, so
-                        # be explicit that the file moved and why.
-                        print(f"    renamed {produced.name} -> {target}")
-                        print(f"            (genetic_painter.align_fasta, which "
-                              f"`phylogas train` reads)")
+                if produced.exists():
+                    # Bulk mode writes plain FASTA, which is large and highly
+                    # redundant. Compress it onto the configured name (adding
+                    # .xz if the config names a plain file): `train` reads
+                    # .xz directly and every lookup tolerates the suffix.
+                    final = (target if target.suffix in (".xz", ".gz")
+                             else Path(str(target) + ".xz"))
+                    before = produced.stat().st_size
+                    _compress_file(produced, final)
+                    print(f"    {produced.name} -> {final}  "
+                          f"({before / 1e6:,.0f} MB -> {final.stat().st_size / 1e6:,.0f} MB)")
+                    print(f"            (genetic_painter.align_fasta, which "
+                          f"`phylogas train` reads)")
                 if cfg.get("genetic_painter.align_fasta", default=None) is None:
                     print(f"    NOTE: set genetic_painter.align_fasta to {target}")
 

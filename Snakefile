@@ -64,25 +64,27 @@ def _ascertainment_base():
 
 
 def resolve_benchmark(key, kind):
-    """'auto' | 'none' | <path> -> an existing path, or None.
+    """'auto' | 'none' | <path> -> a path to depend on, or None.
 
-    Mirrors phylogas.config.resolve_benchmark_input so the Snakefile and the
-    CLI agree about what will be scored. 'auto' derives the path the way
-    TwinSampler names it and keeps it only if the file exists, so a pipeline
-    that has not produced it yet simply skips that benchmark.
+    'auto' is the file this pipeline's line-list step writes, whether or not
+    it exists yet. An explicit path is used if it exists (or is that same
+    output). 'none' disables the benchmarks that need it.
     """
     raw = cfg(key, "auto")
     raw = "auto" if raw in (None, "") else str(raw)
     if raw.lower() in ("none", "skip", "off", "false"):
         return None
+    produced = {"allevents": ALLEVENTS_OUT, "mugration": MUGRATION_OUT}[kind]
     if raw.lower() == "auto":
-        base = _ascertainment_base()
-        if not base:
-            return None
-        cand = {"allevents": f"{base}_allevents.csv.xz",
-                "mugration": f"{base}_mugration.json"}[kind]
-    else:
-        cand = raw
+        # The pipeline's own line-list step writes both files, so 'auto' names
+        # them as outputs-to-be rather than files that must already exist.
+        # Snakemake then schedules each benchmark after ascertainment in the
+        # same run. (Requiring existence made benchmarks vanish from a first
+        # run and appear only on a second.)
+        return produced
+    cand = raw
+    if os.path.normpath(cand) == os.path.normpath(produced):
+        return produced
     alt = cand[:-3] if cand.endswith(".xz") else cand + ".xz"
     for p in (cand, alt):
         if os.path.exists(p):
@@ -109,7 +111,23 @@ PROJECT       = cfg("project_name", "phylogas")
 
 THRESHOLD     = cfg("genetic_painter.entropy_thresholds")
 PROBMATRIX    = cfg("genetic_painter.probability_matrix")
-ALIGN_FASTA   = cfg("genetic_painter.align_fasta")
+def _existing_variant(path):
+    """The configured file, or its compressed / decompressed sibling on disk.
+
+    fetch-data compresses the training alignment to .fasta.xz, while configs
+    commonly name the plain .fasta; train reads either.
+    """
+    if not path or os.path.exists(path):
+        return path
+    for ext in (".xz", ".gz"):
+        if os.path.exists(path + ext):
+            return path + ext
+        if path.endswith(ext) and os.path.exists(path[: -len(ext)]):
+            return path[: -len(ext)]
+    return path
+
+
+ALIGN_FASTA   = _existing_variant(cfg("genetic_painter.align_fasta"))
 PAINT_PREFIX  = cfg("genetic_painter.output_prefix", f"{RESULTS}/01_synthetic_genomes/{PROJECT}")
 
 # genetic_painter.location is a mapping in YAML but the painter takes it as a
@@ -149,6 +167,7 @@ ALGORITHMS    = cfg("sampling.algorithms", ["surs"])
 # the same way means the two cannot disagree, and it inherits LINELIST's
 # fallback instead of collapsing to "" when the key is absent.
 ALLEVENTS_OUT = re.sub(r"\.csv(\.gz|\.xz)?$", "", str(LINELIST)) + "_allevents.csv.xz"
+MUGRATION_OUT = re.sub(r"\.csv(\.gz|\.xz)?$", "", str(LINELIST)) + "_mugration.json"
 ALLEVENTS = resolve_benchmark("benchmark.allevents", "allevents")
 MUGRATION = resolve_benchmark("benchmark.truth_mugration", "mugration")
 
@@ -491,6 +510,9 @@ rule simulate_linelist:
         # Declared so Snakemake tracks and cleans it, and so the
         # all_infections arm can depend on it rather than on its existence.
         allevents=ALLEVENTS_OUT,
+        # Also always written (TwinSampler derives it from --out). Declared so
+        # benchmark_mugration can depend on it within the same run.
+        mugration=MUGRATION_OUT,
     params:
         start_date=cfg("genetic_painter.start_date"),
         start_tick=cfg("genetic_painter.start_tick"),
@@ -817,3 +839,37 @@ if ALLEVENTS:
      shell:
          "phylogas benchmark sequence --painted {input.painted} "
          "--infections {input.infections} --out {output.csv}"
+
+
+# --------------------------------------------------------------------------
+# End-to-end targets
+#
+# `all` (the default) stops at painted genomes, sampled subsets and -- with
+# nextstrain enabled -- the trees and clock_estimates.csv. The ground-truth
+# benchmarks depend on the line-list step's all-events and mugration outputs,
+# which Snakemake schedules first, so one invocation runs everything:
+#
+#   phylogas run --config config.yaml --cores all benchmarks
+#   phylogas run --config config.yaml --cores all full       # all + benchmarks
+# --------------------------------------------------------------------------
+def _benchmark_targets():
+    targets = []
+    if ALLEVENTS:
+        targets += [f"{BENCH_DIR}/AUC_truth_rankings.csv",
+                    f"{BENCH_DIR}/sequence_divergence.csv"]
+    if MUGRATION and ALLEVENTS:
+        targets.append(f"{BENCH_DIR}/Mugration_Metrics.csv")
+    return targets
+
+
+rule benchmarks:
+    """Every ground-truth benchmark the configured inputs allow."""
+    input:
+        _benchmark_targets(),
+
+
+rule full:
+    """The default target plus the ground-truth benchmarks."""
+    input:
+        rules.all.input,
+        _benchmark_targets(),

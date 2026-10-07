@@ -82,3 +82,7 @@ scripts/zenodo/
 docs/source_material/
 dataverse_html.txt
 zenodo_doi.txt
+
+# slurm/run_states.sbatch writes here; the folder itself is tracked so sbatch -o works
+logs/*
+!logs/README

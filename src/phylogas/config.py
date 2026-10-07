@@ -324,7 +324,8 @@ class Config:
                 return None, "auto: ascertainment.output is not configured"
             found = self.resolve_variant(derived)
             if found is None:
-                return None, f"auto: not found at {derived}"
+                return None, (f"auto: not there yet; the pipeline's line-list "
+                              f"step writes it ({derived})")
             return found, f"auto from ascertainment.output"
 
         found = self.resolve_variant(raw)
