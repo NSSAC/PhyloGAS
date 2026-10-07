@@ -59,6 +59,13 @@ bash slurm/prepare_inputs.sh "${STATE}"
 
 # `full` = the default target plus the ground-truth benchmarks.
 # --rerun-incomplete: a job killed mid-write (time limit) leaves partial
-# outputs that would otherwise block the resubmission.
+#   outputs that would otherwise block the resubmission.
+# --nolock: Snakemake locks the whole WORKING DIRECTORY, not the files it is
+#   about to write, so one state's run would otherwise block every other
+#   state in this checkout -- and a killed job leaves the lock behind. The
+#   states write disjoint outputs (results/<state>_delta_wave/, and their own
+#   data/phylogas/<state>_delta_wave/ staging inside ncov), and Snakemake's
+#   metadata is keyed per output file, so the lock buys nothing here.
+#   It does mean two jobs for the SAME state must not run at once.
 phylogas run --config "${CONFIG}" --cores "${SLURM_CPUS_PER_TASK:-8}" full \
-    --rerun-incomplete --keep-going
+    --rerun-incomplete --keep-going --nolock
