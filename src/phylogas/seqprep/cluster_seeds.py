@@ -66,6 +66,24 @@ def tick_zero_from_abm_config(path) -> pd.Timestamp:
     raise KeyError(f"no tickZero in {path}")
 
 
+def parse_cluster_dates(values: pd.Series) -> pd.Series:
+    """Parse `earliest_date` in either format the cluster tables use.
+
+    UCSC's table writes `2021-May-12`; the filtered snapshot was re-saved as
+    `2021-05-12`; some rows say `no-valid-date`. Left to infer, pandas picks
+    one format from the first value and coerces everything else to NaT --
+    which silently dropped 99% of Washington's Delta clusters while Virginia,
+    whose first row happened to be unparseable, came through fine. So each
+    format is tried explicitly.
+    """
+    v = values.astype(str).str.strip()
+    out = pd.to_datetime(v, format="%Y-%b-%d", errors="coerce")
+    miss = out.isna()
+    if miss.any():
+        out[miss] = pd.to_datetime(v[miss], format="%Y-%m-%d", errors="coerce")
+    return out
+
+
 def parse_samples(samples: str) -> List[Tuple[Optional[pd.Timestamp], str, str]]:
     """Split a cluster's `samples` field into (date, strain, accession), oldest first.
 
@@ -117,7 +135,7 @@ def prepare_clusters(df: pd.DataFrame, state: str, lineages: Sequence[str],
         return pd.DataFrame(columns=["cluster_id", "variant", "intro_date",
                                      "sample_count", "samples_ordered"])
 
-    d["intro_date"] = pd.to_datetime(d["earliest_date"], errors="coerce")
+    d["intro_date"] = parse_cluster_dates(d["earliest_date"])
     d["samples_ordered"] = d["samples"].map(parse_samples)
 
     # Threshold correction: an intro date before the variant existed is

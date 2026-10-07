@@ -378,7 +378,11 @@ def run_seed_mode(args):
         base_map_fn=make_variant_base_map,
         thresholds=thresholds)
     if clusters.empty:
-        print("No clusters found for this state and lineage set. Exiting."); exit(0)
+        print(f"No clusters found for {args.state} / {pango_lineages} in {input_tsv_path}.")
+        print("  The filtered 2024-11-12 snapshot covers only CA, GA, MA, MN, VA and WA.")
+        print("  For another state, omit --input_file (seeds.input_file: \"\") to use")
+        print("  UCSC's full hardcoded_clusters.tsv.")
+        exit(1)
     print(f"  {len(clusters):,} importation cluster(s) after lineage filtering")
     print(f"  Sublineages: {'INCLUDED' if args.include_sublineages else 'EXCLUDED'}")
 

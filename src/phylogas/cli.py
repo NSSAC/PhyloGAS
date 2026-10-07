@@ -220,9 +220,10 @@ def cmd_prep_seeds(args) -> int:
         ("--abm_config", _cfg_or_flag(cfg, "abm.config", args.abm_config)),
         ("--tick_zero", _cfg_or_flag(cfg, "abm.tick_zero", args.tick_zero)),
         ("--variant_start", _cfg_or_flag(cfg, "seeds.variant_start", args.variant_start)),
+        ("--input_file", _cfg_or_flag(cfg, "seeds.input_file", args.input_file)),
     ]
     for flag, value in pairs:
-        if value is not None:
+        if value not in (None, ""):
             cmd += [flag, str(value)]
     if args.seed_mode:
         cmd.append("--seed_mode")
@@ -2033,6 +2034,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "prep-seeds also write the schedule on absolute ticks.")
     sp.add_argument("--tick-zero", dest="tick_zero", default=None,
                     help="Calendar date of ABM tick 0, if there is no ABM config.")
+    sp.add_argument("--input-file", dest="input_file", default=None,
+                    help="Cluster table to read instead of downloading UCSC's current "
+                         "one. The published EpiHiper schedules came from "
+                         "data/importations/sarscov2_clusters_2024_11_12_filtered.tsv.gz.")
     sp.add_argument("--variant-start", dest="variant_start", default=None,
                     help="VARIANT=YYYY-MM-DD[,...]: earliest plausible date per variant.")
     sp.add_argument("--include-sublineages", dest="include_sublineages",

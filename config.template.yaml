@@ -108,6 +108,18 @@ seeds:
   # renewed, --seed_mode cannot download its input without this. Prefer
   # --input_file with a local copy where practical.
   insecure_download: false
+  # Cluster table to build the schedule and seeds from.
+  #  * This snapshot is what the published EpiHiper schedules came from; every
+  #    state's schedule reproduces from it exactly. Use it to re-seed an
+  #    EXISTING run: the seeds must match the ABM's importations day for day,
+  #    and even one extra importation shifts every later pairing.
+  #    It covers only CA, GA, MA, MN, VA and WA.
+  #  * Empty downloads UCSC's full hardcoded_clusters.tsv: any state, and the
+  #    right choice for a NEW ABM run, since prep-seeds then writes the
+  #    schedule and the seeds together. For the five simulated states it is
+  #    within 0.5% of the snapshot (Delta: +0 to +18 importations, same first
+  #    day), so it is the same data a few revisions later.
+  input_file: "{data_dir}/importations/sarscov2_clusters_2024_11_12_filtered.tsv.gz"
   # How to drop temporal outliers when choosing importation seeds:
   #   none | chaining | iqr | zscore
   #
