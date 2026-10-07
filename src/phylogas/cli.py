@@ -1051,8 +1051,8 @@ def cmd_fetch_data(args) -> int:
         print(f"  target: {target}")
         if d_from and d_to:
             src = ("training.date_from/date_to" if cfg.get("training.date_from", default=None)
-                   else "genetic_painter.start_date + num_ticks; set "
-                        "training.date_from/date_to to widen")
+                   else "genetic_painter.start_date + training.days; set "
+                        "training.date_from/date_to for exact dates")
             print(f"  window: {d_from} .. {d_to}   ({src})")
         else:
             print("  window: all dates (no training window or start_date configured)")
@@ -1150,9 +1150,23 @@ def cmd_fetch_data(args) -> int:
             ]
             if d_from and d_to:
                 bulk_cmd += ["--date_from", d_from, "--date_to", d_to]
-            if _run(bulk_cmd) != 0:
-                print("    WARNING: training-sequence download failed",
+            rc = _run(bulk_cmd)
+            produced_any = (target.parent / _bulk_output_name(
+                state, pango, d_from, d_to, sub)).exists()
+            if rc != 0 or not produced_any:
+                # Loud and non-zero: the run cannot proceed without this, and
+                # a silent miss only surfaced later as "training sequences
+                # missing" from validate-config.
+                print("\n    ERROR: no training alignment was downloaded.",
                       file=sys.stderr)
+                print(f"    Expected: {target}", file=sys.stderr)
+                print("    Usually the node has no route to Cov-Spectrum, or the "
+                      "state/lineage/date window returned nothing.", file=sys.stderr)
+                print(f"    Retry from a machine with internet access:\n"
+                      f"      phylogas fetch-data --config {args.config or 'config.yaml'} "
+                      f"--states {','.join(states)} --with-training-sequences",
+                      file=sys.stderr)
+                return 1
             else:
                 # Bulk mode names its own output; move it onto the configured
                 # align_fasta path so `train` finds it without config edits.

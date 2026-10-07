@@ -146,8 +146,13 @@ def fetch_sequences_by_strain_id(strain_ids: List[str], batch_size: int = 500,
     return "".join(all_fasta_content)
 
 
-def fetch_sequences_by_metadata(pango: str, state: str, date_from: Optional[str], date_to: Optional[str], output_filepath: Path, include_sublineages: bool = True):
-    """Fetches sequences directly from CovSpectrum based on metadata query and streams to a file.
+def fetch_sequences_by_metadata(pango: str, state: str, date_from: Optional[str], date_to: Optional[str], output_filepath: Path, include_sublineages: bool = True) -> bool:
+    """Fetch sequences from CovSpectrum by metadata query; True if a file was written.
+
+    The return value matters: a failure here used to be printed and swallowed,
+    so seq_prep still exited 0 and `fetch-data` reported nothing wrong. The
+    missing alignment only surfaced later, when validate-config refused to
+    start the run.
 
     ``include_sublineages`` controls the trailing ``*`` in the LAPIS query.
     With it, ``B.1.617.2`` matches the whole Delta clade; without it, only
@@ -182,12 +187,19 @@ def fetch_sequences_by_metadata(pango: str, state: str, date_from: Optional[str]
             with open(output_filepath, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
+        if output_filepath.stat().st_size == 0:
+            print(f"Error: bulk download for {pango} returned no sequences "
+                  f"(check the state name, lineage and date window).")
+            output_filepath.unlink()
+            return False
         print(f"Bulk download complete. Sequences saved to: {output_filepath.resolve()}")
+        return True
     except requests.exceptions.RequestException as e:
         print(f"Error during bulk download for {pango}: {e}")
         # Clean up partial download
         if output_filepath.exists():
             output_filepath.unlink()
+        return False
 
 def detect_outliers_iqr(date_series: pd.Series, factor: float = 1.5) -> pd.Series:
     if date_series.empty: return pd.Series(dtype=bool, index=date_series.index)
@@ -515,6 +527,7 @@ def run_seed_mode(args):
 def run_bulk_mode(args):
     """Contains all logic for the new direct-to-CovSpectrum workflow."""
     print("--- Running in Bulk Download Mode ---")
+    failed = []
     pango_lineages = [p.strip() for p in args.pango.split(',')]
     output_folder_path = Path(args.output_folder)
 
@@ -537,8 +550,14 @@ def run_bulk_mode(args):
             
         output_filepath = output_folder_path / output_filename
         
-        fetch_sequences_by_metadata(pango, args.state, args.date_from, args.date_to,
-                                    output_filepath, args.include_sublineages)
+        if not fetch_sequences_by_metadata(pango, args.state, args.date_from,
+                                          args.date_to, output_filepath,
+                                          args.include_sublineages):
+            failed.append(pango)
+
+    if failed:
+        print(f"\nBulk download FAILED for: {', '.join(failed)}")
+        exit(1)
 
 def main():
     parser = argparse.ArgumentParser(description="Prepare sequence sets from cluster data or by direct metadata query.")

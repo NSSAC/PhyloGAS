@@ -478,13 +478,14 @@ rule paint_network:
     multi-threaded xz writer, which is otherwise the throughput bottleneck.
     """
     input:
+        # unpack() is positional, so it must precede the keyword inputs.
+        # Regenerated seeds must repaint: the manifest says which importation
+        # each record founds, so a new one can change every pairing.
+        unpack(_seed_manifest_input),
         thresholds=THRESHOLD,
         probmatrix=PROBMATRIX,
         graph=cfg("epihiper.output_csv"),
         seeds=cfg("genetic_painter.seed_fasta"),
-        # Regenerated seeds must repaint: the manifest says which importation
-        # each record founds, so a new one can change every pairing.
-        unpack(_seed_manifest_input),
     output:
         fasta=PAINTED_FASTA,
         metadata=PAINTED_META,
