@@ -378,6 +378,14 @@ def _pkg_version(dist: str) -> str:
         return "absent"
 
 
+def _seed_manifest_input(wildcards) -> dict:
+    """The seed manifest beside the seed FASTA, when prep-seeds wrote one."""
+    seeds = str(cfg("genetic_painter.seed_fasta", "") or "")
+    stem = re.sub(r"\.(gz|xz)$", "", seeds)
+    cand = stem.replace("_seed_sequences.fasta", "_seed_manifest.csv")
+    return {"seed_manifest": cand} if cand != stem and os.path.exists(cand) else {}
+
+
 def _rucc_override(wildcards) -> dict:
     """population.rucc_file as a named input, or nothing.
 
@@ -474,6 +482,9 @@ rule paint_network:
         probmatrix=PROBMATRIX,
         graph=cfg("epihiper.output_csv"),
         seeds=cfg("genetic_painter.seed_fasta"),
+        # Regenerated seeds must repaint: the manifest says which importation
+        # each record founds, so a new one can change every pairing.
+        unpack(_seed_manifest_input),
     output:
         fasta=PAINTED_FASTA,
         metadata=PAINTED_META,
@@ -483,6 +494,18 @@ rule paint_network:
         runtime=cfg("resources.paint_runtime_min", 240),
     params:
         config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
+        # Not passed to the command -- the painter reads them from the config.
+        # Declared so that changing any of them, or reinstalling PhyloGAS,
+        # invalidates the painted set. Without this a 400-tick painting stayed
+        # "up to date" after num_ticks was cut to 300.
+        start_tick=cfg("genetic_painter.start_tick"),
+        num_ticks=cfg("genetic_painter.num_ticks"),
+        start_date=cfg("genetic_painter.start_date"),
+        painted_prefix=cfg("genetic_painter.painted_prefix", "E2"),
+        mutation_model=cfg("genetic_painter.mutation_model", "rate_limit"),
+        initial_viral_load=cfg("genetic_painter.initial_viral_load", 10),
+        random_seed=cfg("random_seed", 42),
+        phylogas_version=_pkg_version("phylogas"),
     shell:
         "phylogas paint --config {params.config} "
         "--analysis-type generate_sequence "
