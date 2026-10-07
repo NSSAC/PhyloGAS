@@ -34,6 +34,8 @@ runs; only the plumbing around them is new.
 
 from __future__ import annotations
 
+from collections import deque
+
 import sys
 from pathlib import Path
 

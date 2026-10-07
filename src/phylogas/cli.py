@@ -640,7 +640,12 @@ def cmd_nextstrain_config(args) -> int:
     # --- render -----------------------------------------------------------
     overlay = {
         "inputs": [
-            {"name": "reference_data",
+            # Origin names must be unique ACROSS CONCURRENT STATE RUNS: ncov
+            # writes results/aligned_{origin}.fasta.xz and
+            # results/sanitized_metadata_{origin}.tsv.xz in the shared ncov
+            # checkout, so a fixed "reference_data" had every state writing the
+            # same two files at once.
+            {"name": f"{project}_reference",
              "metadata": str(shared_rel / "references_metadata.tsv"),
              "aligned": str(shared_rel / "references_sequences.fasta")},
             {"name": build_name,

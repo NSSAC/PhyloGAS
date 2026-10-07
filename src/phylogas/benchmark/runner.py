@@ -158,33 +158,19 @@ def benchmark_sequence(
 
     print(f"Infections : {infections}")
     inf = read_infections(infections)
-    pid_col = _pid_col(inf)
+    if "alias_pid" not in inf.columns or "alias_contact" not in inf.columns:
+        raise SystemExit("ERROR: the infections file needs alias_pid and alias_contact.")
 
-    tick_col = next((c for c in ("sim_tick", "exposure_tick", "tick") if c in inf.columns), None)
-    if tick_col is None:
-        raise SystemExit("ERROR: no tick column (sim_tick/exposure_tick/tick) in the infections file.")
-
-    inf = inf.sort_values(tick_col, kind="stable")
-    active: dict[str, str] = {}
-    pairs: list[tuple[str, str]] = []
-    for pid, contact, tick in zip(inf[pid_col].astype(str),
-                                  inf["alias_contact"].astype(str),
-                                  inf[tick_col]):
-        iid = f"{pid}.{tick}"
-        parent = active.get(contact)
-        if contact not in ("-1", "nan", "") and parent:
-            pairs.append((iid, parent))
-        active[pid] = iid
+    # Each row is one infection: alias_pid is its id and alias_contact its
+    # infector's infection id -- the same "{pid}.{tick}" key the painted FASTA
+    # uses -- so a transmission edge is simply that pair. (This used to rebuild
+    # the edges from person ids and append the tick again, giving
+    # "123.45.130"-style keys that matched no genome.)
+    child = inf["alias_pid"].astype(str)
+    parent = inf["alias_contact"].astype(str)
+    keep = ~parent.isin(["-1", "nan", "", "None"])
+    pairs = list(zip(child[keep], parent[keep]))
     print(f"  {len(pairs):,} parent-child pairs")
-
-    opener = lzma.open if painted_fasta.endswith(".xz") else \
-        gzip.open if painted_fasta.endswith(".gz") else open
-    seqs: dict[str, str] = {}
-    with opener(painted_fasta, "rt") as fh:
-        for rec in SeqIO.parse(fh, "fasta"):
-            if "EHip-" in rec.id:
-                seqs[rec.id.split("EHip-")[1].rsplit("/", 1)[0]] = str(rec.seq)
-    print(f"  {len(seqs):,} painted sequences")
 
     if max_pairs and len(pairs) > max_pairs:
         rng = np.random.default_rng(0)
@@ -192,12 +178,37 @@ def benchmark_sequence(
         pairs = [pairs[i] for i in idx]
         print(f"  sampling {max_pairs:,} pairs")
 
+    # Stream the FASTA and keep only the genomes those pairs need. Holding
+    # every painted genome needs ~30 kB each -- about 150 GB for a 5M-record
+    # state -- which is what got these jobs killed.
+    needed = {c for c, _ in pairs} | {p for _, p in pairs}
+    opener = lzma.open if painted_fasta.endswith(".xz") else \
+        gzip.open if painted_fasta.endswith(".gz") else open
+    seqs: dict[str, str] = {}
+    n_read = 0
+    with opener(painted_fasta, "rt") as fh:
+        for rec in SeqIO.parse(fh, "fasta"):
+            n_read += 1
+            if "EHip-" not in rec.id:
+                continue
+            key = rec.id.split("EHip-")[1].rsplit("/", 1)[0]
+            if key in needed:
+                seqs[key] = str(rec.seq)
+    print(f"  {n_read:,} painted sequences read, {len(seqs):,} needed for the pairs")
+
     dists = [
         sum(1 for a, b in zip(seqs[c], seqs[p]) if a != b)
         for c, p in pairs if c in seqs and p in seqs
     ]
     if not dists:
-        raise SystemExit("ERROR: no parent-child pair had both genomes present.")
+        sample_ids = list(needed)[:3]
+        raise SystemExit(
+            "ERROR: no parent-child pair had both genomes present.\n"
+            f"  e.g. infection ids sought: {sample_ids}\n"
+            "  Check that the painted FASTA and the infections file come from the "
+            "same run.")
+    print(f"  {len(dists):,} pairs scored ({len(pairs) - len(dists):,} lacked a genome, "
+          f"e.g. a parent infected before the painted window)")
 
     d = np.asarray(dists)
     summary = {

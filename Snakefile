@@ -733,13 +733,13 @@ if cfg("nextstrain.enabled", False):
             if [ "{params.runner}" = "nextstrain" ]; then
                 nextstrain build {params.ns_dir} \
                     --configfile {params.rel_config} \
-                    --cores {threads} --rerun-incomplete
+                    --cores {threads} --rerun-incomplete --nolock
             else
                 snakemake --snakefile {params.ns_dir}/Snakefile \
                     --directory {params.ns_dir} \
                     --configfile {params.ns_dir}/{params.rel_config} \
                     --use-conda {params.conda_prefix} \
-                    --cores {threads} --rerun-incomplete
+                    --cores {threads} --rerun-incomplete --nolock
             fi
             mkdir -p $(dirname {output.auspice})
             # Spelled out rather than globbed on the arm suffix: a glob also
