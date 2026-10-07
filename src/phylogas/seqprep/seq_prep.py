@@ -83,25 +83,66 @@ def download_file(url: str, dest_path: Path, insecure: bool = False) -> bool:
         if dest_path.exists(): dest_path.unlink()
         return False
 
-def fetch_sequences_by_strain_id(strain_ids: List[str], batch_size: int = 100) -> Optional[str]:
-    """Fetches sequences for a specific list of strain IDs (for seed_mode)."""
-    all_fasta_content = []
-    print(f"Fetching sequences for {len(strain_ids)} strains from CovSpectrum (batch size: {batch_size})...")
-    for i in range(0, len(strain_ids), batch_size):
-        batch_ids = strain_ids[i:i + batch_size]
-        payload = {"strain": batch_ids}
-        print(f"  Fetching batch {i//batch_size + 1}/{(len(strain_ids) - 1)//batch_size + 1} ({len(batch_ids)} strains)...")
+def _post_strains(batch_ids: List[str], timeout: int, retries: int = 3) -> Optional[str]:
+    """One POST for a batch of strains, retried with backoff. None on failure."""
+    import time
+    for attempt in range(1, retries + 1):
         try:
-            response = requests.post(COVSPECTRUM_API_URL, json=payload, timeout=120)
+            response = requests.post(COVSPECTRUM_API_URL, json={"strain": batch_ids},
+                                     timeout=timeout)
             response.raise_for_status()
-            fasta_data = response.text
-            if not fasta_data.strip() and len(batch_ids) > 0:
-                 print(f"    Warning: Batch {i//batch_size + 1} returned empty data from API.")
-            all_fasta_content.append(fasta_data)
+            return response.text
         except requests.exceptions.RequestException as e:
-            print(f"  Request Error for batch {i//batch_size + 1}: {e}")
-            return None
-    print("Sequence fetching complete.")
+            print(f"    attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                time.sleep(2 ** attempt)
+    return None
+
+
+def fetch_sequences_by_strain_id(strain_ids: List[str], batch_size: int = 500,
+                                 min_batch: int = 25) -> Optional[str]:
+    """Fetch sequences for a list of strain IDs, in batched POSTs.
+
+    A batch that keeps failing (timeout, payload too large, server error) is
+    split in half and retried, down to `min_batch`. Strains in a batch that
+    still fails are simply absent from the result, so the caller treats them
+    like any other missing sequence and falls back to the cluster's next
+    sample -- one bad request no longer aborts the whole fetch.
+    """
+    all_fasta_content = []
+    n_batches = (len(strain_ids) - 1) // batch_size + 1 if strain_ids else 0
+    print(f"Fetching sequences for {len(strain_ids)} strains from CovSpectrum "
+          f"(batch size: {batch_size}, {n_batches} request(s))...")
+    lost = 0
+
+    def fetch(ids: List[str], label: str):
+        nonlocal lost
+        # Aligned SARS-CoV-2 records are ~30 kB each; scale the timeout.
+        timeout = max(120, len(ids) // 2)
+        text = _post_strains(ids, timeout)
+        if text is not None:
+            if not text.strip():
+                print(f"    Warning: {label} returned no sequences.")
+            all_fasta_content.append(text)
+            return
+        if len(ids) > min_batch:
+            half = len(ids) // 2
+            print(f"    {label} failed; splitting into {half} + {len(ids) - half}")
+            fetch(ids[:half], label + "a")
+            fetch(ids[half:], label + "b")
+        else:
+            print(f"    {label} failed after retries; its {len(ids)} strain(s) "
+                  f"will be treated as missing")
+            lost += len(ids)
+
+    for k in range(n_batches):
+        batch_ids = strain_ids[k * batch_size:(k + 1) * batch_size]
+        print(f"  Fetching batch {k + 1}/{n_batches} ({len(batch_ids)} strains)...")
+        fetch(batch_ids, f"batch {k + 1}")
+    if lost:
+        print(f"Sequence fetching finished with {lost} strain(s) unretrievable.")
+    else:
+        print("Sequence fetching complete.")
     return "".join(all_fasta_content)
 
 
@@ -288,7 +329,7 @@ def _parse_fasta_records(text: str) -> Dict[str, str]:
     return out
 
 
-def _fetch_with_fallbacks(plan, batch_size: int = 100, max_rounds: int = 5):
+def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5):
     """Retrieve one sequence per importation, substituting when one is missing.
 
     Requests go out in batches (one POST per `batch_size` strains) for
@@ -313,10 +354,7 @@ def _fetch_with_fallbacks(plan, batch_size: int = 100, max_rounds: int = 5):
             break
         print(f"\n  Fetch round {round_no}: {len(targets):,} sequence(s)")
         text = fetch_sequences_by_strain_id(targets, batch_size=batch_size)
-        if text is None:
-            print("  ERROR: the API request failed; aborting fetch.")
-            break
-        got = _parse_fasta_records(text)
+        got = _parse_fasta_records(text or "")
         records.update(got)
         missing_mask = ~pending["attempt"].isin(records)
         filled = pending[~missing_mask]
@@ -528,8 +566,10 @@ def main():
                              + ",".join(f"{k}={v}" for k, v in
                                         cluster_seeds.VARIANT_START_DEFAULTS.items()))
     parser.add_argument("--batch_size", "--batch-size", dest="batch_size", type=int,
-                        default=100,
-                        help="[Seed Mode] Strains per API request (default: 100).")
+                        default=500,
+                        help="[Seed Mode] Strains per API request (default: 500). A "
+                             "request that fails is retried, then split in half, so a "
+                             "large batch costs nothing when the server cannot take it.")
     parser.add_argument("--max_fetch_rounds", "--max-fetch-rounds",
                         dest="max_fetch_rounds", type=int, default=5,
                         help="[Seed Mode] How many times to retry unfilled importations "
