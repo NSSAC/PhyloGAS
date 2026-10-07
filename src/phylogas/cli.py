@@ -17,6 +17,7 @@ before any third-party dependency is resolved.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -115,9 +116,19 @@ def cmd_paint(args) -> int:
         elif found is not None:
             seed_fasta = str(found)
 
+    # prep-seeds writes a manifest beside the seed FASTA; when it is there the
+    # painter checks importations against seeds day by day.
+    seed_manifest = None
+    if seed_fasta:
+        stem = re.sub(r"\.(gz|xz)$", "", str(seed_fasta))
+        cand = Path(stem.replace("_seed_sequences.fasta", "_seed_manifest.csv"))
+        if cand != Path(stem) and cand.is_file():
+            seed_manifest = str(cand)
+
     optional = [
         ("--align_fasta", align_fasta),
         ("--seed_fasta", seed_fasta),
+        ("--seed_manifest", seed_manifest),
         ("--input_graph_csv", pick("epihiper.output_csv", args.input_graph_csv)),
         ("--output_prefix", pick(gp + "output_prefix", args.output_prefix)),
         ("--start_date", pick(gp + "start_date", args.start_date)),

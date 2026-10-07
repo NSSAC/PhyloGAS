@@ -23,19 +23,6 @@ except ImportError:                     # pragma: no cover
 
 configfile: "config.yaml"
 
-# genetic_painter.start_date is derived from the ABM's tick 0 (or checked
-# against it) -- the same rule `phylogas` applies when it loads the config, so
-# the painter and the line list cannot be handed a different calendar.
-try:
-    from phylogas.config import resolve_calendar as _resolve_calendar, ConfigError as _ConfigError
-except ImportError:                     # pragma: no cover
-    _resolve_calendar = None
-if _resolve_calendar is not None:
-    try:
-        _resolve_calendar(config, Path(workflow.configfiles[0]).parent
-                          if workflow.configfiles else None)
-    except _ConfigError as _exc:
-        raise WorkflowError(str(_exc))
 
 
 # --------------------------------------------------------------------------
@@ -104,6 +91,20 @@ def resolve_benchmark(key, kind):
 
 
 RESULTS       = cfg("results_dir", "results")
+# Derived settings -- location, start_tick, start_date -- filled by the same
+# rule `phylogas` applies when it loads the config, so the painter and the
+# line list cannot be handed different calendars or geography.
+try:
+    from phylogas.config import resolve_derived as _resolve_derived, ConfigError as _ConfigError
+except ImportError:                     # pragma: no cover
+    _resolve_derived = None
+if _resolve_derived is not None:
+    try:
+        _resolve_derived(config, Path(workflow.configfiles[0]).parent
+                         if workflow.configfiles else None, expand=_expand)
+    except _ConfigError as _exc:
+        raise WorkflowError(str(_exc))
+
 PROJECT       = cfg("project_name", "phylogas")
 
 THRESHOLD     = cfg("genetic_painter.entropy_thresholds")

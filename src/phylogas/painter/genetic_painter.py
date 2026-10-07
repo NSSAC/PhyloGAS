@@ -102,6 +102,13 @@ def getClas():
     parser.add_argument("--base_threshold_df", type=str,dest="base_threshold_df",required=True, help="base name of files containing threshold dfs (expects .npy extension for prob_matrix).") # Clarified help
     parser.add_argument("--align_fasta", type=str, default=None, nargs='?', dest="align_fasta", required=False, help="path to alignment file in FASTA format")
     parser.add_argument("--seed_fasta", type=str, default=None, nargs='?', dest="seed_fasta", required=False, help="path to seed file in FASTA format; defaults to align_fasta if not set")
+    parser.add_argument("--seed_manifest", type=str, default=None, dest="seed_manifest",
+                        help="CSV from `prep-seeds` naming the importation each seed record "
+                             "founds (strain, intro_date[, tick]). Given, the painter checks "
+                             "day by day that its importations match the seeds.")
+    parser.add_argument("--strict_seed_pairing", action="store_true",
+                        help="Exit instead of warning when --seed_manifest disagrees with "
+                             "the importations.")
     parser.add_argument("--random_number_seed", type=int, dest="random_number_seed", required=True, help="if < 0, then random assignment")
 
     # For genomic sequences analysis.
@@ -302,6 +309,63 @@ def load_thresholds_and_dfs(args):
 
 
 # ====================================
+def check_seed_pairing(import_ticks, record_ids, manifest_path, start_date, start_tick):
+    """Compare the ABM's importations with the seeds meant to found them.
+
+    Two checks, both reported rather than fatal by default:
+
+    * order -- record i of the seed FASTA is the strain the manifest lists
+      for importation i;
+    * volume per day -- importations per tick in the transmission log match
+      seeds per tick in the manifest.
+
+    A per-day mismatch means positional assignment pairs every later
+    importation with the wrong genome. Returns the number of problems.
+    """
+    import pandas as pd
+
+    man = pd.read_csv(manifest_path)
+    problems = 0
+    print(f"  Checking seed pairing against {manifest_path}")
+
+    ids = man["strain"].astype(str).tolist()
+    for i in range(min(len(ids), len(record_ids))):
+        if record_ids[i] != ids[i]:
+            print(f"  WARNING: seed FASTA record {i} is {record_ids[i]} but the manifest "
+                  f"lists {ids[i]} for that importation; the FASTA is out of order.",
+                  file=sys.stderr)
+            problems += 1
+            break
+
+    if "tick" in man.columns and man["tick"].notna().all():
+        man_ticks = man["tick"].astype(int)
+    else:
+        # The painter's own calendar: date = start_date + (tick - start_tick).
+        man_ticks = int(start_tick) + (pd.to_datetime(man["intro_date"])
+                                       - pd.Timestamp(start_date)).dt.days
+    j = pd.concat([pd.Series(import_ticks).value_counts().rename("imports"),
+                   man_ticks.value_counts().rename("seeds")], axis=1)
+    j = j.fillna(0).astype(int).sort_index()
+    bad = j[j["imports"] != j["seeds"]]
+    if bad.empty:
+        print(f"    OK: {int(j['imports'].sum()):,} importations on {len(j):,} days "
+              f"match the seeds day for day.")
+    else:
+        problems += len(bad)
+        print(f"  WARNING: importations and seeds disagree on {len(bad):,} of "
+              f"{len(j):,} days ({int(j['imports'].sum()):,} importations, "
+              f"{int(j['seeds'].sum()):,} seeds).", file=sys.stderr)
+        print("    tick  imports  seeds", file=sys.stderr)
+        for t, r in bad.head(10).iterrows():
+            print(f"    {t:>4}  {r['imports']:>7}  {r['seeds']:>5}", file=sys.stderr)
+        if len(bad) > 10:
+            print(f"    ... and {len(bad) - 10:,} more", file=sys.stderr)
+        print("    From the first such day on, positional assignment gives importations "
+              "the wrong genomes. Regenerate the seeds with `phylogas prep-seeds` "
+              "against the schedule the ABM ran.", file=sys.stderr)
+    return problems
+
+
 def main():
 
     args = getClas()
@@ -858,6 +922,10 @@ def generate_sequences(args):
     seed_df = transitions_to_paint[
         seed_transitions_mask
     ].copy()  # Renamed from 'seed' to 'seed_df'
+    # Seeds are handed out positionally: importation i gets record i. That is
+    # only meaningful in tick order, so make the order explicit rather than
+    # inheriting whatever order the transmission log happens to be in.
+    seed_df = seed_df.sort_values("tick", kind="stable")
 
     # Seed sequences do not have to be aligned to each other, and the file is
     # commonly distributed gzip/xz compressed, so use SeqIO with a
@@ -872,6 +940,13 @@ def generate_sequences(args):
     with _seed_open(seed_path, 'rt') as _seed_handle:
         align_seed_records = list(SeqIO.parse(_seed_handle, 'fasta'))  # Read once
     print(f"  Loaded {len(align_seed_records):,} seed sequences from {seed_path}")
+    if args.seed_manifest:
+        n_bad = check_seed_pairing(
+            seed_df["tick"].astype(int).tolist(),
+            [r.id for r in align_seed_records],
+            args.seed_manifest, args.start_date, args.start_tick)
+        if n_bad and args.strict_seed_pairing:
+            sys.exit(1)
 
     # Assign seed sequences
     seed_pids = seed_df["pid"].tolist()

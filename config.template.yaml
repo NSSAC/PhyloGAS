@@ -41,9 +41,9 @@ zenodo_doi: "10.5281/zenodo.23067670"
 # 1. Digital twin population
 # ---------------------------------------------------------------------------
 population:
-  # Changing state: these two, location.divisionAbbr (section 7), and the
-  # tick/date mapping in genetic_painter if your replicate differs. Every
-  # per-state path below is derived from them.
+  # Changing state means changing these two lines. Every per-state path,
+  # the geography in sequence names, and the painted window's start tick and
+  # date are derived from them.
   state: "va"
   state_name: "Virginia"
 
@@ -141,6 +141,11 @@ abm:
   config: "cfg/exp1/config.json"
   # Only needed for an ABM whose config does not carry the date.
   tick_zero: ""
+  # The importation schedule the ABM actually ran for the painted variant
+  # (absolute ticks, `tick,count`). The "-2" is variant 2, matching
+  # genetic_painter.painted_prefix "E2". `prep-seeds --abm-config` writes the
+  # same thing as <State>_<lineage>_ticks.csv for a new run.
+  seed_schedule: "{data_dir}/seed_schedule/{population.state}-2.csv"
 
 
 # ---------------------------------------------------------------------------
@@ -241,14 +246,15 @@ genetic_painter:
   proportional: true            # use MSA-derived substitution probabilities
 
   # -- Time window -----------------------------------------------------------
-  # start_tick is the first ABM tick painted; num_ticks sets the span.
-  # start_date is derived: abm tick 0 (section 3a) + start_tick. Leave it
-  # "auto". An explicit date that disagrees with the ABM calendar is rejected,
-  # since it would relabel every painted and line-list date.
-  # 128 is Virginia's first Delta importation; for another state use the
-  # first tick of its <State>_B_1_617_2_ticks.csv from `prep-seeds`.
+  # start_tick: first ABM tick painted. "auto" = the painted variant's first
+  #   importation, read from abm.seed_schedule (VA Delta: 128, MA: 103).
+  #   Give a number to start later on purpose.
+  # start_date: "auto" = abm tick 0 + start_tick. An explicit date that
+  #   disagrees with the ABM calendar is rejected: it would relabel every
+  #   painted and line-list date.
+  # num_ticks: the span painted.
   start_date: "auto"
-  start_tick: 128
+  start_tick: "auto"
   num_ticks: 300
 
   # -- Output filtering ------------------------------------------------------
@@ -267,8 +273,10 @@ genetic_painter:
   add_metadata: "gender,county,home_latitude,home_longitude,latino,race,smh_race,age_group"
   location:
     country: "USA"
-    division: "{population.state_name}"
-    divisionAbbr: "VA"          # upper-case population.state; not derivable
+    # "auto": division = population.state_name, divisionAbbr =
+    # population.state upper-cased. Override only for a non-state geography.
+    division: "auto"
+    divisionAbbr: "auto"
     region: "North America"
 
   # -- Output compression ----------------------------------------------------

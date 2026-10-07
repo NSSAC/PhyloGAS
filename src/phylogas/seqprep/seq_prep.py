@@ -237,6 +237,18 @@ def _drop_outlier_clusters(clusters: pd.DataFrame, args) -> pd.DataFrame:
     return clusters.drop(index=drop_idx)
 
 
+def _tick_zero(args):
+    """ABM tick 0 from --tick_zero or --abm_config, or None."""
+    if getattr(args, "tick_zero", None):
+        return pd.to_datetime(args.tick_zero)
+    if getattr(args, "abm_config", None):
+        try:
+            return cluster_seeds.tick_zero_from_abm_config(args.abm_config)
+        except Exception as exc:
+            print(f"  WARNING: could not read tickZero from {args.abm_config}: {exc}")
+    return None
+
+
 def _write_schedules(clusters: pd.DataFrame, output_folder_path: Path, args) -> None:
     """Write the importation schedule, and the ABM's absolute-tick form.
 
@@ -253,14 +265,8 @@ def _write_schedules(clusters: pd.DataFrame, output_folder_path: Path, args) -> 
     print(f"\nImportation schedule ({len(out):,} days, "
           f"{int(out['importations'].sum()):,} importations) -> {path.resolve()}")
 
-    tick_zero = args.tick_zero
-    if not tick_zero and args.abm_config:
-        try:
-            tick_zero = cluster_seeds.tick_zero_from_abm_config(args.abm_config)
-        except Exception as exc:
-            print(f"  WARNING: could not read tickZero from {args.abm_config}: {exc}")
-            return
-    if not tick_zero:
+    tick_zero = _tick_zero(args)
+    if tick_zero is None:
         return
     print(f"  Absolute ticks against tick 0 = {pd.to_datetime(tick_zero).date()}:")
     for variant, frame in cluster_seeds.absolute_ticks(schedule, tick_zero).items():
@@ -426,10 +432,30 @@ def run_seed_mode(args):
             continue
         name = f"{args.state.replace(' ', '_')}_{_sanitize(pango)}_seed_sequences.fasta"
         path = output_folder_path / name
+        used = []
         with open(path, "w") as fh:
             for row in rows.itertuples(index=False):
-                fh.write(records[row.cluster_id])
+                rec = records[row.cluster_id]
+                fh.write(rec)
+                used.append(rec[1:].split("\n", 1)[0].split()[0])
         print(f"  {len(rows):,} sequence(s) for {pango}, in importation order -> {path.resolve()}")
+
+        # The manifest says which importation each record founds. The painter
+        # reads it to check, day by day, that its importations line up with
+        # the seeds -- a plain FASTA carries no dates, which is how a
+        # scrambled pairing went unnoticed before.
+        man = pd.DataFrame({
+            "order": range(len(rows)),
+            "strain": used,
+            "cluster_id": rows["cluster_id"].values,
+            "intro_date": pd.to_datetime(rows["intro_date"]).dt.strftime("%Y-%m-%d").values,
+        })
+        t0 = _tick_zero(args)
+        if t0 is not None:
+            man["tick"] = (pd.to_datetime(man["intro_date"]) - t0).dt.days
+        mname = name.replace("_seed_sequences.fasta", "_seed_manifest.csv")
+        man.to_csv(output_folder_path / mname, index=False)
+        print(f"  seed manifest -> {mname}")
 
     _write_schedules(clusters, output_folder_path, args)
 

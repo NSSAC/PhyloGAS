@@ -62,8 +62,18 @@ python seq_prep.py \
 ```
 
 Writes, per lineage, `Virginia_<lineage>_seed_strains.txt`,
-`Virginia_<lineage>_seed_sequences.fasta` (in importation order) and
-`Virginia_<lineage>_ticks.csv`, plus the consolidated `Virginia_schedule.csv`.
+`Virginia_<lineage>_seed_sequences.fasta` (in importation order),
+`Virginia_<lineage>_seed_manifest.csv` and `Virginia_<lineage>_ticks.csv`,
+plus the consolidated `Virginia_schedule.csv`.
+
+**The manifest** lists, for each FASTA record in order, the strain, its
+cluster, its importation date and (with a tick 0) its ABM tick. `phylogas
+paint` passes it to the painter automatically when it sits beside the seed
+FASTA, and the painter then checks two things before painting: that record
+*i* is the strain listed for importation *i*, and that importations per day in
+the transmission log match seeds per day. Either mismatch is a loud warning
+(`--strict_seed_pairing` makes it fatal). Run against the old Virginia seed
+FASTA, the order check fires on the first record.
 
 Verified against what the simulations actually ran: with `--outlier_method
 none`, the generated schedules reproduce all five

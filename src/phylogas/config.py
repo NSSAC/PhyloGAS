@@ -31,7 +31,7 @@ class ConfigError(Exception):
 _AUTO = ("", "auto", None)
 
 
-def abm_tick_zero(data: dict, base: Path | None = None):
+def abm_tick_zero(data: dict, base: Path | None = None, expand=None):
     """Calendar date of the ABM's tick 0, or None if the config gives none.
 
     `abm.tick_zero` wins; otherwise `tickZero` is read from the ABM's own
@@ -47,7 +47,7 @@ def abm_tick_zero(data: dict, base: Path | None = None):
         cfg_path = abm.get("config")
         if cfg_path in _AUTO:
             return None
-        p = Path(str(cfg_path)).expanduser()
+        p = Path(str((expand or (lambda x: x))(str(cfg_path)))).expanduser()
         if not p.is_absolute() and base is not None and not p.exists():
             p = base / p
         if not p.is_file():
@@ -59,7 +59,64 @@ def abm_tick_zero(data: dict, base: Path | None = None):
     return _dt.date.fromisoformat(str(raw)[:10])
 
 
-def resolve_calendar(data: dict, base: Path | None = None) -> None:
+def _first_import_tick(path) -> int:
+    """First tick in an ABM seed schedule (`tick,count` CSV)."""
+    import csv
+    with open(path, newline="") as fh:
+        ticks = [int(float(r["tick"])) for r in csv.DictReader(fh)
+                 if r.get("tick") not in (None, "") and float(r.get("count", 1) or 0) > 0]
+    if not ticks:
+        raise ConfigError(f"seed schedule {path} has no importations")
+    return min(ticks)
+
+
+def resolve_location(data: dict) -> None:
+    """Default `genetic_painter.location` from the population block.
+
+    `division` is the state name and `divisionAbbr` its postal code, which is
+    `population.state` upper-cased -- a transform `{placeholder}` substitution
+    cannot express, so it is done here. "auto" or empty means derive.
+    """
+    gp = data.get("genetic_painter")
+    pop = data.get("population") or {}
+    if not isinstance(gp, dict):
+        return
+    loc = gp.get("location")
+    if loc is None:
+        loc = gp["location"] = {}
+    if not isinstance(loc, dict):
+        return              # a JSON string: the caller's responsibility
+    if loc.get("division") in _AUTO and pop.get("state_name"):
+        loc["division"] = str(pop["state_name"])
+    if loc.get("divisionAbbr") in _AUTO and pop.get("state"):
+        loc["divisionAbbr"] = str(pop["state"]).upper()
+
+
+def resolve_derived(data: dict, base: Path | None = None, expand=None) -> None:
+    """Fill every derived setting: location, start_tick, start_date.
+
+    `expand` resolves `{placeholder}` paths for callers (the Snakefile) that
+    run this before their own expansion pass.
+    """
+    expand = expand or (lambda s: s)
+    resolve_location(data)
+    gp = data.get("genetic_painter")
+    if isinstance(gp, dict) and gp.get("start_tick") in _AUTO:
+        sched = (data.get("abm") or {}).get("seed_schedule")
+        if sched in _AUTO:
+            raise ConfigError(
+                "genetic_painter.start_tick is 'auto' but abm.seed_schedule is not "
+                "set; point it at the schedule the ABM consumed, or give a tick.")
+        p = Path(str(expand(str(sched)))).expanduser()
+        if not p.is_absolute() and base is not None and not p.exists():
+            p = base / p
+        if not p.is_file():
+            raise ConfigError(f"abm.seed_schedule not found: {p}")
+        gp["start_tick"] = _first_import_tick(p)
+    resolve_calendar(data, base, expand)
+
+
+def resolve_calendar(data: dict, base: Path | None = None, expand=None) -> None:
     """Fill or check `genetic_painter.start_date` against the ABM's tick 0.
 
     The start date is not an independent setting: it is tick 0 plus
@@ -76,7 +133,7 @@ def resolve_calendar(data: dict, base: Path | None = None) -> None:
     gp = data.get("genetic_painter")
     if not isinstance(gp, dict):
         return
-    t0 = abm_tick_zero(data, base)
+    t0 = abm_tick_zero(data, base, expand)
     given = gp.get("start_date")
     tick = gp.get("start_tick")
     if t0 is None:
@@ -107,7 +164,7 @@ class Config:
         self.data = data
         self.path = path
         self._expand_all()
-        resolve_calendar(self.data, Path(path).parent if path else None)
+        resolve_derived(self.data, Path(path).parent if path else None)
 
     # ---------------------------------------------------------------- loading
     @classmethod
