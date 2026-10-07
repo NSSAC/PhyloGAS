@@ -129,6 +129,14 @@ seeds:
   # reproduce them, and anything else only when generating a fresh ABM run.
   outlier_method: "none"
 
+  # An importation whose cluster has no sequence in Cov-Spectrum's open data
+  # borrows one from the nearest cluster of the same sublineage, recorded in
+  # the seed manifest's `surrogate_of` column. This matters where coverage is
+  # patchy: 397 of Washington's 3,739 Delta clusters have nothing to fetch,
+  # and dropping them would leave the painter with no genome for those chains.
+  # true drops them instead.
+  no_surrogates: false
+
   # Earliest plausible date per variant. A cluster whose first sample predates
   # its variant is re-dated to its first sample after this date, and that
   # sample (not the suspect one) becomes its seed. Unset uses the defaults in

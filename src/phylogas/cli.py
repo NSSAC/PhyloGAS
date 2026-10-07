@@ -227,6 +227,8 @@ def cmd_prep_seeds(args) -> int:
         ("--variant_start", _cfg_or_flag(cfg, "seeds.variant_start", args.variant_start)),
         ("--input_file", _cfg_or_flag(cfg, "seeds.input_file", args.input_file)),
     ]
+    if _cfg_or_flag(cfg, "seeds.no_surrogates", args.no_surrogates, False):
+        cmd.append("--no_surrogates")
     for flag, value in pairs:
         if value not in (None, ""):
             cmd += [flag, str(value)]
@@ -2079,6 +2081,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Cluster table to read instead of downloading UCSC's current "
                          "one. The published EpiHiper schedules came from "
                          "data/importations/sarscov2_clusters_2024_11_12_filtered.tsv.gz.")
+    sp.add_argument("--no-surrogates", dest="no_surrogates", action="store_true",
+                    default=None,
+                    help="Drop importations whose cluster has no retrievable sequence, "
+                         "rather than borrowing one from the nearest cluster of the "
+                         "same sublineage.")
     sp.add_argument("--variant-start", dest="variant_start", default=None,
                     help="VARIANT=YYYY-MM-DD[,...]: earliest plausible date per variant.")
     sp.add_argument("--include-sublineages", dest="include_sublineages",

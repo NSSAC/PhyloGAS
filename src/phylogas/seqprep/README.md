@@ -37,6 +37,14 @@ is written from the surviving clusters, its importation leaves the schedule
 too. That matters: a seed FASTA with one fewer record than the schedule expects
 would shift every later pairing by one.
 
+**Surrogates.** A cluster with no sample in Cov-Spectrum's open data at all --
+397 of Washington's 3,739 Delta clusters, against about none for Virginia --
+borrows the retrieved sequence of the nearest cluster of the same sublineage,
+and the manifest's `surrogate_of` column names the donor. Without that the seed
+set is short of the importations the ABM made, so the painter has no genome for
+those chains and skips every descendant. One donor may serve several
+importations. `--no_surrogates` drops them instead.
+
 **Ticks.** The schedule's own `tick` column counts from the first importation.
 With `--abm_config` (or `--tick_zero`) the schedule is also written on the
 ABM's absolute ticks -- `<State>_<lineage>_ticks.csv`, the `tick,count` form

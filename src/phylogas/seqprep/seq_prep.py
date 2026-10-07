@@ -350,7 +350,71 @@ def _parse_fasta_records(text: str) -> Dict[str, str]:
     return out
 
 
-def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5):
+def _assign_surrogates(plan, records, chosen):
+    """Give each unfilled importation a stand-in sequence from another cluster.
+
+    Some clusters have no sample in Cov-Spectrum's open data at all -- 397 of
+    Washington's 3,739 Delta clusters, against about none for Virginia. Dropping
+    them leaves the seed set short of the importations the ABM actually made, so
+    the painter has no genome for those chains and every descendant is skipped.
+
+    A surrogate keeps the importation: it borrows the retrieved sequence of the
+    nearest cluster of the SAME sublineage (nearest by introduction date), or
+    the nearest cluster of any sublineage when that sublineage has none. The
+    manifest records the donor in `surrogate_of`, so a benchmark can exclude
+    these chains, and one donor may serve several importations.
+
+    Returns (extra_records, surrogate_of): the borrowed FASTA text per cluster,
+    and the donor cluster per cluster.
+    """
+    import bisect
+
+    have = plan[plan["cluster_id"].isin(chosen)]
+    if have.empty:
+        return {}, {}
+    # Donors by sublineage, and overall, sorted by date for a nearest lookup.
+    pools = {}
+    for row in have.itertuples(index=False):
+        key = getattr(row, "sublineage", row.variant)
+        pools.setdefault(str(key), []).append((row.intro_date, row.cluster_id))
+        pools.setdefault("", []).append((row.intro_date, row.cluster_id))
+    for v in pools.values():
+        v.sort(key=lambda t: t[0])
+
+    def nearest(pool, when):
+        dates = [d for d, _ in pool]
+        i = bisect.bisect_left(dates, when)
+        best = None
+        for j in (i - 1, i):
+            if 0 <= j < len(pool):
+                gap = abs((pool[j][0] - when).days)
+                if best is None or gap < best[0]:
+                    best = (gap, pool[j][1])
+        return best
+
+    extra, surrogate_of, gaps, cross = {}, {}, [], 0
+    for row in plan[~plan["cluster_id"].isin(chosen)].itertuples(index=False):
+        key = str(getattr(row, "sublineage", row.variant))
+        pick = nearest(pools.get(key, []), row.intro_date)
+        if pick is None:                      # no donor of that sublineage
+            pick = nearest(pools[""], row.intro_date)
+            cross += pick is not None
+        if pick is None:
+            continue
+        gap, donor = pick
+        extra[row.cluster_id] = records[donor]
+        surrogate_of[row.cluster_id] = donor
+        gaps.append(gap)
+    if extra:
+        med = sorted(gaps)[len(gaps) // 2]
+        print(f"  {len(extra):,} importation(s) given a surrogate sequence from "
+              f"another cluster (median {med} day(s) apart"
+              + (f"; {cross:,} from a different sublineage" if cross else
+                 "; all from the same sublineage") + ")")
+    return extra, surrogate_of
+
+def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5,
+                          surrogates: bool = True):
     """Retrieve one sequence per importation, substituting when one is missing.
 
     Requests go out in batches (one POST per `batch_size` strains) for
@@ -394,8 +458,13 @@ def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5):
         pending = pending[advanced]
         if pending.empty:
             break
-    dropped = plan[~plan["cluster_id"].isin(chosen)]
-    return {cid: records[s] for cid, s in chosen.items()}, dropped
+    out = {cid: records[s] for cid, s in chosen.items()}
+    surrogate_of = {}
+    if surrogates:
+        extra, surrogate_of = _assign_surrogates(plan, out, chosen)
+        out.update(extra)
+    dropped = plan[~plan["cluster_id"].isin(out)]
+    return out, dropped, surrogate_of
 
 
 def run_seed_mode(args):
@@ -466,17 +535,21 @@ def run_seed_mode(args):
         _write_schedules(clusters, output_folder_path, args)
         return
 
-    records, dropped = _fetch_with_fallbacks(plan, batch_size=args.batch_size,
-                                             max_rounds=args.max_fetch_rounds)
+    records, dropped, surrogate_of = _fetch_with_fallbacks(
+        plan, batch_size=args.batch_size, max_rounds=args.max_fetch_rounds,
+        surrogates=not args.no_surrogates)
     if len(dropped):
         banner = "!" * 78
         print(banner, file=sys.stderr)
-        print(f"WARNING: {len(dropped):,} of {len(plan):,} importations have NO retrievable",
+        print(f"WARNING: {len(dropped):,} of {len(plan):,} importations have no sequence",
               file=sys.stderr)
-        print("  sequence after exhausting every sample in their cluster. Those clusters are",
+        print("  and no surrogate could be found for them (with --no_surrogates, none is",
               file=sys.stderr)
-        print("  DROPPED from both the seed FASTA and the schedule, so the two stay aligned.",
+        print("  attempted). They are DROPPED from both the seed FASTA and the schedule so",
               file=sys.stderr)
+        print("  the two stay aligned -- but the ABM still made those importations, so the",
+              file=sys.stderr)
+        print("  painter will skip the chains they founded.", file=sys.stderr)
         for row in dropped.head(10).itertuples(index=False):
             print(f"    {row.cluster_id}  {row.variant}  {pd.Timestamp(row.intro_date).date()}",
                   file=sys.stderr)
@@ -512,6 +585,9 @@ def run_seed_mode(args):
             "strain": used,
             "cluster_id": rows["cluster_id"].values,
             "sublineage": rows["sublineage"].values,
+            # The donor cluster when this importation's own sequence could not
+            # be retrieved; empty otherwise.
+            "surrogate_of": [surrogate_of.get(c, "") for c in rows["cluster_id"]],
             "intro_date": pd.to_datetime(rows["intro_date"]).dt.strftime("%Y-%m-%d").values,
         })
         t0 = _tick_zero(args)
@@ -599,6 +675,13 @@ def main():
                         help="[Seed Mode] Strains per API request (default: 500). A "
                              "request that fails is retried, then split in half, so a "
                              "large batch costs nothing when the server cannot take it.")
+    parser.add_argument("--no_surrogates", "--no-surrogates", dest="no_surrogates",
+                        action="store_true",
+                        help="[Seed Mode] Drop an importation whose cluster has no "
+                             "retrievable sequence instead of borrowing one from the "
+                             "nearest cluster of the same sublineage. Dropping leaves "
+                             "the seed set short of the ABM's importations, so the "
+                             "painter skips those chains entirely.")
     parser.add_argument("--max_fetch_rounds", "--max-fetch-rounds",
                         dest="max_fetch_rounds", type=int, default=5,
                         help="[Seed Mode] How many times to retry unfilled importations "
