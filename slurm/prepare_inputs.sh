@@ -40,7 +40,9 @@ fasta="${seqdir}/${name}_B_1_617_2_seed_sequences.fasta"
 manifest="${seqdir}/${name}_B_1_617_2_seed_manifest.csv"
 ticks="${seqdir}/${name}_B_1_617_2_ticks.csv"
 ran="data/seed_schedule/${st}-2.csv"
-if [ -s "$fasta" ] && [ -s "$manifest" ] && diff -q "$ticks" "$ran" >/dev/null 2>&1; then
+imports="${seqdir}/${name}_importation_schedule.csv"
+if [ -s "$fasta" ] && [ -s "$manifest" ] && [ -s "$imports" ] \
+        && diff -q "$ticks" "$ran" >/dev/null 2>&1; then
     echo "seeds present and matching ${ran}; leaving them untouched"
 else
     phylogas prep-seeds --config "$cfg" --seed-mode

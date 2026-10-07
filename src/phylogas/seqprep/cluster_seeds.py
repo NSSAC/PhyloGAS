@@ -162,8 +162,11 @@ def prepare_clusters(df: pd.DataFrame, state: str, lineages: Sequence[str],
 
     d["samples_ordered"] = d.apply(admissible, axis=1)
     d = d[d["samples_ordered"].map(len) > 0]
-    cols = ["cluster_id", "variant", "intro_date", "sample_count", "samples_ordered"]
-    cols = [c for c in cols if c in d.columns or c in ("variant", "intro_date", "samples_ordered")]
+    # The cluster's own Pango call (AY.44, AY.103, ...) before the roll-up to
+    # the requested lineage: the default benchmark variant label.
+    d["sublineage"] = d["annotation_2"].fillna(d["variant"]).astype(str)
+    cols = ["cluster_id", "variant", "sublineage", "intro_date", "sample_count", "samples_ordered"]
+    cols = [c for c in cols if c in d.columns]
     return d[cols].sort_values(["intro_date", "cluster_id"]).reset_index(drop=True)
 
 
@@ -182,6 +185,32 @@ def build_schedule(clusters: pd.DataFrame) -> pd.DataFrame:
              .rename(columns={"intro_date": "date"})
              .sort_values(["tick", "variant"]))
     return out.reset_index(drop=True)
+
+
+def variant_schedule(clusters: pd.DataFrame, tick_zero, label: str = "sublineage") -> pd.DataFrame:
+    """Importation schedule for `phylogas assign-variants`, on absolute ticks.
+
+    Columns tick, date, variant, clusters, sample_count -- the format of the
+    hand-made overlay schedules (e.g. TwinSampler's Virginia_importation_
+    schedule.csv), so either can be handed to assign-variants. `variant` is
+    each cluster's sublineage by default, which gives `variant_benchmark`
+    real co-circulating labels (AY.44, AY.103, ...) where the requested
+    lineage alone would give every importation the same one.
+    """
+    if clusters.empty:
+        return pd.DataFrame(columns=["tick", "date", "variant", "clusters", "sample_count"])
+    c = clusters.copy()
+    c["label"] = c[label] if label in c.columns else c["variant"]
+    agg = {"clusters": ("label", "size")}
+    agg["sample_count"] = (("sample_count", "sum") if "sample_count" in c.columns
+                           else ("label", "size"))
+    out = (c.groupby(["intro_date", "label"], as_index=False).agg(**agg)
+             .rename(columns={"intro_date": "date", "label": "variant"}))
+    out["tick"] = (pd.to_datetime(out["date"]) - pd.to_datetime(tick_zero)).dt.days.astype(int)
+    out["date"] = pd.to_datetime(out["date"]).dt.strftime("%Y-%m-%d")
+    out["sample_count"] = out["sample_count"].astype(int)
+    return (out[["tick", "date", "variant", "clusters", "sample_count"]]
+            .sort_values(["tick", "variant"]).reset_index(drop=True))
 
 
 def absolute_ticks(schedule: pd.DataFrame, tick_zero) -> Dict[str, pd.DataFrame]:
@@ -215,6 +244,7 @@ def seed_plan(clusters: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "cluster_id": getattr(row, "cluster_id", ""),
             "variant": row.variant,
+            "sublineage": getattr(row, "sublineage", row.variant),
             "intro_date": row.intro_date,
             "strain": ordered[0][1],
             "seed_date": ordered[0][0],

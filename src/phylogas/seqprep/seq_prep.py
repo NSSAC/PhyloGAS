@@ -309,6 +309,15 @@ def _write_schedules(clusters: pd.DataFrame, output_folder_path: Path, args) -> 
     tick_zero = _tick_zero(args)
     if tick_zero is None:
         return
+    # The importations again on absolute ticks, labelled by each cluster's
+    # sublineage, in the format `phylogas assign-variants` reads. This is the
+    # default source of `variant_benchmark`; benchmark.variant_schedule can
+    # point assign-variants at a hand-made overlay instead.
+    imp = cluster_seeds.variant_schedule(clusters, tick_zero)
+    iname = f"{args.state.replace(' ', '_')}_importation_schedule.csv"
+    imp.to_csv(output_folder_path / iname, index=False)
+    print(f"  Variant schedule ({imp['variant'].nunique()} sublineages) on absolute "
+          f"ticks -> {iname}")
     print(f"  Absolute ticks against tick 0 = {pd.to_datetime(tick_zero).date()}:")
     for variant, frame in cluster_seeds.absolute_ticks(schedule, tick_zero).items():
         fname = (f"{args.state.replace(' ', '_')}_{_sanitize(variant)}_ticks.csv")
@@ -490,6 +499,7 @@ def run_seed_mode(args):
             "order": range(len(rows)),
             "strain": used,
             "cluster_id": rows["cluster_id"].values,
+            "sublineage": rows["sublineage"].values,
             "intro_date": pd.to_datetime(rows["intro_date"]).dt.strftime("%Y-%m-%d").values,
         })
         t0 = _tick_zero(args)

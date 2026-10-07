@@ -21,7 +21,11 @@ try:                                    # the import path is stable, but do not
 except ImportError:                     # pragma: no cover
     WorkflowError = ValueError
 
-configfile: "config.yaml"
+# The default config, only when none is given on the command line. As an
+# unconditional directive it was loaded underneath every --configfile, so keys
+# present only in config.yaml leaked into other runs.
+if not config:
+    configfile: "config.yaml"
 
 
 
@@ -780,7 +784,11 @@ if ALLEVENTS:
      """
      input:
          allevents=ALLEVENTS or "",
-         schedule=cfg("ascertainment.schedule_input", ""),
+         # benchmark.variant_schedule: the prep-seeds sublineage schedule by
+         # default, or an overlay. ascertainment.schedule_input is the older
+         # key and is still honoured when the new one is absent.
+         schedule=(cfg("benchmark.variant_schedule", "")
+                   or cfg("ascertainment.schedule_input", "")),
      output:
          csv=f"{BENCH_DIR}/allevents_variants.csv.xz",
      params:

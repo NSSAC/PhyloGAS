@@ -309,7 +309,10 @@ genetic_painter:
 # ---------------------------------------------------------------------------
 ascertainment:
   parameters: "{data_dir}/ascertainment_parameters.yaml"
-  schedule_input: "{data_dir}/{population.state_name}_importation_schedule.csv"
+  # Importation schedule on absolute ABM ticks (tick, date, variant, clusters,
+  # sample_count). Written by `prep-seeds` beside the seeds; `phylogas
+  # assign-variants` labels each simulated transmission chain from it.
+  schedule_input: "{seeds.output_folder}/{population.state_name}_importation_schedule.csv"
   # How variant labels are assigned to transmission components:
   #   variant_bipartite | variant_temporal | just_components
   # Variant assignment moved to PhyloGAS; TwinSampler now emits component_id
@@ -439,6 +442,17 @@ benchmark:
 
   # Matching strategy for `phylogas assign-variants`: bipartite | temporal
   variant_mode: "bipartite"
+
+  # Schedule whose `variant` column becomes each transmission chain's
+  # `variant_benchmark` label, the truth the prevalence benchmark scores
+  # samples against. assign-variants matches each chain's first tick to the
+  # schedule's ticks. Format: tick,date,variant,clusters,sample_count.
+  #  - Default: the schedule `prep-seeds` writes, one row per real importation
+  #    day, labelled by each cluster's sublineage (AY.44, AY.103, ...).
+  #  - Overlay: any other schedule in that format, to test recovery of a
+  #    chosen prevalence profile. The original manufactured one is bundled:
+  #      variant_schedule: "{data_dir}/variant_overlays/Virginia_importation_schedule.csv"
+  variant_schedule: "{seeds.output_folder}/{population.state_name}_importation_schedule.csv"
 
   # --- Ground-truth inputs --------------------------------------------------
   # Each accepts:

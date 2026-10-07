@@ -4,15 +4,33 @@
 #SBATCH -c 32                    # Number of CPU cores
 #SBATCH -t 48:00:00              # Time limit (hh:mm:ss)
 #SBATCH -J vadelta_job           # Job name
-#SBATCH -o logs/vadelta_%j.out   # Standard output (%j expands to job ID)
-#SBATCH -e logs/vadelta_%j.err   # Standard error
+#SBATCH -o /dev/null              # Output goes to slurm/logs/ -- redirected below,
+#SBATCH -e /dev/null              # since -o paths depend on where you submit from
 #SBATCH --mem=128G
 ### SBATCH --mem=1TB                # Memory request; some systems may require --mem=1000G
 
 # PhyloGAS end to end for Virginia: stage inputs, then training -> painting ->
 # line list -> sampling -> Nextstrain -> benchmarks.
 #
-#   sbatch slurm/run_va.sbatch        (submit from the PhyloGAS checkout)
+#   sbatch slurm/run_va.sbatch     (from the PhyloGAS checkout, or from slurm/)
+
+# sbatch COPIES this file into a spool directory before executing it, so
+# ${BASH_SOURCE[0]} points at the spool copy, not at the repo. SLURM_SUBMIT_DIR
+# is the reliable anchor; the BASH_SOURCE fallback only applies when this
+# script is run directly (outside SLURM).
+cd "${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Accept submission from the PhyloGAS checkout or from its slurm/ folder.
+[ -f slurm/prepare_inputs.sh ] || cd ..
+[ -f slurm/prepare_inputs.sh ] || {  # logs/ is unknown here, so note it where submitted
+    echo "submit from the PhyloGAS checkout (or its slurm/ folder); job ran in $(pwd)" \
+        > "${SLURM_SUBMIT_DIR:-.}/PHYLOGAS_JOB_${SLURM_JOB_ID:-local}_FAILED.txt"; exit 1; }
+
+# All output to slurm/logs/, whichever folder the job was submitted from.
+# Done before anything else so conda errors are captured too. SLURM's own
+# messages (time limit, out-of-memory kill) do not pass through here: check
+# those with  sacct -j <jobid>  or  seff <jobid>.
+mkdir -p slurm/logs
+exec >"slurm/logs/vadelta_${SLURM_JOB_ID:-local}.out" 2>"slurm/logs/vadelta_${SLURM_JOB_ID:-local}.err"
 
 # Fail fast so a broken step cannot silently produce a truncated dataset.
 # NOTE: `-u` (error on unset variable) is deliberately NOT enabled yet. Conda's
@@ -28,11 +46,6 @@ conda activate phylogas_env
 # Now that conda's hooks have run, catch our own typos.
 set -u
 
-# sbatch COPIES this file into a spool directory before executing it, so
-# ${BASH_SOURCE[0]} points at the spool copy, not at the repo. SLURM_SUBMIT_DIR
-# is the reliable anchor; the BASH_SOURCE fallback only applies when this
-# script is run directly (outside SLURM).
-cd "${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # Report the resources actually consumed so the next submission can be tuned.
 trap 'echo "=== seff ${SLURM_JOB_ID:-} ==="; seff "${SLURM_JOB_ID:-}" 2>/dev/null || true' EXIT
