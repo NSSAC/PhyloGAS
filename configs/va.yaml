@@ -170,13 +170,17 @@ abm:
 # Cov-Spectrum over a date range and writes the alignment that `phylogas
 # train` reads as genetic_painter.align_fasta.
 #
-# Leave these unset and the window defaults to the simulated one
-# (genetic_painter.start_date through start_date + num_ticks), which is what
-# the existing runs used. Set them to train the mutational model on a wider
-# or earlier window -- usually worth doing, since the model is fitted to
-# sequences observed *before* and around the wave being simulated.
+# The window runs from genetic_painter.start_date for `days` days, or between
+# explicit date_from/date_to when both are set. With neither, it is the
+# painted window itself (start_date through start_date + num_ticks).
 # ---------------------------------------------------------------------------
 training:
+  # Length of the training window, in days from the painted start date
+  # (genetic_painter.start_date: the state's first Delta importation). Kept
+  # separate from num_ticks so the mutational model can see more of the wave
+  # than is painted. Unset = the painted span.
+  days: 400
+  # Explicit dates override the above.
   date_from: null             # e.g. "2021-02-01"
   date_to: null               # e.g. "2021-09-01"
 
@@ -271,7 +275,7 @@ genetic_painter:
   # num_ticks: the span painted.
   start_date: "auto"
   start_tick: "auto"
-  num_ticks: 400
+  num_ticks: 300
 
   # -- Output filtering ------------------------------------------------------
   # By default every painted infection is written. Each entry here adds an

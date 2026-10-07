@@ -9,7 +9,7 @@ copying and hand-editing, keeps the five configs from drifting apart (a merged
 config once silently reverted to Virginia).
 
     python scripts/make_state_configs.py --ncov-dir /path/to/ncov
-    python scripts/make_state_configs.py --states ma va --num-ticks 300
+    python scripts/make_state_configs.py --states ma va --num-ticks 250 --training-days 365
 
 Edits are line-level substitutions, so the template's comments survive.
 """
@@ -40,6 +40,7 @@ def render(template: str, st: str, name: str, args) -> str:
     t = sub_once(t, r'^(  state: )"[a-z]+"', rf'\g<1>"{st}"')
     t = sub_once(t, r'^(  state_name: )"[^"]*"', rf'\g<1>"{name}"')
     t = sub_once(t, r'^(  num_ticks: )\d+', rf'\g<1>{args.num_ticks}')
+    t = sub_once(t, r'^(  days: )\d+', rf'\g<1>{args.training_days}')
     if args.ncov_dir:
         t = sub_once(t, r'^(nextstrain:\n  enabled: )false', r'\g<1>true')
         t = sub_once(t, r'^(  dir: )""', rf'\g<1>"{args.ncov_dir}"')
@@ -62,9 +63,11 @@ def main():
     ap.add_argument("--template", default="config.template.yaml")
     ap.add_argument("--outdir", default="configs")
     ap.add_argument("--states", nargs="+", default=list(STATES), choices=list(STATES))
-    ap.add_argument("--num-ticks", type=int, default=400,
-                    help="Days painted from each state's first importation; the "
-                         "training window follows it (default: 400).")
+    ap.add_argument("--num-ticks", type=int, default=300,
+                    help="Days painted from each state's first importation "
+                         "(default: 300, as the original Virginia run).")
+    ap.add_argument("--training-days", type=int, default=400,
+                    help="Training-window length from the same start (default: 400).")
     ap.add_argument("--ncov-dir", default=None,
                     help="ncov checkout; given, Nextstrain is enabled.")
     ap.add_argument("--max-records", type=int, default=200000,

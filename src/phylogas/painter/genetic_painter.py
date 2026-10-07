@@ -309,6 +309,67 @@ def load_thresholds_and_dfs(args):
 
 
 # ====================================
+def _manifest_ticks(man, start_date, start_tick):
+    """Each manifest row's ABM tick: its own column, else from the painter's calendar."""
+    import pandas as pd
+    if "tick" in man.columns and man["tick"].notna().all():
+        return man["tick"].astype(int)
+    return int(start_tick) + (pd.to_datetime(man["intro_date"])
+                              - pd.Timestamp(start_date)).dt.days
+
+
+def pair_seeds_by_day(import_ticks, records, manifest_path, start_date, start_tick):
+    """Return seed records ordered so record i founds importation i, day by day.
+
+    `import_ticks` are the ABM's importations in assignment (tick) order. Each
+    takes the next unused seed listed for its own tick in the manifest. When
+    a day has more importations than seeds, the extra ones take the nearest
+    unused seed by date (and are counted). Seeds whose importation never
+    happened are left out. Records the manifest does not name are appended
+    at the end, as before.
+    """
+    import bisect
+    import pandas as pd
+
+    man = pd.read_csv(manifest_path)
+    by_id = {r.id: r for r in records}
+    ticks = _manifest_ticks(man, start_date, start_tick).tolist()
+    queues = {}
+    for strain, t in zip(man["strain"].astype(str), ticks):
+        if strain in by_id:
+            queues.setdefault(int(t), []).append(strain)
+    used = set()
+    ordered, borrowed = [], 0
+    days = sorted(queues)
+
+    def nearest_unused(t):
+        i = bisect.bisect_left(days, t)
+        for d in sorted(days[max(0, i - 50):i + 50], key=lambda d: abs(d - t)):
+            for s in queues[d]:
+                if s not in used:
+                    return s
+        return None
+
+    for t in import_ticks:
+        q = queues.get(int(t), [])
+        pick = next((s for s in q if s not in used), None)
+        if pick is None:
+            pick = nearest_unused(int(t))
+            borrowed += pick is not None
+        if pick is None:
+            break
+        used.add(pick)
+        ordered.append(by_id[pick])
+
+    unused = sum(1 for s in man["strain"].astype(str) if s in by_id and s not in used)
+    extra = [r for r in records if r.id not in used and r.id not in set(man["strain"].astype(str))]
+    print(f"    Seeds paired by day: {len(ordered):,} importations matched"
+          + (f", {borrowed:,} from a neighbouring day" if borrowed else "")
+          + (f"; {unused:,} seed(s) unused (their importation never happened)"
+             if unused else ""))
+    return ordered + extra
+
+
 def check_seed_pairing(import_ticks, record_ids, manifest_path, start_date, start_tick):
     """Compare the ABM's importations with the seeds meant to found them.
 
@@ -360,9 +421,11 @@ def check_seed_pairing(import_ticks, record_ids, manifest_path, start_date, star
             print(f"    {t:>4}  {r['imports']:>7}  {r['seeds']:>5}", file=sys.stderr)
         if len(bad) > 10:
             print(f"    ... and {len(bad) - 10:,} more", file=sys.stderr)
-        print("    From the first such day on, positional assignment gives importations "
-              "the wrong genomes. Regenerate the seeds with `phylogas prep-seeds` "
-              "against the schedule the ABM ran.", file=sys.stderr)
+        print("    Seeds are therefore paired day by day rather than by position: each "
+              "importation still gets a genome from its own day, and seeds whose "
+              "importation the ABM did not realise go unused. Many mismatched days, "
+              "or more importations than seeds, would instead mean the seeds were "
+              "built from a different schedule than the ABM ran.", file=sys.stderr)
     return problems
 
 
@@ -947,6 +1010,16 @@ def generate_sequences(args):
             args.seed_manifest, args.start_date, args.start_tick)
         if n_bad and args.strict_seed_pairing:
             sys.exit(1)
+        # Pair by day rather than by position. Assignment below is positional
+        # (importation i gets record i), which is exact only when every
+        # scheduled importation happened. The ABM can realise fewer than it
+        # was asked for -- Virginia's run made 3,308 of 3,322 -- and one
+        # missing importation shifts every later pairing. So reorder the
+        # records to line up with the importations day by day; a day's
+        # unused seed is left out.
+        align_seed_records = pair_seeds_by_day(
+            seed_df["tick"].astype(int).tolist(), align_seed_records,
+            args.seed_manifest, args.start_date, args.start_tick)
 
     # Assign seed sequences
     seed_pids = seed_df["pid"].tolist()

@@ -908,8 +908,8 @@ def _seed_fasta_path(cfg, args=None):
 def _training_window(cfg):
     """``(date_from, date_to)`` for the bulk training-sequence download.
 
-    Defaults to the window the painter simulates, which is what the existing
-    runs used. A mutational model is often better trained on a window that
+    Defaults to `training.days` from the painter's start date (the painted
+    span, num_ticks, when that is unset). A mutational model is often better trained on a window that
     starts earlier than the simulation; set ``training.date_from`` /
     ``training.date_to`` explicitly to do that.
     """
@@ -921,11 +921,15 @@ def _training_window(cfg):
         return str(d_from), str(d_to)
 
     start = cfg.get("genetic_painter.start_date", default=None)
-    ticks = cfg.get("genetic_painter.num_ticks", default=None)
+    # training.days sets the window's length from the painted start, so the
+    # model can be trained on more of the wave than is painted. Unset, the
+    # window is the painted span (num_ticks), as before.
+    days = cfg.get("training.days", default=None) or cfg.get(
+        "genetic_painter.num_ticks", default=None)
     if not start:
         return (str(d_from) if d_from else None, str(d_to) if d_to else None)
     s = _dt.date.fromisoformat(str(start))
-    e = s + _dt.timedelta(days=int(ticks)) if ticks else None
+    e = s + _dt.timedelta(days=int(days)) if days else None
     return (str(d_from) if d_from else s.isoformat(),
             str(d_to) if d_to else (e.isoformat() if e else None))
 
