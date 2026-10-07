@@ -1,4 +1,5 @@
 import argparse
+import sys
 import pandas as pd
 import numpy as np
 import requests
@@ -6,7 +7,6 @@ import os
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
-from scipy.stats import zscore 
 
 
 try:
@@ -30,6 +30,11 @@ except ImportError:
     PANGO_ALIASOR_AVAILABLE = False
 else:
     PANGO_ALIASOR_AVAILABLE = True
+
+try:
+    from . import cluster_seeds
+except ImportError:                 # run as a plain script
+    import cluster_seeds
 
 COVSPECTRUM_API_URL = 'https://lapis.cov-spectrum.org/open/v2/sample/alignedNucleotideSequences'
 DEFAULT_TSV_URL = 'https://clustertracker.gi.ucsc.edu/data/hardcoded_clusters.tsv'
@@ -152,6 +157,7 @@ def detect_outliers_iqr(date_series: pd.Series, factor: float = 1.5) -> pd.Serie
     return (date_series < lower_bound) | (date_series > upper_bound)
 
 def detect_outliers_zscore(date_series: pd.Series, threshold: float = 2.0) -> pd.Series:
+    from scipy.stats import zscore   # only this method needs scipy
     if date_series.empty or date_series.nunique() < 2: return pd.Series(False, index=date_series.index, dtype=bool)
     numeric_dates = (date_series - date_series.min()).dt.days
     if numeric_dates.nunique() < 2: return pd.Series(False, index=date_series.index, dtype=bool)
@@ -173,26 +179,162 @@ def detect_outliers_chaining(date_series: pd.Series, max_gap_weeks: int = 6) -> 
     outlier_series_sorted_index = pd.Series(df_sorted['is_outlier'].values, index=df_sorted.index)
     return outlier_series_sorted_index.reindex(date_series.index)
 
-def generate_schedule_file(df: pd.DataFrame, output_path: Path, state: str):
-    if df.empty:
-        print(f"Cannot generate schedule for {state}: No data remains.")
+def _sanitize(pango: str) -> str:
+    return str(pango).replace('.', '_').replace('/', '_')
+
+
+def _parse_variant_starts(spec: Optional[str]) -> Dict[str, str]:
+    """Parse `B.1.1.7=2020-12-01,B.1.617.2=2021-03-01` into a dict."""
+    if not spec:
+        return dict(cluster_seeds.VARIANT_START_DEFAULTS)
+    out = {}
+    for item in spec.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        if '=' not in item:
+            print(f"Error: --variant_start entry '{item}' is not VARIANT=YYYY-MM-DD."); exit(1)
+        k, v = item.split('=', 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+def _drop_outlier_clusters(clusters: pd.DataFrame, args) -> pd.DataFrame:
+    """Filter clusters whose importation date is an outlier for their variant.
+
+    NOTE: the schedules EpiHiper was run with were produced with NO outlier
+    filtering (`--outlier_method none`), so keep it off to reproduce them.
+    Filtering here removes the cluster from the schedule as well as from the
+    seed set, which keeps the two consistent but changes the simulation's
+    importation volume.
+    """
+    dates = clusters["intro_date"]
+    if args.outlier_method == 'iqr':
+        mask = detect_outliers_iqr(dates)
+    elif args.outlier_method == 'zscore':
+        mask = detect_outliers_zscore(dates)
+    elif args.outlier_method == 'chaining':
+        mask = detect_outliers_chaining(dates, args.chaining_max_gap_weeks)
+    else:
+        return clusters
+    mask = mask.fillna(False)
+    if not mask.any():
+        print(f"  Outlier filter ({args.outlier_method}): none found")
+        return clusters
+
+    def last_dated(samples):
+        dated = [d for d, _s, _a in samples if not pd.isna(d)]
+        return max(dated) if dated else pd.NaT
+
+    cand = clusters[mask].copy()
+    cand["span"] = cand["samples_ordered"].map(last_dated) - cand["intro_date"]
+    size = cand["sample_count"] if "sample_count" in cand.columns else pd.Series(1, index=cand.index)
+    rescued = (size >= args.rescue_cluster_size) & (
+        cand["span"] <= pd.Timedelta(days=args.rescue_cluster_days))
+    drop_idx = cand.index[~rescued.fillna(False)]
+    print(f"  Outlier filter ({args.outlier_method}): {int(mask.sum()):,} flagged, "
+          f"{int(rescued.sum()):,} rescued, {len(drop_idx):,} dropped")
+    return clusters.drop(index=drop_idx)
+
+
+def _write_schedules(clusters: pd.DataFrame, output_folder_path: Path, args) -> None:
+    """Write the importation schedule, and the ABM's absolute-tick form.
+
+    The schedule is written from the clusters that actually have a sequence, so
+    the day-by-day importation counts and the seed FASTA always describe the
+    same set of importations.
+    """
+    schedule = cluster_seeds.build_schedule(clusters)
+    name = f"{args.state.replace(' ', '_')}_schedule.csv"
+    path = output_folder_path / name
+    out = schedule.copy()
+    out["date"] = pd.to_datetime(out["date"]).dt.strftime("%Y-%m-%d")
+    out.to_csv(path, index=False)
+    print(f"\nImportation schedule ({len(out):,} days, "
+          f"{int(out['importations'].sum()):,} importations) -> {path.resolve()}")
+
+    tick_zero = args.tick_zero
+    if not tick_zero and args.abm_config:
+        try:
+            tick_zero = cluster_seeds.tick_zero_from_abm_config(args.abm_config)
+        except Exception as exc:
+            print(f"  WARNING: could not read tickZero from {args.abm_config}: {exc}")
+            return
+    if not tick_zero:
         return
-    df_schedule = df.copy()
-    min_date = df_schedule['earliest_date'].min()
-    df_schedule['tick'] = (df_schedule['earliest_date'] - min_date).dt.days
-    df_schedule['clusters'] = 1
-    df_schedule = df_schedule.rename(columns={'earliest_date': 'date', 'pango_regularized': 'variant'})
-    output_columns = ['tick', 'date', 'variant', 'clusters', 'sample_count']
-    final_schedule_df = df_schedule[output_columns].sort_values(by=['tick', 'variant'])
-    state_sanitized = state.replace(' ', '_')
-    schedule_filename = f"{state_sanitized}_schedule.csv"
-    schedule_filepath = output_path / schedule_filename
-    final_schedule_df.to_csv(schedule_filepath, index=False)
-    print(f"\nConsolidated importation schedule saved to: {schedule_filepath.resolve()}")
+    print(f"  Absolute ticks against tick 0 = {pd.to_datetime(tick_zero).date()}:")
+    for variant, frame in cluster_seeds.absolute_ticks(schedule, tick_zero).items():
+        fname = (f"{args.state.replace(' ', '_')}_{_sanitize(variant)}_ticks.csv")
+        frame.to_csv(output_folder_path / fname, index=False)
+        print(f"    {variant:12s} ticks {frame['tick'].min()}-{frame['tick'].max()}"
+              f"  -> {fname}")
+
+
+def _parse_fasta_records(text: str) -> Dict[str, str]:
+    """Map strain id -> FASTA record, from concatenated API responses."""
+    out: Dict[str, str] = {}
+    for chunk in text.split(">"):
+        if not chunk.strip():
+            continue
+        header = chunk.split("\n", 1)[0].strip()
+        out[header.split()[0] if header else ""] = ">" + chunk.rstrip("\n") + "\n"
+    out.pop("", None)
+    return out
+
+
+def _fetch_with_fallbacks(plan, batch_size: int = 100, max_rounds: int = 5):
+    """Retrieve one sequence per importation, substituting when one is missing.
+
+    Requests go out in batches (one POST per `batch_size` strains) for
+    efficiency, then the response is post-processed to see which strains came
+    back. Each importation that got nothing falls back to its cluster's next
+    oldest sample and is retried in the following round. A cluster that
+    exhausts every sample is dropped -- and because the schedule is written
+    from the surviving clusters, its importation disappears from the schedule
+    too, instead of leaving the painter an off-by-one in every later pairing.
+
+    Returns (records, dropped): a strain -> FASTA text map for the chosen
+    sequences, and the rows that could not be filled.
+    """
+    pending = plan.copy()
+    pending["attempt"] = pending["strain"]
+    pending["queue"] = pending["fallbacks"].map(list)
+    records: Dict[str, str] = {}
+    chosen = {}
+    for round_no in range(1, max_rounds + 1):
+        targets = sorted(set(pending["attempt"]) - set(records))
+        if not targets:
+            break
+        print(f"\n  Fetch round {round_no}: {len(targets):,} sequence(s)")
+        text = fetch_sequences_by_strain_id(targets, batch_size=batch_size)
+        if text is None:
+            print("  ERROR: the API request failed; aborting fetch.")
+            break
+        got = _parse_fasta_records(text)
+        records.update(got)
+        missing_mask = ~pending["attempt"].isin(records)
+        filled = pending[~missing_mask]
+        for row in filled.itertuples(index=False):
+            chosen[row.cluster_id] = row.attempt
+        pending = pending[missing_mask].copy()
+        if pending.empty:
+            break
+        n_missing = len(pending)
+        advanced = pending["queue"].map(bool)
+        if advanced.any():
+            pending.loc[advanced, "attempt"] = pending.loc[advanced, "queue"].map(
+                lambda q: q.pop(0))
+        print(f"    {n_missing:,} importation(s) unfilled; "
+              f"{int(advanced.sum()):,} have another sample to try.")
+        pending = pending[advanced]
+        if pending.empty:
+            break
+    dropped = plan[~plan["cluster_id"].isin(chosen)]
+    return {cid: records[s] for cid, s in chosen.items()}, dropped
 
 
 def run_seed_mode(args):
-    """Contains all logic for the original seed-finding workflow."""
+    """Schedule and seed sequences, derived together from the cluster table."""
     print("--- Running in Seed Mode ---")
     pango_lineages = [p.strip() for p in args.pango.split(',')]
     print(f"Processing for {len(pango_lineages)} Pango lineage(s): {pango_lineages}")
@@ -200,7 +342,7 @@ def run_seed_mode(args):
     if not PANGO_ALIASOR_AVAILABLE: exit(1)
 
     output_folder_path = Path(args.output_folder)
-    
+
     input_tsv_path: Optional[Path] = None
     if args.input_file:
         input_tsv_path = Path(args.input_file)
@@ -217,89 +359,79 @@ def run_seed_mode(args):
                              insecure=args.insecure_download): input_tsv_path = default_tsv_in_output
             else: print(f"Error: Failed to download the default input file."); exit(1)
     if not input_tsv_path: print("Error: Could not determine input TSV file path."); exit(1)
-    
+
     print(f"Loading data from {input_tsv_path}...")
     try:
         df = pd.read_csv(input_tsv_path, sep='\t', compression=('gzip' if str(input_tsv_path).endswith('.gz') else None))
     except Exception as e: print(f"Error reading TSV file '{input_tsv_path}': {e}"); exit(1)
-    
-    if 'annotation_2' not in df.columns: print("Error: 'annotation_2' column not found."); exit(1)
-    if args.include_sublineages:
-        # Roll descendant lineages up to their requested ancestor, so that e.g.
-        # AY.44 and AY.103 are both counted as B.1.617.2.
-        try:
-            replace_map = make_variant_base_map(pango_lineages)
-            df['pango_regularized'] = df['annotation_2'].map(replace_map)
-            df['pango_regularized'].fillna(df['annotation_2'], inplace=True)
-        except Exception as e: print(f"Error during pango_aliasor processing: {e}"); exit(1)
-        print("  Sublineages: INCLUDED (descendants rolled up to the requested lineage)")
-    else:
-        # Exact match only: no roll-up, so only clusters annotated with the
-        # requested lineage itself survive the filter below.
-        df['pango_regularized'] = df['annotation_2']
-        print("  Sublineages: EXCLUDED (exact lineage match only)")
-    
-    if 'region' not in df.columns: print("Error: 'region' column not found."); exit(1)
-    df_filtered_initial = df[(df['region'] == args.state) & (df['pango_regularized'].isin(pango_lineages))].copy()
-    if df_filtered_initial.empty: print("No data found for state and specified Pango lineages. Exiting."); exit(0)
 
-    processed_variant_dfs = []
+    thresholds = _parse_variant_starts(args.variant_start)
+    clusters = cluster_seeds.prepare_clusters(
+        df, args.state, pango_lineages,
+        include_sublineages=args.include_sublineages,
+        base_map_fn=make_variant_base_map,
+        thresholds=thresholds)
+    if clusters.empty:
+        print("No clusters found for this state and lineage set. Exiting."); exit(0)
+    print(f"  {len(clusters):,} importation cluster(s) after lineage filtering")
+    print(f"  Sublineages: {'INCLUDED' if args.include_sublineages else 'EXCLUDED'}")
 
+    if args.outlier_method != 'none':
+        clusters = _drop_outlier_clusters(clusters, args)
+        if clusters.empty:
+            print("Every cluster was filtered as an outlier. Exiting."); exit(0)
+
+    plan = cluster_seeds.seed_plan(clusters)
+
+    # Provenance: the strain chosen per variant, before any substitution.
     for pango in pango_lineages:
-        print(f"\n{'='*20} Processing: {pango} {'='*20}")
-        df_variant = df_filtered_initial[df_filtered_initial['pango_regularized'] == pango].copy()
-        if df_variant.empty: continue
+        ids = plan.loc[plan["variant"] == pango, "strain"].tolist()
+        if not ids:
+            continue
+        name = f"{args.state.replace(' ', '_')}_{_sanitize(pango)}_seed_strains.txt"
+        (output_folder_path / name).write_text("\n".join(ids))
+        print(f"  {len(ids):,} seed strain(s) for {pango} -> {name}")
 
-        for col in ['earliest_date', 'latest_date']:
-             df_variant[col] = pd.to_datetime(df_variant[col], errors='coerce')
-        df_variant.dropna(subset=['earliest_date', 'latest_date'], inplace=True)
-        if df_variant.empty: continue
-        if args.outlier_method != 'none':
-            outliers_mask = pd.Series(False, index=df_variant.index, dtype=bool)
-            if args.outlier_method == 'iqr': outliers_mask = detect_outliers_iqr(df_variant['earliest_date'])
-            elif args.outlier_method == 'zscore': outliers_mask = detect_outliers_zscore(df_variant['earliest_date'])
-            elif args.outlier_method == 'chaining': outliers_mask = detect_outliers_chaining(df_variant['earliest_date'], args.chaining_max_gap_weeks)
-            
-            potential_outliers = df_variant[outliers_mask]
-            if not potential_outliers.empty:
-                print(f"Identified {len(potential_outliers)} potential outliers. Checking for rescue candidates...")
-                final_outliers_indices = []
-                for idx, row in potential_outliers.iterrows():
-                    internal_span = row['latest_date'] - row['earliest_date']
-                    is_rescuable = (row['sample_count'] >= args.rescue_cluster_size and internal_span <= pd.Timedelta(days=args.rescue_cluster_days))
-                    if not is_rescuable:
-                        final_outliers_indices.append(idx)
-                if final_outliers_indices:
-                    df_variant.drop(final_outliers_indices, inplace=True)
+    if args.no_download:
+        print("\n--no_download: skipping sequence retrieval.")
+        _write_schedules(clusters, output_folder_path, args)
+        return
 
-        if df_variant.empty: continue
-        processed_variant_dfs.append(df_variant)
+    records, dropped = _fetch_with_fallbacks(plan, batch_size=args.batch_size,
+                                             max_rounds=args.max_fetch_rounds)
+    if len(dropped):
+        banner = "!" * 78
+        print(banner, file=sys.stderr)
+        print(f"WARNING: {len(dropped):,} of {len(plan):,} importations have NO retrievable",
+              file=sys.stderr)
+        print("  sequence after exhausting every sample in their cluster. Those clusters are",
+              file=sys.stderr)
+        print("  DROPPED from both the seed FASTA and the schedule, so the two stay aligned.",
+              file=sys.stderr)
+        for row in dropped.head(10).itertuples(index=False):
+            print(f"    {row.cluster_id}  {row.variant}  {pd.Timestamp(row.intro_date).date()}",
+                  file=sys.stderr)
+        if len(dropped) > 10:
+            print(f"    ... and {len(dropped) - 10:,} more", file=sys.stderr)
+        print(banner, file=sys.stderr)
+        kept = set(plan["cluster_id"]) - set(dropped["cluster_id"])
+        clusters = clusters[clusters["cluster_id"].isin(kept)]
+        plan = plan[plan["cluster_id"].isin(kept)]
 
-        df_variant['strain_seed'] = df_variant['samples'].str.split(',', n=1, expand=True)[0].str.split('|', n=1, expand=True)[0]
-        unique_strain_seeds = df_variant['strain_seed'].dropna().unique().tolist()
-        if not unique_strain_seeds: continue
-        
-        pango_sanitized = pango.replace('.', '_').replace('/', '_')
-        seed_ids_filename = f"{args.state.replace(' ', '_')}_{pango_sanitized}_seed_strains.txt"
-        seed_ids_filepath = output_folder_path / seed_ids_filename
-        with open(seed_ids_filepath, 'w') as f: f.write('\n'.join(unique_strain_seeds))
-        print(f"Identified {len(unique_strain_seeds)} seed strains for {pango}, IDs saved to: {seed_ids_filepath.resolve()}")
-        
-        if not args.no_download:
-            fasta_sequences = fetch_sequences_by_strain_id(unique_strain_seeds)
-            if fasta_sequences and fasta_sequences.strip():
-                fasta_filename = f"{args.state.replace(' ', '_')}_{pango_sanitized}_seed_sequences.fasta"
-                fasta_filepath = output_folder_path / fasta_filename
-                with open(fasta_filepath, 'w') as f: f.write(fasta_sequences)
-                print(f"Fetched sequences for {pango} saved to: {fasta_filepath.resolve()}")
-            else:
-                print(f"Failed to fetch or received empty sequences for {pango}.")
-        else:
-            print(f"Skipping sequence download for {pango} as per --no_download flag.")
+    # One FASTA per variant, written in schedule order: record i founds
+    # importation i, which is what the painter assumes.
+    for pango in pango_lineages:
+        rows = plan[plan["variant"] == pango].sort_values(["intro_date", "cluster_id"])
+        if rows.empty:
+            continue
+        name = f"{args.state.replace(' ', '_')}_{_sanitize(pango)}_seed_sequences.fasta"
+        path = output_folder_path / name
+        with open(path, "w") as fh:
+            for row in rows.itertuples(index=False):
+                fh.write(records[row.cluster_id])
+        print(f"  {len(rows):,} sequence(s) for {pango}, in importation order -> {path.resolve()}")
 
-    if processed_variant_dfs:
-        final_df_for_schedule = pd.concat(processed_variant_dfs, ignore_index=True)
-        generate_schedule_file(final_df_for_schedule, output_folder_path, args.state)
+    _write_schedules(clusters, output_folder_path, args)
 
 
 def run_bulk_mode(args):
@@ -357,6 +489,32 @@ def main():
     parser.add_argument("--rescue_cluster_size", type=int, default=2, help="[Seed Mode] Minimum sample_count to rescue a potential outlier.")
     parser.add_argument("--rescue_cluster_days", type=int, default=365, help="[Seed Mode] Max time span within a cluster for rescue.")
     parser.add_argument("--no_download", action='store_true', help="[Seed Mode] If specified, only generate seed strain ID files and skip downloading sequences.")
+    parser.add_argument("--variant_start", "--variant-start", dest="variant_start",
+                        type=str, default=None,
+                        help="[Seed Mode] Earliest plausible date per variant, as "
+                             "VARIANT=YYYY-MM-DD[,...]. A cluster whose first sample "
+                             "predates its variant's date is re-dated to its first "
+                             "sample after it. Default: "
+                             + ",".join(f"{k}={v}" for k, v in
+                                        cluster_seeds.VARIANT_START_DEFAULTS.items()))
+    parser.add_argument("--batch_size", "--batch-size", dest="batch_size", type=int,
+                        default=100,
+                        help="[Seed Mode] Strains per API request (default: 100).")
+    parser.add_argument("--max_fetch_rounds", "--max-fetch-rounds",
+                        dest="max_fetch_rounds", type=int, default=5,
+                        help="[Seed Mode] How many times to retry unfilled importations "
+                             "with their cluster's next oldest sample (default: 5).")
+    parser.add_argument("--tick_zero", "--tick-zero", dest="tick_zero", type=str,
+                        default=None,
+                        help="[Seed Mode] Calendar date of the ABM's tick 0. Given, the "
+                             "schedule is also written on absolute ticks, which is what "
+                             f"EpiHiper seeding consumes. EpiHiper used {cluster_seeds.EPIHIPER_TICK_ZERO} "
+                             "for every state, so their ticks share one calendar.")
+    parser.add_argument("--abm_config", "--abm-config", dest="abm_config", type=str,
+                        default=None,
+                        help="[Seed Mode] Read tick 0 from an ABM config instead "
+                             "(EpiHiper's config.json 'tickZero'), so the date is not "
+                             "duplicated. Ignored if --tick_zero is given.")
     
     args = parser.parse_args()
     

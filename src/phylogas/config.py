@@ -28,6 +28,78 @@ class ConfigError(Exception):
     """Raised when the configuration is missing or malformed."""
 
 
+_AUTO = ("", "auto", None)
+
+
+def abm_tick_zero(data: dict, base: Path | None = None):
+    """Calendar date of the ABM's tick 0, or None if the config gives none.
+
+    `abm.tick_zero` wins; otherwise `tickZero` is read from the ABM's own
+    config (`abm.config`, EpiHiper's config.json). Reading it rather than
+    copying it keeps the date in one place -- the file the ABM itself runs on.
+    """
+    import datetime as _dt
+    import json as _json
+
+    abm = data.get("abm") or {}
+    raw = abm.get("tick_zero")
+    if raw in _AUTO:
+        cfg_path = abm.get("config")
+        if cfg_path in _AUTO:
+            return None
+        p = Path(str(cfg_path)).expanduser()
+        if not p.is_absolute() and base is not None and not p.exists():
+            p = base / p
+        if not p.is_file():
+            raise ConfigError(f"abm.config not found: {cfg_path}")
+        js = _json.loads(p.read_text())
+        raw = js.get("tickZero")
+        if raw is None:
+            raise ConfigError(f"{cfg_path} has no 'tickZero'; set abm.tick_zero instead")
+    return _dt.date.fromisoformat(str(raw)[:10])
+
+
+def resolve_calendar(data: dict, base: Path | None = None) -> None:
+    """Fill or check `genetic_painter.start_date` against the ABM's tick 0.
+
+    The start date is not an independent setting: it is tick 0 plus
+    `start_tick`. Giving both by hand let them drift -- a Massachusetts config
+    labelled tick 128 as 2021-05-23 when the simulation's calendar puts it at
+    2021-04-07, silently shifting every painted and line-list date 46 days.
+
+    So `start_date: auto` (or empty) is derived, and an explicit date that
+    disagrees with the ABM is an error rather than a quiet relabelling.
+    Without an ABM tick 0 the explicit date is used as before.
+    """
+    import datetime as _dt
+
+    gp = data.get("genetic_painter")
+    if not isinstance(gp, dict):
+        return
+    t0 = abm_tick_zero(data, base)
+    given = gp.get("start_date")
+    tick = gp.get("start_tick")
+    if t0 is None:
+        if given in _AUTO:
+            raise ConfigError(
+                "genetic_painter.start_date is 'auto' but no ABM tick 0 is "
+                "configured; set abm.config (or abm.tick_zero), or give a date.")
+        return
+    if tick is None:
+        raise ConfigError("genetic_painter.start_tick is required to place start_date")
+    derived = t0 + _dt.timedelta(days=int(tick))
+    if given in _AUTO:
+        gp["start_date"] = derived.isoformat()
+        return
+    if str(given)[:10] != derived.isoformat():
+        raise ConfigError(
+            f"genetic_painter.start_date {given} disagrees with the ABM calendar: "
+            f"tick {tick} is {derived.isoformat()} (tick 0 = {t0.isoformat()}).\n"
+            f"  Set start_date: auto to derive it, or change start_tick to "
+            f"{(_dt.date.fromisoformat(str(given)[:10]) - t0).days} if "
+            f"{given} is the date you meant.")
+
+
 class Config:
     """A loaded PhyloGAS configuration."""
 
@@ -35,6 +107,7 @@ class Config:
         self.data = data
         self.path = path
         self._expand_all()
+        resolve_calendar(self.data, Path(path).parent if path else None)
 
     # ---------------------------------------------------------------- loading
     @classmethod

@@ -9,7 +9,7 @@
 # expanded after loading, so ordering does not matter.
 # ===========================================================================
 
-project_name: "va_delta_wave"
+project_name: "{population.state}_delta_wave"
 random_seed: 43
 
 # Where large inputs live, and where outputs are written.
@@ -41,6 +41,9 @@ zenodo_doi: "10.5281/zenodo.23067670"
 # 1. Digital twin population
 # ---------------------------------------------------------------------------
 population:
+  # Changing state: these two, location.divisionAbbr (section 7), and the
+  # tick/date mapping in genetic_painter if your replicate differs. Every
+  # per-state path below is derived from them.
   state: "va"
   state_name: "Virginia"
 
@@ -64,14 +67,14 @@ population:
   #       --residence   va/va_residence_locations.csv.xz \
   #       --fips        {data_dir}/county_fips.csv \
   #       --out         {data_dir}/va/va_2_4_0_demographics.csv
-  demographics_file: "{data_dir}/va/va_2_4_0_demographics.csv"
+  demographics_file: "{data_dir}/{population.state}/{population.state}_2_4_0_demographics.csv"
 
   # Raw Dataverse files (consumed by TwinSampler and by build-demographics).
   # pandas reads .xz natively, so there is no need to decompress them.
-  persontrait_raw: "{data_dir}/va/va_persontrait_epihiper.txt.xz"
-  household_file: "{data_dir}/va/va_household.csv.xz"
-  residence_file: "{data_dir}/va/va_residence_locations.csv.xz"
-  person_file: "{data_dir}/va/va_person.csv.xz"
+  persontrait_raw: "{data_dir}/{population.state}/{population.state}_persontrait_epihiper.txt.xz"
+  household_file: "{data_dir}/{population.state}/{population.state}_household.csv.xz"
+  residence_file: "{data_dir}/{population.state}/{population.state}_residence_locations.csv.xz"
+  person_file: "{data_dir}/{population.state}/{population.state}_person.csv.xz"
 
   # County FIPS -> name lookup (small; committed to the repo).
   fips_file: "{data_dir}/county_fips.csv"
@@ -106,8 +109,38 @@ seeds:
   # --input_file with a local copy where practical.
   insecure_download: false
   # How to drop temporal outliers when choosing importation seeds:
-  #   chaining | iqr | zscore
-  outlier_method: "chaining"
+  #   none | chaining | iqr | zscore
+  #
+  # `prep-seeds` writes the importation schedule and the seed FASTA from the
+  # same clusters, so a dropped cluster leaves both. The schedules the published
+  # EpiHiper runs consumed were built with NO outlier filtering: use "none" to
+  # reproduce them, and anything else only when generating a fresh ABM run.
+  outlier_method: "none"
+
+  # Earliest plausible date per variant. A cluster whose first sample predates
+  # its variant is re-dated to its first sample after this date, and that
+  # sample (not the suspect one) becomes its seed. Unset uses the defaults in
+  # phylogas.seqprep.cluster_seeds, which reproduce the published schedules.
+  #   variant_start: "B.1.1.7=2020-12-01,B.1.617.2=2021-03-01"
+  variant_start: ""
+
+
+# ---------------------------------------------------------------------------
+# 3a. The agent-based model
+#
+# PhyloGAS does not own the ABM's configuration: EpiHiper has its own format
+# and PhyloGAS reads what it needs rather than keeping a second copy. Today
+# that is tick 0, which fixes the whole calendar: every tick in the EpiHiper
+# output, the seed schedule and the painted metadata is counted from it.
+# ---------------------------------------------------------------------------
+abm:
+  type: "epihiper"
+  # EpiHiper's config.json, whose "tickZero" dates tick 0. The bundled
+  # experiment used 2020-11-30 for every state, deliberately, so each state's
+  # ticks sit on one shared calendar.
+  config: "cfg/exp1/config.json"
+  # Only needed for an ABM whose config does not carry the date.
+  tick_zero: ""
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +188,7 @@ genetic_painter:
   # this path. Cov-Spectrum serves open sequences, so there is no
   # redistribution constraint; it is left out of git only because it is large
   # and reproducible from the window.
-  align_fasta: "{data_dir}/training_sequences/va_delta.fasta"
+  align_fasta: "{data_dir}/training_sequences/{population.state}_delta.fasta"
 
   # -- Fitness map (written by `train`, read by `paint`) -------------------
   # Output of `train`, so it lives under results as stage 00. Point these at
@@ -173,7 +206,7 @@ genetic_painter:
   # population.state_name + variant.pango and looks in seeds.output_folder and
   # <data_dir>/<state>/seeds, so a different state or lineage needs no edit
   # here; point it at a staged file if you have one.
-  seed_fasta: "{seeds.output_folder}/Virginia_B_1_617_2_seed_sequences.fasta"
+  seed_fasta: "{seeds.output_folder}/{population.state_name}_B_1_617_2_seed_sequences.fasta"
   # Used only to emit the reference as the first output record (see
   # emit_reference). The ancestral genomes come from seed_fasta, not from here.
   reference_fasta: "{data_dir}/reference/reference.fasta"
@@ -208,8 +241,13 @@ genetic_painter:
   proportional: true            # use MSA-derived substitution probabilities
 
   # -- Time window -----------------------------------------------------------
-  # start_tick maps onto start_date; num_ticks sets the span.
-  start_date: "2021-04-07"
+  # start_tick is the first ABM tick painted; num_ticks sets the span.
+  # start_date is derived: abm tick 0 (section 3a) + start_tick. Leave it
+  # "auto". An explicit date that disagrees with the ABM calendar is rejected,
+  # since it would relabel every painted and line-list date.
+  # 128 is Virginia's first Delta importation; for another state use the
+  # first tick of its <State>_B_1_617_2_ticks.csv from `prep-seeds`.
+  start_date: "auto"
   start_tick: 128
   num_ticks: 300
 
@@ -229,8 +267,8 @@ genetic_painter:
   add_metadata: "gender,county,home_latitude,home_longitude,latino,race,smh_race,age_group"
   location:
     country: "USA"
-    division: "Virginia"
-    divisionAbbr: "VA"
+    division: "{population.state_name}"
+    divisionAbbr: "VA"          # upper-case population.state; not derivable
     region: "North America"
 
   # -- Output compression ----------------------------------------------------
@@ -247,7 +285,7 @@ genetic_painter:
 # ---------------------------------------------------------------------------
 ascertainment:
   parameters: "{data_dir}/ascertainment_parameters.yaml"
-  schedule_input: "{data_dir}/Virginia_importation_schedule.csv"
+  schedule_input: "{data_dir}/{population.state_name}_importation_schedule.csv"
   # How variant labels are assigned to transmission components:
   #   variant_bipartite | variant_temporal | just_components
   # Variant assignment moved to PhyloGAS; TwinSampler now emits component_id

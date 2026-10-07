@@ -203,6 +203,12 @@ def cmd_prep_seeds(args) -> int:
         ("--pango", _cfg_or_flag(cfg, "variant.pango", args.pango)),
         ("--output_folder", _cfg_or_flag(cfg, "seeds.output_folder", args.output_folder)),
         ("--outlier_method", _cfg_or_flag(cfg, "seeds.outlier_method", args.outlier_method)),
+        # Absolute ticks for the ABM's seeding input. Preferred as a pointer to
+        # the ABM's own config, so tick 0 is not a second copy of a date that
+        # EpiHiper already defines.
+        ("--abm_config", _cfg_or_flag(cfg, "abm.config", args.abm_config)),
+        ("--tick_zero", _cfg_or_flag(cfg, "abm.tick_zero", args.tick_zero)),
+        ("--variant_start", _cfg_or_flag(cfg, "seeds.variant_start", args.variant_start)),
     ]
     for flag, value in pairs:
         if value is not None:
@@ -694,6 +700,29 @@ def cmd_validate_config(args) -> int:
     cfg = _load_config(args)
     print(f"Config OK: {cfg}")
 
+    # The fix for each missing file. One generic hint used to cover them all
+    # ("fetch-data --with-simulations"), which was wrong for every row but
+    # one -- including when the simulations were already present.
+    st = str(cfg.get("population.state", default="va") or "va").lower()
+    cfg_flag = f" --config {args.config}" if getattr(args, "config", None) else ""
+    fixes = {
+        "training sequences":
+            f"phylogas fetch-data --states {st} --with-training-sequences{cfg_flag}",
+        # prep-seeds, not fetch-data --with-seeds: it writes into
+        # seeds.output_folder, which is where the Snakefile's paint rule
+        # looks. fetch-data writes <data_dir>/<state>/seeds, which only the
+        # CLI's fallback search finds.
+        "seed FASTA":
+            f"phylogas prep-seeds{cfg_flag} --state {_state_name(cfg)} --seed-mode",
+        "reference FASTA": "restore data/reference/reference.fasta from the repository",
+        "EpiHiper transmission log":
+            f"phylogas fetch-data --states {st} --with-simulations{cfg_flag}",
+        "demographics (derived)": f"phylogas fetch-data --states {st}{cfg_flag}",
+        "county FIPS lookup": "restore data/county_fips.csv from the repository",
+    }
+    # Outputs of an earlier stage, not inputs to fetch: `phylogas run` builds
+    # them (rule train_entropy) from the training sequences.
+    built = {"entropy thresholds", "probability matrix"}
     checks = [
         ("genetic_painter.entropy_thresholds", "entropy thresholds"),
         ("genetic_painter.probability_matrix", "probability matrix"),
@@ -702,7 +731,8 @@ def cmd_validate_config(args) -> int:
         ("population.demographics_file", "demographics (derived)"),
         ("population.fips_file", "county FIPS lookup"),
     ]
-    missing = 0
+    missing = []
+    pending = []
     print("\nInput files:")
 
     # Resolved rather than looked up directly: these are produced under one
@@ -723,16 +753,19 @@ def cmd_validate_config(args) -> int:
             print(f"  [ -- ] {label:32s} (not configured)")
         else:
             print(f"  [MISS] {label:32s} {shown}")
-            missing += 1
+            missing.append(label)
     for key, label in checks:
         raw = cfg.get(key, default=None)
         if raw is None:
             print(f"  [ -- ] {label:32s} (not configured)")
             continue
         found = cfg.resolve_variant(raw)
-        if found is None:
+        if found is None and label in built:
+            print(f"  [todo] {label:32s} {raw}")
+            pending.append(label)
+        elif found is None:
             print(f"  [MISS] {label:32s} {raw}")
-            missing += 1
+            missing.append(label)
         elif str(found) != str(Path(str(raw)).expanduser()):
             # Same file, different compression extension than configured.
             print(f"  [okay] {label:32s} {found}")
@@ -757,9 +790,14 @@ def cmd_validate_config(args) -> int:
             print(f"  [okay] {label:32s} {path}")
             print(f"         {path.stat().st_size/1048576:.1f} MB, modified {when}  [{why}]")
 
+    if pending:
+        print(f"\n[todo] {', '.join(pending)}: built by `phylogas run` "
+              f"(or `phylogas train{cfg_flag}`) from the training sequences.")
     if missing:
-        print(f"\n{missing} configured input(s) are missing.")
-        print("Run `phylogas fetch-data --with-simulations` to download them from Zenodo.")
+        print(f"\n{len(missing)} configured input(s) are missing:")
+        for label in missing:
+            fix = fixes.get(label, "see config.template.yaml for this key")
+            print(f"  {label:32s} {fix}")
         return 1
     print("\nAll configured inputs are present.")
     return 0
@@ -1975,8 +2013,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--pango")
     sp.add_argument("--output-folder", dest="output_folder")
     sp.add_argument("--outlier-method", dest="outlier_method",
-                    choices=["iqr", "zscore", "chaining"])
+                    choices=["none", "iqr", "zscore", "chaining"],
+                    help="Drop clusters whose importation date is an outlier. The "
+                         "published EpiHiper schedules were built with 'none'.")
     sp.add_argument("--seed-mode", dest="seed_mode", action="store_true")
+    sp.add_argument("--abm-config", dest="abm_config", default=None,
+                    help="ABM config to read tick 0 from (EpiHiper config.json). Makes "
+                         "prep-seeds also write the schedule on absolute ticks.")
+    sp.add_argument("--tick-zero", dest="tick_zero", default=None,
+                    help="Calendar date of ABM tick 0, if there is no ABM config.")
+    sp.add_argument("--variant-start", dest="variant_start", default=None,
+                    help="VARIANT=YYYY-MM-DD[,...]: earliest plausible date per variant.")
     sp.add_argument("--include-sublineages", dest="include_sublineages",
                     action="store_true", default=None,
                     help="Include descendant lineages (query 'B.1.617.2*'). Default: ON.")

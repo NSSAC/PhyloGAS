@@ -228,7 +228,7 @@ genetic_painter:
   entropy_thresholds: "{data_dir}/run.03.threshold.file"
   probability_matrix: "{data_dir}/run.03.base.threshold.df.npy"
   output_prefix: "{results_dir}/01_synthetic_genomes/{project_name}"
-  start_date: "2021-04-07"
+  start_date: "auto"                # = ABM tick 0 + start_tick (abm.config)
   start_tick: 128
   num_ticks: 300
 

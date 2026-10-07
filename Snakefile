@@ -23,6 +23,20 @@ except ImportError:                     # pragma: no cover
 
 configfile: "config.yaml"
 
+# genetic_painter.start_date is derived from the ABM's tick 0 (or checked
+# against it) -- the same rule `phylogas` applies when it loads the config, so
+# the painter and the line list cannot be handed a different calendar.
+try:
+    from phylogas.config import resolve_calendar as _resolve_calendar, ConfigError as _ConfigError
+except ImportError:                     # pragma: no cover
+    _resolve_calendar = None
+if _resolve_calendar is not None:
+    try:
+        _resolve_calendar(config, Path(workflow.configfiles[0]).parent
+                          if workflow.configfiles else None)
+    except _ConfigError as _exc:
+        raise WorkflowError(str(_exc))
+
 
 # --------------------------------------------------------------------------
 # Config access helpers
@@ -391,13 +405,16 @@ rule prep_seeds:
     params:
         state=cfg("population.state_name", "Virginia"),
         pango=cfg("variant.pango", "B.1.617.2"),
-        outlier=cfg("seeds.outlier_method", "chaining"),
+        outlier=cfg("seeds.outlier_method", "none"),
         config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
+        # Absolute ticks come from the ABM's own config, so the seed schedule
+        # and the EpiHiper output share one calendar.
+        abm_arg=(f" --abm-config {cfg('abm.config')}" if cfg("abm.config", "") else ""),
     shell:
         "phylogas prep-seeds --config {params.config} "
         "--state {params.state} --pango {params.pango} "
         "--outlier-method {params.outlier} --seed-mode "
-        "--output-folder {output}"
+        "--output-folder {output}{params.abm_arg}"
 
 
 # --------------------------------------------------------------------------

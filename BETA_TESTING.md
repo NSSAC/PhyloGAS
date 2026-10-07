@@ -250,6 +250,14 @@ waning of immunity (mean ~183 days) — see `cfg/exp1/disease.json`.
 clinical state that was ascertained. `exposure_date` is when the infection
 was acquired. Nextstrain treats `date` as the sampling date.
 
+**Seed genomes are now paired with importation dates.** `prep-seeds` writes
+the importation schedule and the seed FASTA from the same clusters, with each
+cluster's *earliest* sample as its seed and the FASTA in schedule order.
+Previously it took each cluster's first-listed sample, and that list runs
+newest first, so early importations got late genomes. Seed FASTAs made before
+this change should be regenerated, and anything painted from one re-painted.
+Use `seeds.outlier_method: none` to reproduce the published EpiHiper schedules.
+
 **Older SURS samples will not reproduce bit-for-bit.** SURS is now seeded
 from `--seed`; before, it ignored the seed entirely.
 
