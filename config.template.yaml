@@ -375,12 +375,22 @@ sampling:
 nextstrain:
   enabled: false
 
-  # Your ncov checkout. PhyloGAS does not vendor it, and installing the
-  # Nextstrain CLI does not bring it either -- ncov has no
-  # nextstrain-pathogen.yaml, so it is a clone-and-build workflow:
-  #   git clone https://github.com/nextstrain/ncov.git
-  # Pin a commit if you need a sweep to stay reproducible across months.
-  dir: ""
+  # The ncov checkout this project builds in. Nothing to set: by default it
+  # is cloned into the project's results on first use (`phylogas run` does it,
+  # or `phylogas ncov-checkout`), from `repo` at the pinned commit `ref`.
+  #
+  # Each project gets its own checkout because ncov writes
+  # results/combined_* at fixed paths shared by every build in a checkout --
+  # two projects (states) building in one checkout at once corrupt each
+  # other's inputs. The clock benchmark reads the build's results/, so the
+  # checkout stays until you delete the project's results.
+  dir: "{results_dir}/ncov"
+  repo: "https://github.com/nextstrain/ncov.git"
+  # Pinned so every project and every rerun builds with the same ncov.
+  ref: "3432c85760b6c8cd0f815a85167ebb46c8131abb"
+  # Optional: clone from this local checkout instead of `repo` -- for a
+  # machine without internet. Its downloaded Nextclade dataset is reused too.
+  source_dir: ""
 
   # How builds run. "nextstrain" (default) uses the Nextstrain CLI;
   # "snakemake" needs no CLI, only snakemake and conda on PATH. See the

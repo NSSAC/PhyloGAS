@@ -661,6 +661,21 @@ if cfg("nextstrain.enabled", False):
 
     NS_CLOCK = _clock_invocations()
 
+    rule ncov_checkout:
+        """Clone this project's own ncov checkout on first use.
+
+        Per-project because ncov writes results/combined_* at fixed paths that
+        every build in one checkout shares; concurrent projects in a single
+        checkout corrupt each other. An existing checkout is left untouched
+        (the rule has no inputs, so it never reruns once the Snakefile exists).
+        """
+        output:
+            f"{NS_DIR}/Snakefile",
+        params:
+            config=workflow.configfiles[0] if workflow.configfiles else "config.yaml",
+        shell:
+            "phylogas ncov-checkout --config {params.config}"
+
     rule nextstrain_config_strategy:
         """Render, stage and validate the ncov config for one sampling arm.
 
@@ -674,6 +689,7 @@ if cfg("nextstrain.enabled", False):
         input:
             fasta=f"{SAMPLE_DIR}/{PROJECT}.{{recipe}}.fasta{_EXT}",
             metadata=f"{SAMPLE_DIR}/{{recipe}}_samples.csv.xz",
+            ncov=f"{NS_DIR}/Snakefile",
         output:
             configfile=f"{NS_DIR}/{NS_STAGE}/{{recipe}}/config.yaml",
         params:
@@ -692,6 +708,7 @@ if cfg("nextstrain.enabled", False):
             input:
                 fasta=PAINTED_FASTA,
                 metadata=ALLEVENTS_OUT,
+                ncov=f"{NS_DIR}/Snakefile",
             output:
                 configfile=f"{NS_DIR}/{NS_STAGE}/all_infections/config.yaml",
             params:

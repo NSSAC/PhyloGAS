@@ -56,5 +56,16 @@ else
     echo "seed schedule matches ${ran}"
 fi
 
+echo "=== [${st}] Nextstrain checkout ==="
+# Each state builds in its own ncov checkout (nextstrain.dir, inside its
+# results). Cloned here so a network problem surfaces before the long steps;
+# `phylogas run` would otherwise do it on first use. A no-op once it exists.
+if python3 -c "import sys; from phylogas.config import Config; \
+sys.exit(0 if Config.load(sys.argv[1]).get('nextstrain.enabled', default=False) else 1)" "$cfg"; then
+    phylogas ncov-checkout --config "$cfg"
+else
+    echo "nextstrain disabled; skipping"
+fi
+
 echo "=== [${st}] config check ==="
 phylogas validate-config --config "$cfg"

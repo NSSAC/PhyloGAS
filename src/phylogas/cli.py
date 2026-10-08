@@ -496,6 +496,59 @@ def _resolve_recipe(rid: str) -> str:
              f"       `scenarios-recipes` lists all {len(known)}.")
 
 
+NCOV_REPO_DEFAULT = "https://github.com/nextstrain/ncov.git"
+
+
+def cmd_ncov_checkout(args) -> int:
+    """Make sure this project's ncov checkout (nextstrain.dir) exists.
+
+    Each project builds in a checkout of its own: ncov writes
+    results/combined_* at fixed paths shared by every build in a checkout, so
+    two projects building in one checkout at once corrupt each other's inputs.
+    By default the checkout lives inside the project's results and is cloned
+    from nextstrain.repo at nextstrain.ref -- no path to configure. A local
+    nextstrain.source_dir is cloned from instead when set (for machines
+    without internet), and its already-downloaded Nextclade dataset is reused.
+
+    An existing checkout is left as it is.
+    """
+    cfg = _load_config(args)
+    ns_dir = Path(str(cfg.get("nextstrain.dir", default="") or "")).expanduser()
+    if not str(ns_dir) or str(ns_dir) == ".":
+        sys.exit("ERROR: nextstrain.dir is empty.")
+    source = str(cfg.get("nextstrain.source_dir", default="") or "")
+    repo = str(cfg.get("nextstrain.repo", default="") or NCOV_REPO_DEFAULT)
+    ref = str(cfg.get("nextstrain.ref", default="") or "")
+
+    if (ns_dir / "Snakefile").is_file():
+        head = subprocess.run(["git", "-C", str(ns_dir), "rev-parse", "--short", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        print(f"ncov checkout: {ns_dir} (existing{', at ' + head if head else ''})")
+    else:
+        if ns_dir.exists() and any(ns_dir.iterdir()):
+            sys.exit(f"ERROR: {ns_dir} exists but is not an ncov checkout "
+                     f"(no Snakefile). Remove it or point nextstrain.dir elsewhere.")
+        origin = source or repo
+        print(f"ncov checkout: cloning {origin} -> {ns_dir}"
+              + (f" at {ref}" if ref else ""))
+        ns_dir.parent.mkdir(parents=True, exist_ok=True)
+        if _run(["git", "clone", "--quiet", origin, str(ns_dir)], False) != 0:
+            sys.exit(f"ERROR: could not clone {origin}. Needs internet unless "
+                     f"nextstrain.source_dir names a local checkout.")
+        if ref and _run(["git", "-C", str(ns_dir), "checkout", "--quiet", ref],
+                        False) != 0:
+            sys.exit(f"ERROR: {origin} has no commit {ref} (nextstrain.ref).")
+
+    # ncov fetches its Nextclade dataset into the checkout on first use; reuse
+    # a local source's copy so that step needs no network.
+    ds = Path("data/sars-cov-2-nextclade-defaults.zip")
+    if source and (Path(source) / ds).is_file() and not (ns_dir / ds).is_file():
+        (ns_dir / ds).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(source) / ds, ns_dir / ds)
+        print(f"  copied the Nextclade dataset from {source}")
+    return 0
+
+
 def cmd_nextstrain_config(args) -> int:
     """Render one ncov config for one arm, stage its inputs, and validate.
 
@@ -509,8 +562,8 @@ def cmd_nextstrain_config(args) -> int:
     cfg = _load_config(args)
     ns_dir = Path(str(_cfg_or_flag(cfg, "nextstrain.dir", args.dir, ""))).expanduser()
     if not ns_dir.is_dir():
-        sys.exit("ERROR: set nextstrain.dir (or --dir) to your ncov checkout.\n"
-                 f"       got: {ns_dir or '(unset)'}")
+        sys.exit(f"ERROR: no ncov checkout at {ns_dir or '(unset)'}.\n"
+                 f"       Create it with: phylogas ncov-checkout --config {args.config}")
     if not (ns_dir / "Snakefile").is_file():
         sys.exit(f"ERROR: {ns_dir} has no Snakefile; is it an ncov checkout?")
 
@@ -1842,7 +1895,8 @@ def _report_nextstrain(cfg) -> None:
     if not ns_dir:
         print(f"  [ -- ] {label:28s} (nextstrain.dir not set)")
     elif not (Path(ns_dir).expanduser() / "Snakefile").is_file():
-        print(f"  [MISS] {label:28s} {ns_dir}  (no Snakefile)")
+        print(f"  [todo] {label:28s} {ns_dir}  (cloned by `phylogas ncov-checkout`,"
+              f" or automatically by `phylogas run`)")
     else:
         print(f"  [okay] {label:28s} {ns_dir}")
 
@@ -1979,6 +2033,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_check_join)
 
     # -- nextstrain-config -------------------------------------------------
+    sp = sub.add_parser("ncov-checkout",
+                        help="Clone this project's ncov checkout (nextstrain.dir) if missing")
+    sp.add_argument("--config", "-c", default="config.yaml")
+    sp.set_defaults(func=cmd_ncov_checkout)
+
     sp = sub.add_parser("nextstrain-config",
                         help="Render, stage and validate an ncov config for one arm")
     sp.add_argument("--config", "-c", default="config.yaml")

@@ -8,7 +8,7 @@ those two lines plus the run-wide settings below. Generating them, rather than
 copying and hand-editing, keeps the five configs from drifting apart (a merged
 config once silently reverted to Virginia).
 
-    python scripts/make_state_configs.py --ncov-dir /path/to/ncov
+    python scripts/make_state_configs.py
     python scripts/make_state_configs.py --states ma va --num-ticks 250 --training-days 365
 
 Edits are line-level substitutions, so the template's comments survive.
@@ -41,9 +41,13 @@ def render(template: str, st: str, name: str, args) -> str:
     t = sub_once(t, r'^(  state_name: )"[^"]*"', rf'\g<1>"{name}"')
     t = sub_once(t, r'^(  num_ticks: )\d+', rf'\g<1>{args.num_ticks}')
     t = sub_once(t, r'^(  days: )\d+', rf'\g<1>{args.training_days}')
-    if args.ncov_dir:
+    if not args.no_nextstrain:
+        # Each state clones its own ncov checkout into its results on first
+        # use (nextstrain.dir's default), so no path is needed here.
         t = sub_once(t, r'^(nextstrain:\n  enabled: )false', r'\g<1>true')
-        t = sub_once(t, r'^(  dir: )""', rf'\g<1>"{args.ncov_dir}"')
+    if args.ncov_dir:
+        # Optional: clone from a local checkout rather than GitHub.
+        t = sub_once(t, r'^(  source_dir: )""', rf'\g<1>"{args.ncov_dir}"')
     # Each state stages its ncov inputs separately: recipe ids (4S__surs) are
     # the same in every state, so a shared folder would let concurrent runs
     # overwrite each other's inputs.
@@ -68,8 +72,11 @@ def main():
                          "(default: 300, as the original Virginia run).")
     ap.add_argument("--training-days", type=int, default=400,
                     help="Training-window length from the same start (default: 400).")
+    ap.add_argument("--no-nextstrain", action="store_true",
+                    help="Leave Nextstrain disabled.")
     ap.add_argument("--ncov-dir", default=None,
-                    help="ncov checkout; given, Nextstrain is enabled.")
+                    help="Optional local ncov checkout to clone each state's build "
+                         "checkout from, instead of GitHub (for no-internet nodes).")
     ap.add_argument("--max-records", type=int, default=200000,
                     help="Cap for the clock benchmark's mu_truth (0 = no cap).")
     args = ap.parse_args()
