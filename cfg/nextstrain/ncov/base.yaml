@@ -14,7 +14,10 @@
 # =========================================================================
 
 files:
-  # Staged by `phylogas nextstrain-config` from cfg/nextstrain/.
+  # Staged by `phylogas nextstrain-config` from cfg/nextstrain/. The
+  # "data/phylogas/_shared" prefix below is a stand-in: nextstrain-config
+  # rewrites it to "<nextstrain.stage_subdir>/_shared" when it renders the
+  # per-arm config, so these paths work whatever stage_subdir is set to.
   lat_longs: "data/phylogas/_shared/custom_lat_longs.tsv"
   auspice_config: "data/phylogas/_shared/auspice_augmented.json"
 
