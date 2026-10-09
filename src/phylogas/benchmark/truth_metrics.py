@@ -16,7 +16,12 @@ stride_variant_prevalence_error    true variant counts + variant_benchmark
 stride_component_coverage          the transmission graph
 8_week_rolling_tree_coverage       the transmission graph
 coverage_size_*                    the transmission graph
+equity_<age group>                 the transmission graph
 =================================  ====================================
+
+The last three (and the equity metrics) are Mean Reciprocal Distance,
+`calculate_coverage_score` below. truth_runner.py computes everything in this
+table, on the sampler's calendar.
 
 These used to be the single-letter "panel" codes B, C, E, F, M and I/J/K/L.
 The letters are retired: they told you nothing about what was measured and
@@ -25,8 +30,18 @@ leaked into output filenames. BeyondBaseline's
 ``canonicalize()`` maps any old letter-coded name onto the new one.
 
 What stayed in BeyondBaseline: KL divergence against the line list and the
-population, and the equity metrics. Those need only the line list the sampler
-was handed, so a surveillance program can compute them on real data.
+population. That needs only the line list the sampler was handed, so a
+surveillance program can compute it on real data.
+
+The equity metrics were first left in BeyondBaseline on the same reading, but
+they are tree coverage on the graph built from alias_contact -- who infected
+whom -- which a real line list does not carry. They moved here on 2026-10-09.
+
+The calendar helpers further down (`_stride_eval_indices`,
+`_calendar_week_bounds` and the rest) were copied with the move but refer to
+names that only existed inside BeyondBaseline's script (`args`, `start_date`,
+`sampling_stride_weeks`), so they cannot be called from here. truth_runner.py
+does its own week indexing.
 
 Functions are ported verbatim so results remain comparable with published
 runs; only the plumbing around them is new.
@@ -35,6 +50,7 @@ runs; only the plumbing around them is new.
 from __future__ import annotations
 
 from collections import deque
+from datetime import timedelta
 
 import sys
 from pathlib import Path
@@ -303,6 +319,121 @@ def calculate_coverage_score(target_population_set, sampled_set, adj_graph):
             total_score += 0.0
             
     return total_score / len(target_population_set)
+
+
+def distances_from(sampled_set, adj_graph):
+    """Multi-source BFS: contact-network distance d(u, S) for every reachable u.
+
+    The search half of `calculate_coverage_score`, split out so one BFS can be
+    scored against several target sets -- every tree-size threshold and every
+    age group at a given week share the same sampled set, so the expensive part
+    runs once instead of nine times. Same queueing rule as the original: only
+    sampled nodes present in the graph seed the search.
+    """
+    distances = {}
+    queue = deque()
+    for s in sampled_set:
+        if s in adj_graph:
+            distances[s] = 0
+            queue.append((s, 0))
+    while queue:
+        current, dist = queue.popleft()
+        for neighbor in adj_graph.get(current, ()):
+            if neighbor not in distances:
+                distances[neighbor] = dist + 1
+                queue.append((neighbor, dist + 1))
+    return distances
+
+
+def coverage_from_distances(target_population_set, sampled_set, distances):
+    """Mean Reciprocal Distance from precomputed BFS distances.
+
+    (1/|Pt|) * sum_u 1/(d(u,S) + 1) -- identical to `calculate_coverage_score`,
+    including its edge cases: an empty target or sample scores 0, a sampled
+    node absent from the graph counts as distance 0 to itself, and an
+    unreachable node contributes 0.
+    """
+    if not target_population_set or not sampled_set:
+        return 0.0
+    total = 0.0
+    for u in target_population_set:
+        d = distances.get(u)
+        if d is not None:
+            total += 1.0 / (d + 1.0)
+        elif u in sampled_set:
+            total += 1.0
+    return total / len(target_population_set)
+
+
+_NO_CONTACT = ("", "-1", "nan", "None", "<NA>")
+
+
+class TreeGraph:
+    """The true transmission graph, undirected, in compressed sparse form.
+
+    Built from the all-events file -- every infection and its infector -- so
+    a chain through unreported people stays connected. The line list alone
+    cannot do that: it carries an edge only for reported cases, so a chain
+    breaks wherever an unreported person sits in it.
+
+    Distances use scipy's compiled multi-source search; with millions of
+    infections the pure-Python BFS of `calculate_coverage_score` is far too
+    slow to run twice per evaluated week. The results are identical (see
+    tests/test_tree_coverage.py).
+    """
+
+    def __init__(self, pids, contacts):
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+
+        pids = pd.Series(pids).astype(str).to_numpy()
+        contacts = pd.Series(contacts).astype(str).to_numpy()
+        ok = ~np.isin(contacts, _NO_CONTACT) & (contacts != pids)
+        codes, uniq = pd.factorize(np.concatenate([pids, contacts[ok]]))
+        n = len(uniq)
+        rows = codes[: len(pids)][ok]
+        cols = codes[len(pids):]
+        self.index = pd.Index(uniq)
+        self.A = coo_matrix((np.ones(len(rows), dtype=np.int8), (rows, cols)),
+                            shape=(n, n)).tocsr()
+        self.n_trees, labels = connected_components(self.A, directed=False)
+        self.size = np.bincount(labels)[labels]
+
+    def __len__(self):
+        return len(self.index)
+
+    def codes(self, ids) -> np.ndarray:
+        """Node index for each id; -1 where the id is not in the graph."""
+        return self.index.get_indexer(pd.Index(pd.Series(list(ids)).astype(str)))
+
+    def distances(self, sampled_ids) -> np.ndarray:
+        """d(u, S) for every node; inf where no sampled node is reachable."""
+        from scipy.sparse.csgraph import dijkstra
+        src = np.unique(self.codes(sampled_ids))
+        src = src[src >= 0]
+        if len(src) == 0:
+            return np.full(len(self), np.inf)
+        return dijkstra(self.A, directed=False, indices=src,
+                        unweighted=True, min_only=True)
+
+
+def coverage_from_codes(codes, pids, sampled_ids, dist) -> float:
+    """Mean Reciprocal Distance over unique targets given as graph codes.
+
+    Same value and edge cases as `calculate_coverage_score`: no targets or no
+    samples scores 0, an unreachable target contributes 0, and a target absent
+    from the graph counts 1 only if it was itself sampled.
+    """
+    n = len(codes)
+    if n == 0 or not sampled_ids:
+        return 0.0
+    codes = np.asarray(codes)
+    present = codes >= 0
+    total = float((1.0 / (dist[codes[present]] + 1.0)).sum())
+    if not present.all():
+        total += float(np.isin(np.asarray(pids)[~present].astype(str),
+                               list(sampled_ids)).sum())
+    return total / n
 
 
 def precompute_component_sizes(adj_graph, all_pids):

@@ -586,6 +586,32 @@ rule simulate_linelist:
 # --------------------------------------------------------------------------
 # Stage 4: adaptive sampling  (BeyondBaseline)
 # --------------------------------------------------------------------------
+# The sampler's calendar, resolved once into a file that both the sampler and
+# `benchmark truth` read, so a scoring window always covers exactly the weeks
+# the samples were drawn from. "auto" puts week 0 on the first week of the
+# all-events file -- the simulated window being benchmarked.
+SAMPLING_START = str(cfg("sampling.start_date", "auto") or "auto")
+SAMPLING_MIN_POOL = str(cfg("sampling.min_pool", "") or "")
+MIN_POOL_ARG = f"--min-pool {SAMPLING_MIN_POOL} " if SAMPLING_MIN_POOL else ""
+SAMPLING_CALENDAR = f"{SAMPLE_DIR}/sampling_start_date.txt"
+
+
+rule sampling_calendar:
+    """Resolve the sampler's --start-date (see sampling.start_date)."""
+    input:
+        linelist=LINELIST,
+        allevents=ALLEVENTS_OUT,
+    output:
+        SAMPLING_CALENDAR,
+    params:
+        start=SAMPLING_START,
+    shell:
+        "phylogas sampling-calendar --allevents {input.allevents} "
+        "--linelist {input.linelist} --start-date {params.start} "
+        f"{MIN_POOL_ARG}"
+        "--out {output}"
+
+
 rule sample_scenarios:
     """Select which cases get sequenced, under a fixed budget.
 
@@ -594,6 +620,7 @@ rule sample_scenarios:
     input:
         linelist=LINELIST,
         population=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
+        calendar=SAMPLING_CALENDAR,
     output:
         # Every sample file the run produces, from BeyondBaseline's registry.
         # One rule rather than one per algorithm: the runner loops scenarios
@@ -615,6 +642,8 @@ rule sample_scenarios:
         "scenarios-runner --linelist {input.linelist} "
         "--population {input.population} --outdir {params.outdir} "
         "--batch-size {params.batch} --seed {params.seed} {params.norepl} "
+        "--start-date $(cat {input.calendar}) "
+        f"{MIN_POOL_ARG}"
         "--save-samples --algorithms {params.algorithms}"
 
 
@@ -844,13 +873,23 @@ if ALLEVENTS:
       input:
           samples=_sample_files(),
           infections=f"{BENCH_DIR}/allevents_variants.csv.xz",
+          # The line list fixes how many weeks the sampler ran; the coverage
+          # metrics are scored over every infection in `infections`.
+          linelist=LINELIST,
+          # Demographic groups for the KL-vs-infections metrics.
+          population=cfg("population.demographics_file", cfg("population.persontrait_file", "")),
+          calendar=SAMPLING_CALENDAR,
       output:
           csv=f"{BENCH_DIR}/AUC_truth_rankings.csv",
       params:
           glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
       shell:
           "phylogas benchmark truth --samples '{params.glob}' "
-          "--infections {input.infections} --out {output.csv}"
+          "--infections {input.infections} --linelist {input.linelist} "
+          "--population {input.population} "
+          "--start-date $(cat {input.calendar}) "
+          f"{MIN_POOL_ARG}"
+          "--out {output.csv}"
 
 
 if MUGRATION and ALLEVENTS:

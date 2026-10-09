@@ -530,6 +530,20 @@ def _resolve_recipe(rid: str) -> str:
 NCOV_REPO_DEFAULT = "https://github.com/nextstrain/ncov.git"
 
 
+def cmd_sampling_calendar(args) -> int:
+    """Resolve the sampler's --start-date and write it where both rules read it."""
+    from .benchmark.truth_runner import resolve_sampling_start
+    start = resolve_sampling_start(args.allevents, args.linelist, args.start_date,
+                                   args.min_pool, args.date_field)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(f"{start.date()}\n")
+        print(f"Wrote {start.date()} -> {args.out}")
+    else:
+        print(start.date())
+    return 0
+
+
 def cmd_ncov_checkout(args) -> int:
     """Make sure this project's ncov checkout (nextstrain.dir) exists.
 
@@ -1370,6 +1384,8 @@ def cmd_benchmark(args) -> int:
             samples_globs=args.samples, infections=args.infections,
             linelist=args.linelist, date_field=args.date_field,
             out_csv=args.out, stride_weeks=args.stride_weeks,
+            population=args.population, start_date=args.start_date,
+            min_pool=args.min_pool, stratifiers=args.stratifiers,
         )
     elif args.what == "mugration":
         from .benchmark import runner
@@ -2075,6 +2091,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_check_join)
 
     # -- nextstrain-config -------------------------------------------------
+    sp = sub.add_parser("sampling-calendar",
+                        help="Resolve the sampler's start date (week 0) from the all-events file")
+    sp.add_argument("--allevents", required=True, help="TwinSampler's linelist_allevents file")
+    sp.add_argument("--linelist", required=True, help="The line list the sampler draws from")
+    sp.add_argument("--start-date", dest="start_date", default="auto",
+                    help="'auto' (week 0 = the first week of the all-events file) or YYYY-MM-DD")
+    sp.add_argument("--min-pool", dest="min_pool", type=int, default=None,
+                    help="The sampler's --min-pool (default: BeyondBaseline's)")
+    sp.add_argument("--date-field", dest="date_field", default="date")
+    sp.add_argument("--out", default=None, help="Write the date here (one line)")
+    sp.set_defaults(func=cmd_sampling_calendar)
+
     sp = sub.add_parser("ncov-checkout",
                         help="Clone this project's ncov checkout (nextstrain.dir) if missing")
     sp.add_argument("--config", "-c", default="config.yaml")
@@ -2233,15 +2261,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = bsub.add_parser("truth",
                         help="Score sampled sets against ABM ground truth "
-                             "(prevalence error, component coverage)")
+                             "(KL vs true infections, prevalence error, "
+                             "component coverage, tree coverage / Mean "
+                             "Reciprocal Distance)")
     b.add_argument("--samples", required=True, nargs="+",
                    help="Sample CSVs from BeyondBaseline --save-samples (globs allowed)")
     b.add_argument("--infections", required=True,
                    help="ABM all-events file, after `phylogas assign-variants`")
     b.add_argument("--linelist", default=None,
-                   help="Linelist, if its edges should define coverage instead")
+                   help="Line list the sampler used: the cases the coverage "
+                        "metrics are scored over, and the number of weeks it "
+                        "ran (the pipeline passes it)")
     b.add_argument("--date-field", dest="date_field", default="date")
-    b.add_argument("--stride-weeks", dest="stride_weeks", type=int, default=4)
+    b.add_argument("--stride-weeks", dest="stride_weeks", type=int, default=4,
+                   help="Stride for a recipe whose id does not start with <N>S")
+    b.add_argument("--population", default=None,
+                   help="Population file the sampler used (demographics or "
+                        "persontrait); needed for the KL-vs-infections metrics")
+    b.add_argument("--start-date", dest="start_date", default=None,
+                   help="The sampler's --start-date. Default: BeyondBaseline's "
+                        "default, which is what the sampler uses without one")
+    b.add_argument("--min-pool", dest="min_pool", type=int, default=None,
+                   help="The sampler's --min-pool (default: BeyondBaseline's)")
+    b.add_argument("--stratifiers", nargs="+", default=None,
+                   help="The sampler's --stratifiers (default: age race county sex)")
     b.add_argument("--out", default=None, help="Output CSV (AUC_truth_rankings.csv)")
     b.set_defaults(func=cmd_benchmark)
 
