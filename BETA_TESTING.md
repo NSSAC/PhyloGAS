@@ -111,8 +111,9 @@ sequences takes a few minutes.
 
 ### Turning on Nextstrain
 
-Off by default. Set `nextstrain.enabled: true` and `nextstrain.dir` to an
-`ncov` checkout (README, "Optional: Nextstrain"), then pick the trees:
+Off by default. Set `nextstrain.enabled: true` -- the ncov checkout is cloned
+into the project's results for you, at a pinned commit, so there is no path to
+set (README, "Optional: Nextstrain"). Then pick the trees:
 
 ```yaml
 sampling:

@@ -845,8 +845,10 @@ snakemake --snakefile .../ncov/Snakefile \
 **New**
 
 ```bash
+phylogas ncov-checkout --config config.yaml      # clones nextstrain.dir if absent
 phylogas nextstrain-config --config config.yaml --build-type strategy --recipe 4S__surs
-nextstrain build /path/to/ncov --configfile data/phylogas/4S__surs/config.yaml
+nextstrain build results/<project>/ncov \
+    --configfile data/phylogas/<project>/4S__surs/config.yaml
 ```
 
 or as part of `phylogas run` with `nextstrain.enabled: true`.
@@ -1166,8 +1168,11 @@ and it only works because ncov loads the user `--configfile` first and merges
   not a PhyloGAS requirement and cannot be configured away from our side.
 
 Recommended sequence, now in the README: installer -> `nextstrain setup
-<runtime>` -> `check-setup --set-default` -> `git clone ncov` -> set
-`nextstrain.dir`.
+<runtime>` -> `check-setup --set-default`. The checkout itself is no longer a
+step: `phylogas ncov-checkout` clones it per project at a pinned `ref`, which
+is also what keeps concurrent state runs from sharing ncov's fixed
+`results/combined_*` paths. `nextstrain.source_dir` covers the no-egress case,
+and carries the Nextclade dataset across with it.
 
 ## The three conda environments, and the snakemake runner fix (2026-10-03)
 

@@ -77,17 +77,41 @@ tools (augur, nextclade, …) live in a separate environment that is built for
 you and switched into automatically whenever a build runs — you never activate
 it, and you should not install augur into the PhyloGAS environment.
 
-**1. Get the ncov workflow.** This is always required, whichever option you
-pick below; no Nextstrain installer fetches it for you.
-
-```bash
-git clone https://github.com/nextstrain/ncov.git
-```
+**1. The ncov workflow clones itself.** There is no path to configure and
+nothing to clone by hand. On first use `phylogas run` (or `phylogas
+ncov-checkout`) clones ncov into the project's own results directory at a
+pinned commit:
 
 ```yaml
 nextstrain:
   enabled: true
-  dir: "/path/to/ncov"
+  # The defaults, shown for reference -- you do not need to set any of these.
+  dir: "{results_dir}/ncov"
+  repo: "https://github.com/nextstrain/ncov.git"
+  ref: "3432c85760b6c8cd0f815a85167ebb46c8131abb"
+```
+
+**One checkout per project, not one shared.** ncov writes
+`results/combined_metadata.tsv.xz`, `results/combined_sequences_for_subsampling.fasta.xz`
+and `results/combined_sequence_index.tsv.xz` at fixed paths that every build in
+a checkout shares. Two projects building in one checkout at the same time
+therefore overwrite each other's inputs, and the symptoms are nasty: a lock
+error if you are lucky, another state's tips in your tree if you are not. A
+checkout is ~25 MB, so a copy per project is the cheap way out. It stays until
+you delete the project's results, because the clock benchmark reads the build's
+`results/`.
+
+`ref` is pinned so every project, and every rerun, builds with the same ncov.
+Bump it deliberately; existing checkouts are left alone, so delete them (or the
+project's results) to pick up a new ref.
+
+*No internet on the machine?* Clone ncov once by hand and point `source_dir` at
+it. It is cloned from there instead, and its already-downloaded Nextclade
+dataset is copied across so the first build needs no network either:
+
+```yaml
+nextstrain:
+  source_dir: "/shared/ncov"
 ```
 
 **2. Choose how builds run.** Pick one.
@@ -118,14 +142,21 @@ in place and what is missing.
   `export NEXTSTRAIN_HOME=/scratch/$USER/nextstrain` before running setup.
   Option B: set `nextstrain.conda_prefix: "/scratch/$USER/snakemake-conda"`,
   which also means it is built once rather than per run.
-- **The first build needs internet.** ncov downloads a nextclade dataset into
-  the checkout the first time it runs, and reuses it afterwards. If compute
-  nodes have no outbound access, run the first build from a login node.
+- **The clone and the first build need internet.** The checkout is cloned from
+  GitHub, and ncov then downloads a Nextclade dataset into it on first use and
+  reuses it afterwards. If compute nodes have no outbound access, either run
+  `phylogas ncov-checkout --config <config>` and the first build from a login
+  node, or set `nextstrain.source_dir` to a checkout you cloned earlier.
+- **Budget disk for a checkout per project.** ~25 MB of code, plus the
+  Nextclade dataset and whatever ncov's own `results/` grows to for each
+  build.
 
 `phylogas nextstrain-config` (run for you by `phylogas run`) writes one ncov
 config per **recipe** listed in `sampling.nextstrain_recipes` and copies its
-inputs into the ncov checkout under `data/phylogas/<recipe>/`. It stops with an
-error if any sequence lacks a metadata row. To run it by hand:
+inputs into the project's ncov checkout under
+`data/phylogas/<project_name>/<recipe>/`, alongside a `_shared/` directory for
+the files every recipe uses (lat/longs, the Auspice config, the reference). It
+stops with an error if any sequence lacks a metadata row. To run it by hand:
 
 ```bash
 phylogas nextstrain-config --config config.yaml --build-type strategy --recipe 4S__surs
@@ -244,8 +275,7 @@ sampling:
   nextstrain_recipes: ["4S__surs"]       # which recipes get a tree; "all" for every one
 
 nextstrain:
-  enabled: true
-  dir: "/path/to/ncov"
+  enabled: true        # the ncov checkout is cloned for you; see above
 ```
 
 **Recipes.** BeyondBaseline runs every scenario for each algorithm in
@@ -276,8 +306,10 @@ results/<project_name>/
 ├── 02_simulated_linelists/  # linelist.csv.xz (ascertained), linelist_allevents.csv.xz (all infections)
 ├── 03_sampled_datasets/     # <recipe>_samples.csv.xz, <project>.<recipe>.fasta.xz
 ├── 04_nextstrain_builds/    # <recipe>/auspice.json, one per nextstrain_recipes entry
-└── 05_benchmarks/           # clock_estimates.csv, Mugration_Metrics.csv,
-                             # AUC_truth_rankings.csv, sequence_divergence.csv, ...
+├── 05_benchmarks/           # clock_estimates.csv, Mugration_Metrics.csv,
+│                            # AUC_truth_rankings.csv, sequence_divergence.csv, ...
+└── ncov/                    # this project's ncov checkout (cloned, pinned);
+                             # holds the staged inputs and ncov's own results/
 ```
 
 `rule all` produces the painted set, the sampled subsets and (with
@@ -333,13 +365,14 @@ This project is mid-restructure. What is actually wired up today:
 | — | `phylogas status` | Works — **start here** |
 | — | `phylogas fetch-data` | Works — verified against live Dataverse |
 | — | `phylogas build-demographics` | Works — verified on 5.2M MN rows |
+| — | `phylogas ncov-checkout` | Works; clones `nextstrain.dir` at the pinned `ref`, no-op if present |
 | 0. Seed acquisition | `phylogas prep-seeds` | Works |
 | 1. Entropy training | `phylogas train` | Works, verified end-to-end |
 | 2. Genetic painting | `phylogas paint` | Works, verified end-to-end |
 | 3. Ascertainment | rule `simulate_linelist` (TwinSampler) | Works, verified at cluster scale |
 | 4. Adaptive sampling | rule `sample_scenarios` (`beyond-baseline-sweep`) | Works; one sample set per recipe (`sampling.replicates` not yet wired) |
 | 5. FASTA subsetting | `phylogas subset-fasta` | Works |
-| 6. Nextstrain | rule `nextstrain_build` | Works, opt-in; verified with the Nextstrain CLI on a cluster |
+| 6. Nextstrain | rule `nextstrain_build` | Works, opt-in; verified with the Nextstrain CLI on a cluster, 4 states concurrently |
 | 7. Clock benchmark | `phylogas benchmark clock` | Works for `truth` and `operational`; `inferred` (mu_sim) needs augur on `PATH` |
 | 7. Other benchmarks | `phylogas benchmark truth / mugration / sequence` | Work — mugration scoring verified bit-identical to the pre-split implementation |
 | — | `phylogas compare-strategies` | Works — runs a BeyondBaseline sweep, then ranks every strategy |

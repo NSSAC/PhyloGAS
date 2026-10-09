@@ -406,6 +406,15 @@ nextstrain:
   # project's inputs and writes each arm's config. It stages rather than
   # points because `nextstrain build <dir>` mounts only that directory --
   # absolute paths elsewhere are invisible under docker and singularity.
+  #
+  # Each arm gets <stage_subdir>/<recipe>/, and the files they all share
+  # (lat/longs, the Auspice config, the reference) go in
+  # <stage_subdir>/_shared/. cfg/nextstrain/ncov/base.yaml spells those as
+  # "data/phylogas/_shared/..." so it reads as a working ncov config on its
+  # own; nextstrain-config rewrites that prefix to match whatever is set here.
+  # scripts/make_state_configs.py appends /{project_name}, which is redundant
+  # now that each project has its own checkout but harmless, and still correct
+  # if you ever point two projects at one checkout.
   stage_subdir: "data/phylogas"
 
   outdir: "{results_dir}/04_nextstrain_builds"
