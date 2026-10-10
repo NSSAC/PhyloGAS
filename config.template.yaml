@@ -383,10 +383,11 @@ sampling:
   # An algorithm that ignores the target distribution is named by the axes it
   # actually reads, so SURS is 4S__surs rather than 4S-4_LL-P__surs. The older
   # spelling still resolves, with a note.
-  # 4S-4_LL-P__lasso_greedy: the CSTE notebook's best LASSO-Greedy-50 recipe
-  # (cste_and_beyond.ipynb, lasso_greedy50 run), at the same stride as
-  # 4S__surs so the two trees compare like for like.
-  nextstrain_recipes: ["4S__surs", "4S-4_LL-P__lasso_greedy"]
+  # The weekly SURS vs LASSO-Greedy-50 pair. In the CSTE runs (VA, 18
+  # replicates, lasso_greedy50) 1S-P__lasso_greedy beat 1S__surs on
+  # topological F1 in every replicate. Mugration and coverage metrics are
+  # computed for every recipe regardless; this list only picks the trees.
+  nextstrain_recipes: ["1S__surs", "1S-P__lasso_greedy"]
 
 
 # ---------------------------------------------------------------------------

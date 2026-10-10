@@ -36,7 +36,14 @@ filter:
   # signal, and it may remove different amounts from different sampling arms,
   # which confounds the comparison. Set true to turn it off if a build loses
   # sequences it should not.
-  skip_diagnostics: false
+  #
+  # It did (October 2026 runs, 4S__surs, 14,400 sampled genomes per state):
+  # diagnostics excluded VA 10,180 (71%), WA 4,271, MN 1,042, GA 108, so the
+  # VA tree was built from 4,200 sequences. A state-dependent, non-random
+  # removal of the sample under test -- and one that targets off-clock
+  # genomes, biasing mu_sim -- so it is off. A real-data build can keep it on;
+  # real reads are what it was designed for.
+  skip_diagnostics: true
 
   # NOTE: `filter.group_by` is NOT read by ncov -- grep shows config["filter"]
   # is only indexed by input name and "min_length"/"skip_diagnostics". The
