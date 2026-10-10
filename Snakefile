@@ -804,6 +804,16 @@ if cfg("nextstrain.enabled", False):
             # states (which have their own checkouts) still run in parallel.
             exec 9>"{params.ns_dir}/.phylogas_ncov.lock"
             flock -x 9
+            # Those same shared paths hold whichever arm built last, and
+            # their mtime can be newer than this arm's staged inputs -- which
+            # would let Snakemake call them up to date and build this arm's
+            # tree from the previous arm's sequences, silently. Dropping them
+            # forces three cheap rules to rerun per arm (recombine, remetadata,
+            # reindex: minutes) rather than trusting the input-set trigger to
+            # fire across two different configfiles.
+            rm -f {params.ns_dir}/results/combined_sequences_for_subsampling.fasta.xz \
+                  {params.ns_dir}/results/combined_metadata.tsv.xz \
+                  {params.ns_dir}/results/index.tsv.xz
             if [ "{params.runner}" = "nextstrain" ]; then
                 nextstrain build {params.ns_dir} \
                     --configfile {params.rel_config} \
