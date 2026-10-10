@@ -43,9 +43,15 @@ from typing import Dict, Iterable
 
 import numpy as np
 
+# Works both as an installed package and when seq_prep.py is run directly as
+# a script, which is how `phylogas prep-seeds` invokes it (deliberately: the
+# script path pins the run to this checkout, where `-m phylogas...` could
+# resolve to a different copy in site-packages). In script mode only this
+# directory is on the path, so reach one level up for the package root.
 try:
     from .. import nextstrain_runtime as _runtime
 except ImportError:                       # run as a plain script
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     import nextstrain_runtime as _runtime
 
 # ncov scripts/diagnostic.py defaults, restated so a seed that passes here
