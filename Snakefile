@@ -442,8 +442,14 @@ rule prep_seeds:
     and falls back (see seqprep/seed_qc.py).
     """
     output:
-        directory(cfg("seeds.output_folder", "data/importations/sequences")),
+        # The seed FASTA, not the folder that holds it. All five states write
+        # their own state-prefixed files into one shared seeds directory, and
+        # Snakemake deletes a directory() output before the rule runs -- so a
+        # directory output here would take the other four states' seeds with
+        # it the moment any one state's seeds needed regenerating.
+        seeds=cfg("genetic_painter.seed_fasta"),
     params:
+        folder=cfg("seeds.output_folder", "data/importations/sequences"),
         state=cfg("population.state_name", "Virginia"),
         pango=cfg("variant.pango", "B.1.617.2"),
         outlier=cfg("seeds.outlier_method", "none"),
@@ -455,7 +461,7 @@ rule prep_seeds:
         "phylogas prep-seeds --config {params.config} "
         "--state {params.state} --pango {params.pango} "
         "--outlier-method {params.outlier} --seed-mode "
-        "--output-folder {output}{params.abm_arg}"
+        "--output-folder {params.folder}{params.abm_arg}"
 
 
 
@@ -786,6 +792,18 @@ if cfg("nextstrain.enabled", False):
         threads: 8
         shell:
             r"""
+            # One arm at a time per checkout. ncov writes several paths that
+            # are fixed per checkout rather than per build --
+            # results/combined_sequences_for_subsampling.fasta.xz,
+            # results/combined_metadata.tsv.xz, results/index.tsv.xz -- so two
+            # arms building at once corrupt each other's inputs: one rewrites
+            # combined_* while the other is reading it, and combine_samples or
+            # index_sequences dies. Snakemake would otherwise run them
+            # together, since --cores on a 32-core node admits four jobs at
+            # `threads: 8`. The lock lives in the checkout, so different
+            # states (which have their own checkouts) still run in parallel.
+            exec 9>"{params.ns_dir}/.phylogas_ncov.lock"
+            flock -x 9
             if [ "{params.runner}" = "nextstrain" ]; then
                 nextstrain build {params.ns_dir} \
                     --configfile {params.rel_config} \

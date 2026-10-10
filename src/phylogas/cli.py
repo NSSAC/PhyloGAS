@@ -494,19 +494,34 @@ def _stage(src: Path, dest: Path) -> str:
     absolute path elsewhere works under `ambient`/`conda` and fails under the
     runtime most likely on a cluster, which is why these are staged rather
     than referenced. Hardlinks because the FASTAs are large.
+
+    Staged atomically, via a temporary name in the destination directory
+    followed by os.replace. Two arms stage the same _shared/ files, and they
+    can be configured in the same second: an unlink-then-link pair leaves a
+    window where the other process links first, so os.link raises
+    FileExistsError and the copy fallback is then handed a destination that is
+    already a hardlink to its own source (SameFileError). Replacing into place
+    has no such window, and makes re-staging idempotent.
     """
     import os
+    import shutil
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        dest.unlink()
+    tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
     try:
-        os.link(src, dest)
-        how = "hardlink"
-    except OSError:
-        import shutil
-        shutil.copy2(src, dest)
-        how = "copy"
+        try:
+            os.link(src, tmp)
+            how = "hardlink"
+        except OSError:
+            shutil.copy2(src, tmp)
+            how = "copy"
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     return how
 
 
