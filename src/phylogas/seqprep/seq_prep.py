@@ -600,7 +600,9 @@ def run_seed_mode(args):
     if rejected:
         order = {c: i for i, c in enumerate(
             plan.sort_values(["intro_date", "cluster_id"])["cluster_id"])}
-        early = sorted((order.get(r["cluster_id"], 10**9), r) for r in rejected)[:20]
+        # key= so a tie on position never falls through to comparing the dicts
+        early = sorted(((order.get(r["cluster_id"], 10**9), r) for r in rejected),
+                       key=lambda t: t[0])[:20]
         early = [(i, r) for i, r in early if i < 50]
         if early:
             print("\n  NOTE: QC replaced the seed for importation(s) " +

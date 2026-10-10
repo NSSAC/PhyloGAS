@@ -430,22 +430,17 @@ rule paint_only:
 # --------------------------------------------------------------------------
 # Stage 0: seed acquisition
 # --------------------------------------------------------------------------
-def _seed_qc_input():
-    """The ncov checkout, when seed QC screens with nextclade.
-
-    unpack() so the key vanishes entirely when QC is off or Nextstrain is
-    disabled, rather than becoming an empty-string input.
-    """
-    if (cfg("nextstrain.enabled", False)
-            and str(cfg("seeds.qc", "nextclade")) == "nextclade"):
-        return {"ncov": f"{NS_DIR}/Snakefile"}
-    return {}
-
-
 rule prep_seeds:
-    """Fetch seed sequences for the variant of interest and build a schedule."""
-    input:
-        unpack(_seed_qc_input),
+    """Fetch seed sequences for the variant of interest and build a schedule.
+
+    Seed QC (seeds.qc: nextclade) wants nextclade from the ncov checkout, but
+    that is deliberately NOT declared as an input. Seeds are long-lived and
+    the checkout is not: making it a dependency would re-fetch every seed
+    whenever the checkout was re-cloned, changing the seed FASTA and forcing
+    a repaint. slurm/prepare_inputs.sh runs `phylogas ncov-checkout` before
+    Snakemake, so it is there in practice; when it is not, the screen says so
+    and falls back (see seqprep/seed_qc.py).
+    """
     output:
         directory(cfg("seeds.output_folder", "data/importations/sequences")),
     params:

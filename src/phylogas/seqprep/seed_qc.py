@@ -43,6 +43,11 @@ from typing import Dict, Iterable
 
 import numpy as np
 
+try:
+    from .. import nextstrain_runtime as _runtime
+except ImportError:                       # run as a plain script
+    import nextstrain_runtime as _runtime
+
 # ncov scripts/diagnostic.py defaults, restated so a seed that passes here
 # cannot be excluded later for a reason it already carried.
 MAX_CONTAMINATION = 5          # reversion + potential contaminant mutations
@@ -186,15 +191,16 @@ def consensus_outliers(records: Dict[str, str], n_mad: float = 5.0,
 # --------------------------------------------------------------------------
 # nextclade screen
 # --------------------------------------------------------------------------
-def nextclade_command(ncov_dir: "Path | None") -> "list | None":
-    """How to invoke nextclade: directly, or through the Nextstrain runtime."""
-    if shutil.which("nextclade"):
-        return ["nextclade"]
-    if ncov_dir and shutil.which("nextstrain"):
-        # Same pattern as the clock benchmark: the checkout comes before
-        # --exec so the CLI does not read nextclade's flags as its own.
-        return ["nextstrain", "build", str(ncov_dir), "--exec", "nextclade"]
-    return None
+def nextclade_command(ncov_dir: "Path | None" = None) -> "list | None":
+    """The argv prefix that invokes nextclade directly, if there is one.
+
+    `ncov_dir` is unused and kept for callers. Returns None when the tool has
+    no reachable path of its own, which is the normal case for the docker and
+    singularity runtimes; `nextclade_failures` then goes through the CLI
+    instead (see nextstrain_runtime.run).
+    """
+    cmd, _source = _runtime.tool_command("nextclade")
+    return cmd
 
 
 def _dataset(ncov_dir: "Path | None") -> "Path | None":
@@ -230,9 +236,6 @@ def nextclade_failures(records: Dict[str, str], pango_lineages: Iterable[str],
     Criteria mirror ncov's scripts/diagnostic.py, with the lineage check
     added. A missing tool or dataset is not an error: the caller falls back.
     """
-    cmd = nextclade_command(ncov_dir)
-    if cmd is None:
-        return {}, "nextclade not available (no binary, no Nextstrain CLI)"
     dataset = _dataset(ncov_dir)
     if dataset is None:
         return {}, (f"no Nextclade dataset at {ncov_dir}/data/"
@@ -241,29 +244,26 @@ def nextclade_failures(records: Dict[str, str], pango_lineages: Iterable[str],
     inside = lineage_matcher(pango_lineages, base_map_fn=base_map_fn)
     requested = ", ".join(sorted({str(p).strip().rstrip("*") for p in pango_lineages}))
 
-    tmp = Path(workdir or tempfile.mkdtemp(prefix="phylogas-seedqc-"))
+    # Scratch goes inside the checkout rather than /tmp: the docker and
+    # singularity runtimes mount only the directory handed to the CLI, so a
+    # system temp directory would be invisible to nextclade there.
+    tmp = Path(workdir) if workdir else Path(ncov_dir) / "seed_qc"
     tmp.mkdir(parents=True, exist_ok=True)
     fasta, out_tsv = tmp / "candidates.fasta", tmp / "nextclade.tsv"
+    if out_tsv.exists():
+        out_tsv.unlink()
     with open(fasta, "w") as fh:
         for strain, seq in records.items():
             fh.write(f">{strain}\n{seq}\n")
 
-    def _rel(p: Path) -> str:
-        # Paths are relative to the checkout when running inside the runtime,
-        # whose working directory is that checkout.
-        if cmd[0] == "nextclade":
-            return str(p)
-        try:
-            return str(p.resolve().relative_to(Path(ncov_dir).resolve()))
-        except ValueError:
-            return str(p)
-
-    full = cmd + ["run", "--input-dataset", _rel(dataset),
-                  "--output-tsv", _rel(out_tsv), "--jobs", "4", _rel(fasta)]
-    proc = subprocess.run(full, capture_output=True, text=True)
+    args = ["run", "--input-dataset", str(dataset),
+            "--output-tsv", str(out_tsv), "--jobs", "4", str(fasta)]
+    proc, source = _runtime.run("nextclade", args, ncov_dir=ncov_dir)
+    if proc is None:
+        return {}, source
     if proc.returncode != 0 or not out_tsv.is_file():
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
-        return {}, "nextclade failed: " + " / ".join(tail)
+        return {}, f"nextclade failed via {source}: " + " / ".join(tail)
 
     failures, seen = {}, 0
     for row in _rows(out_tsv):
@@ -294,8 +294,7 @@ def nextclade_failures(records: Dict[str, str], pango_lineages: Iterable[str],
                            if row.get(c)), "")
             if inside(called) is False:
                 failures[strain] = f"lineage {called} is outside {requested}"
-    status = (f"nextclade screened {seen:,} candidate(s) via "
-              f"{'runtime' if cmd[0] != 'nextclade' else 'PATH'}")
+    status = f"nextclade screened {seen:,} candidate(s) via {source}"
     return failures, status
 
 

@@ -1665,9 +1665,6 @@ def _refine_unconstrained(build: Path, args, clk):
     unconditionally, so omitting the key leaves its 0.0008 default in force.
     Hence a separate invocation over the files that rule consumes.
     """
-    import shutil
-    import subprocess
-
     tree = build / "tree_raw.nwk"
     aln = build / "filtered.fasta"
     meta = next((build / n for n in ("metadata_adjusted.tsv.xz",
@@ -1682,27 +1679,22 @@ def _refine_unconstrained(build: Path, args, clk):
         print(f"  inferred: skipped, no metadata_adjusted.tsv[.xz] in {build}",
               file=sys.stderr)
         return None
-    # augur lives in the Nextstrain runtime, not in this environment. Use it
-    # directly if it happens to be on PATH; otherwise run the one command
-    # through the Nextstrain CLI, the same way `nextstrain build` runs ncov.
-    # Outputs go inside the build directory: docker and singularity runtimes
-    # mount only the directory given to `nextstrain build`, so /tmp would be
+    # Outputs go inside the build directory: the docker and singularity
+    # runtimes mount only the directory given to the CLI, so /tmp would be
     # invisible to them.
     out_dir = build / "mu_sim"
     out_dir.mkdir(parents=True, exist_ok=True)
     node_data = out_dir / "branch_lengths.json"
-    direct = shutil.which("augur") is not None
-    ns_dir = build.parent.parent                 # <ncov checkout>/results/<build>
-    if not direct:
-        if shutil.which("nextstrain") is None or build.parent.name != "results":
-            print("  inferred: skipped, neither `augur` nor the Nextstrain CLI is on "
-                  "PATH (or the build is not under <ncov>/results/)", file=sys.stderr)
-            return None
+    # augur lives in the Nextstrain runtime, not in this environment;
+    # nextstrain_runtime.run finds it by path or, failing that, pipes the
+    # command into `nextstrain shell <checkout>`. The checkout is the
+    # directory the CLI mounts, so find it by walking up from the build.
+    from . import nextstrain_runtime as _runtime
+    checkout = next((d for d in (build, *build.parents)
+                     if (d / "Snakefile").is_file()), None)
 
     def _p(f: Path) -> str:
-        # Relative to the ncov checkout when running inside the runtime, whose
-        # working directory is that checkout.
-        return str(f) if direct else str(Path(f).resolve().relative_to(ns_dir.resolve()))
+        return str(f)
 
     refine = [
         "refine",
@@ -1723,25 +1715,24 @@ def _refine_unconstrained(build: Path, args, clk):
     # amounts per arm. Off by default here; --clock-filter-iqd to re-enable.
     if args.clock_filter_iqd:
         refine += ["--clock-filter-iqd", str(args.clock_filter_iqd)]
-    # The checkout comes before --exec, so the CLI does not read augur's own
-    # flags (--tree, ...) as its own.
-    cmd = (["augur"] + refine if direct
-           else ["nextstrain", "build", str(ns_dir), "--exec", "augur"] + refine)
-
-    print(f"  inferred: augur refine (unconstrained) on {build.name}"
-          + ("" if direct else " via the Nextstrain CLI"))
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    print(f"  inferred: augur refine (unconstrained) on {build.name}")
+    proc, source = _runtime.run("augur", refine, ncov_dir=checkout)
+    if proc is None:
+        print(f"  inferred: skipped, {source}", file=sys.stderr)
+        return None
     if proc.returncode != 0 or not node_data.exists():
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
-        print("  inferred: augur refine failed:\n    " + "\n    ".join(tail)
-              + f"\n    command: {' '.join(cmd)}", file=sys.stderr)
+        print(f"  inferred: augur refine failed via {source}:\n    "
+              + "\n    ".join(tail)
+              + f"\n    command: augur {' '.join(refine)}", file=sys.stderr)
         return None
 
     res = clk.operational_rate(node_data)
     if res.get("error"):
         return res
     res["quantity"] = "mu_sim" if args.kind == "simulated" else "mu_real"
-    res["method"] = "augur refine, no --clock-rate (root-to-tip fit by TreeTime)"
+    res["method"] = ("augur refine, no --clock-rate (root-to-tip fit by TreeTime; "
+                     f"{source})")
     res["node_data"] = str(node_data)
     return res
 

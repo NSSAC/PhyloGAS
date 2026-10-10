@@ -154,10 +154,13 @@ def test_off_mode_screens_nothing():
 
 
 def test_nextclade_mode_falls_back_when_the_tool_is_missing(tmp_path, monkeypatch):
+    import os
     monkeypatch.setattr(qc.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(os, "environ", {"NEXTSTRAIN_HOME": str(tmp_path / "absent")})
     recs = {"clean": "A" * 29903, "ambiguous": "N" * 3000 + "A" * 26903}
     fails, status = qc.screen(recs, ["B.1.617.2"], mode="nextclade", ncov_dir=tmp_path)
     assert status.startswith("WARNING")
+    assert "neither on PATH nor in a Nextstrain conda runtime" in status
     assert "cannot detect mixed-lineage" in status       # the fallback's real limit
     assert "ambiguous" in fails and "clean" not in fails
 
@@ -168,18 +171,27 @@ def test_nextclade_needs_its_dataset(tmp_path, monkeypatch):
     assert fails == {} and "dataset" in status
 
 
-def test_nextclade_command_prefers_a_direct_binary(tmp_path, monkeypatch):
+def test_nextclade_is_found_on_path_or_in_the_runtime(tmp_path, monkeypatch):
+    """`--exec` is not usable: it exists only in newer CLI releases, and an
+    older one forwards it to Snakemake as --executor. So the tool is located
+    by path first; `test_runtime_pipes_*` covers the route taken when there
+    is no path to find."""
+    import os, stat
     monkeypatch.setattr(qc.shutil, "which", lambda n: "/usr/bin/nextclade"
                         if n == "nextclade" else None)
-    assert qc.nextclade_command(tmp_path) == ["nextclade"]
-    monkeypatch.setattr(qc.shutil, "which", lambda n: "/usr/bin/nextstrain"
-                        if n == "nextstrain" else None)
-    cmd = qc.nextclade_command(tmp_path)
-    # The checkout must precede --exec, or the CLI reads nextclade's flags as its own.
-    assert cmd[:2] == ["nextstrain", "build"]
-    assert cmd.index(str(tmp_path)) < cmd.index("--exec")
+    assert qc.nextclade_command() == ["/usr/bin/nextclade"]
+
     monkeypatch.setattr(qc.shutil, "which", lambda _n: None)
-    assert qc.nextclade_command(tmp_path) is None
+    binp = tmp_path / "runtimes" / "conda" / "env" / "bin"
+    binp.mkdir(parents=True)
+    tool = binp / "nextclade"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(tool.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(os, "environ", {"NEXTSTRAIN_HOME": str(tmp_path)})
+    assert qc.nextclade_command() == [str(tool)]
+
+    monkeypatch.setattr(os, "environ", {"NEXTSTRAIN_HOME": str(tmp_path / "absent")})
+    assert qc.nextclade_command() is None
 
 
 def test_nextclade_parses_its_tsv_and_applies_ncov_criteria(tmp_path, monkeypatch):
@@ -229,3 +241,84 @@ def test_report_is_written_with_one_row_per_candidate(tmp_path):
     assert text[0].startswith("cluster_id,attempt,strain,verdict,reason")
     assert len(text) == 3
     assert "reject" in text[1] and "accept" in text[2]
+
+
+def test_early_importation_sort_does_not_compare_dicts():
+    """Two rejects at the same position must not fall through to comparing
+    the dicts themselves -- that raised TypeError mid-run."""
+    order = {"c1": 0, "c2": 0}
+    rejected = [dict(cluster_id="c1", strain="a"), dict(cluster_id="c2", strain="b")]
+    out = sorted(((order.get(r["cluster_id"], 10 ** 9), r) for r in rejected),
+                 key=lambda t: t[0])
+    assert [r["strain"] for _, r in out] == ["a", "b"]
+
+
+# --------------------------------------------------------------------------
+# reaching the runtime when there is no binary to point at
+# --------------------------------------------------------------------------
+@pytest.fixture
+def runtime():
+    return pytest.importorskip("phylogas.nextstrain_runtime")
+
+
+def test_runtime_prefers_a_direct_binary(runtime, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["kw"] = cmd, kw
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(runtime.shutil, "which", lambda n: "/usr/bin/" + n)
+    monkeypatch.setattr(qc.subprocess, "run", fake_run)
+    proc, source = runtime.run("augur", ["refine", "--tree", "t.nwk"],
+                               ncov_dir="/some/ncov")
+    assert proc.returncode == 0 and source == "PATH"
+    assert seen["cmd"] == ["/usr/bin/augur", "refine", "--tree", "t.nwk"]
+    assert "nextstrain" not in " ".join(seen["cmd"])
+
+
+def test_runtime_pipes_into_nextstrain_shell_when_no_binary_is_reachable(
+        runtime, tmp_path, monkeypatch):
+    """The docker and singularity runtimes have no bin directory on the host,
+    so the only route is the CLI. `nextstrain shell` is not interactive-only:
+    it runs what arrives on stdin."""
+    import os
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["kw"] = cmd, kw
+        return type("P", (), {"returncode": 0, "stdout": "augur 34.1.4", "stderr": ""})()
+
+    monkeypatch.setattr(runtime.shutil, "which",
+                        lambda n: "/usr/bin/nextstrain" if n == "nextstrain" else None)
+    monkeypatch.setattr(os, "environ", {"NEXTSTRAIN_HOME": str(tmp_path / "absent")})
+    monkeypatch.setattr(qc.subprocess, "run", fake_run)
+
+    proc, source = runtime.run("augur", ["refine", "--tree", "a b.nwk"],
+                               ncov_dir=tmp_path)
+    assert proc.returncode == 0 and source == "nextstrain shell"
+    assert seen["cmd"] == ["nextstrain", "shell", str(tmp_path)]
+    # The arguments become a shell line, so a path with a space must survive.
+    assert seen["kw"]["input"].strip() == "augur refine --tree 'a b.nwk'"
+
+
+def test_runtime_reports_why_it_could_not_run_anything(runtime, tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(runtime.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(os, "environ", {"NEXTSTRAIN_HOME": str(tmp_path / "absent")})
+    proc, reason = runtime.run("augur", ["--version"], ncov_dir=tmp_path)
+    assert proc is None
+    assert "neither on PATH nor in a Nextstrain conda runtime" in reason
+    assert "Nextstrain CLI is not available" in reason
+
+
+def test_runtime_will_not_pipe_without_a_checkout_to_enter(runtime, tmp_path,
+                                                           monkeypatch):
+    """`nextstrain shell` needs a build directory; with none to name, say so
+    rather than guessing one."""
+    import os
+    monkeypatch.setattr(runtime.shutil, "which",
+                        lambda n: "/usr/bin/nextstrain" if n == "nextstrain" else None)
+    monkeypatch.setattr(os, "environ", {"NEXTSTRAIN_HOME": str(tmp_path / "absent")})
+    proc, reason = runtime.run("augur", ["--version"])
+    assert proc is None and "neither on PATH" in reason
