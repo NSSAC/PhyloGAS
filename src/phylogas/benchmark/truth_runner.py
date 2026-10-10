@@ -125,7 +125,8 @@ def _series_auc(xs, ys) -> float:
     xs2 = [p[0] for p in pairs]
     ys2 = [p[1] for p in pairs]
     span = xs2[-1] - xs2[0]
-    return float(np.trapezoid(ys2, xs2) / span) if span else float("nan")
+    trapz_fn = getattr(np, "trapezoid", None) or np.trapz   # trapezoid is NumPy >= 2.0
+    return float(trapz_fn(ys2, xs2) / span) if span else float("nan")
 
 
 DEFAULT_STRATIFIERS = ("age", "race", "county", "sex")   # BeyondBaseline's default
@@ -148,12 +149,14 @@ def _week_index(dates: pd.Series, start_date: pd.Timestamp) -> pd.Series:
 
 
 def _n_weeks(ll_wk: pd.Series, min_pool: int) -> int:
-    """Weeks the sampler ran: up to the first week with fewer than min_pool cases."""
-    counts = ll_wk.value_counts()
-    n = 0
-    while counts.get(n, 0) >= min_pool:
-        n += 1
-    return n
+    """Weeks the sampler ran: week 0 through the last week with >= min_pool cases.
+
+    Must match BeyondBaseline's sampling_week_count: min_pool marks the end of
+    the wave, and sparser weeks inside the window are sampled too.
+    """
+    counts = ll_wk[ll_wk >= 0].value_counts()
+    viable = counts[counts >= min_pool]
+    return int(viable.index.max()) + 1 if len(viable) else 0
 
 
 def resolve_sampling_start(allevents: str, linelist: str, start_date: str = "auto",
@@ -162,52 +165,41 @@ def resolve_sampling_start(allevents: str, linelist: str, start_date: str = "aut
 
     "auto" places week 0 on the first week of the all-events file -- TwinSampler
     writes it for the simulated window only, so its first date is where the
-    wave being benchmarked begins. An explicit date is used as given.
-
-    BeyondBaseline stops at the first week whose line list holds fewer than
-    min_pool cases; it does not skip it. A wave's first week can be that thin,
-    which would end sampling before it started, so "auto" moves past such
-    lead-in weeks and says how many it skipped. An explicit date is never
-    moved, only warned about.
+    wave being benchmarked begins. An explicit date is used as given. Sparse
+    opening weeks are sampled, not skipped: BeyondBaseline runs through the
+    last week with min_pool cases and takes the whole pool whenever the budget
+    covers it.
     """
     if min_pool is None:
         min_pool = _bb_calendar_defaults()[1] or 50
     ll_dates = pd.to_datetime(pd.read_csv(linelist, usecols=[date_field])[date_field],
                               errors="coerce").dropna()
 
-    def week0_count(start):
-        return int(((ll_dates >= start - pd.Timedelta(days=7))
-                    & (ll_dates <= start - pd.Timedelta(days=1))).sum())
-
     if str(start_date).strip().lower() in ("", "auto"):
         first = pd.to_datetime(pd.read_csv(allevents, usecols=[date_field])[date_field],
                                errors="coerce").min()
         if pd.isna(first):
             sys.exit(f"ERROR: no parseable '{date_field}' in {allevents}")
-        first = first.normalize()
-        start = first + pd.Timedelta(days=7)
-        print(f"Sampling start: all-events begins {first.date()}, so week 0 = "
-              f"{first.date()} .. {(start - pd.Timedelta(days=1)).date()}")
-        skipped, last = 0, ll_dates.max()
-        while week0_count(start) < min_pool:
-            if start - pd.Timedelta(days=7) > last:
-                sys.exit(f"ERROR: no week of {linelist} holds {min_pool} or more cases; "
-                         f"lower sampling.min_pool.")
-            start += pd.Timedelta(days=7)
-            skipped += 1
-        if skipped:
-            print(f"  skipped {skipped} lead-in week(s) with fewer than {min_pool} "
-                  f"reported cases; sampling starts with the week of "
-                  f"{(start - pd.Timedelta(days=7)).date()}")
+        start = first.normalize() + pd.Timedelta(days=7)
+        how = f"all-events begins {first.date()}"
     else:
         start = pd.Timestamp(start_date)
-        n0 = week0_count(start)
-        print(f"Sampling start: {start.date()} (configured); week 0 has {n0} reported cases")
-        if n0 < min_pool:
-            print(f"  WARNING: fewer than min_pool={min_pool}, so the sampler will draw "
-                  f"nothing. Use 'auto' or a later date.", file=sys.stderr)
+        how = "configured"
+
     wk = _week_index(ll_dates, start)
-    print(f"  {_n_weeks(wk[wk.notna()].astype(int), min_pool)} weeks at min_pool {min_pool}")
+    wk = wk[wk.notna()].astype(int)
+    n = _n_weeks(wk, min_pool)
+    counts = wk.value_counts()
+    print(f"Sampling start: {start.date()} ({how}); week 0 = "
+          f"{(start - pd.Timedelta(days=7)).date()} .. {(start - pd.Timedelta(days=1)).date()}")
+    if n == 0:
+        sys.exit(f"ERROR: no week from {start.date()} on holds {min_pool} or more reported "
+                 f"cases, so the sampler has no window. Lower sampling.min_pool.")
+    sparse = [w for w in range(n) if counts.get(w, 0) < min_pool]
+    print(f"  {n} weeks, through the last week with {min_pool}+ reported cases"
+          + (f"; {len(sparse)} sparser week(s) inside the window are sampled too "
+             f"(first weeks: {', '.join(str(int(counts.get(w, 0))) for w in range(min(4, n)))} cases)"
+             if sparse else ""))
     return start
 
 

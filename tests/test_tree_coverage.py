@@ -214,18 +214,31 @@ def test_sampling_start_auto_is_first_allevents_week(tmp_path):
     assert start == first + pd.Timedelta(days=7)          # week 0 = first all-events week
 
 
-def test_sampling_start_auto_skips_thin_lead_in(tmp_path):
-    """BeyondBaseline stops at the first week below min_pool, so 'auto' must
-    not hand it a thin first week."""
+def test_sampling_start_auto_keeps_thin_opening_weeks(tmp_path):
+    """A thin first week is sampled, not skipped: week 0 stays on the first
+    all-events week even when min_pool is above its case count."""
     _toy_epidemic(tmp_path)
     L = pd.read_csv(tmp_path / "linelist.csv")
     first = pd.to_datetime(pd.read_csv(tmp_path / "allevents.csv")["date"]).min().normalize()
-    counts = ((pd.to_datetime(L["date"]) - first).dt.days // 7).value_counts()
-    pool = int(counts.get(0, 0)) + 1                       # week 0 is one short
+    wk0 = int(((pd.to_datetime(L["date"]) - first).dt.days // 7 == 0).sum())
     start = R.resolve_sampling_start(str(tmp_path / "allevents.csv"), str(tmp_path / "linelist.csv"),
-                                     "auto", min_pool=pool)
-    k = int((start - first).days // 7) - 1                 # weeks skipped
-    assert k >= 1 and counts.get(k, 0) >= pool and all(counts.get(w, 0) < pool for w in range(k))
+                                     "auto", min_pool=wk0 + 1)
+    assert start == first + pd.Timedelta(days=7)
+
+
+def test_week_count_runs_to_last_viable_week():
+    """Sparse weeks at the start and in the middle do not end the window; it
+    runs through the last week with min_pool cases."""
+    start = pd.Timestamp(START)
+    week0 = start - pd.Timedelta(days=7)
+    per_week = [2, 0, 9, 1, 9, 9, 3, 0]           # sparse start, mid-wave gap, thin tail
+    dates = [week0 + pd.Timedelta(days=7 * w + 1) for w, k in enumerate(per_week) for _ in range(k)]
+    wk = R._week_index(pd.Series(dates), start)
+    assert R._n_weeks(wk, 5) == 6                  # weeks 0..5; 6 and 7 fall below
+    assert R._n_weeks(wk, 10) == 0
+    rab = pytest.importorskip("scenarios_simulation.run_all_scenarios")
+    ll = pd.DataFrame({"date": dates})
+    assert rab.sampling_week_count(ll, "date", start, 5) == R._n_weeks(wk, 5)
 
 
 def test_sampling_start_explicit_is_kept(tmp_path):

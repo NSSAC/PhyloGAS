@@ -361,19 +361,18 @@ sampling:
   # The sampler's calendar, resolved once (`phylogas sampling-calendar`) and
   # read by both the sampler and `benchmark truth`, so every scoring window
   # covers exactly the weeks the samples were drawn from. Week 0 is the seven
-  # days *before* start_date, and sampling stops at the first week whose line
-  # list holds fewer than min_pool cases.
+  # days *before* start_date.
   #
   #   "auto"       week 0 = the first week of the all-events file, i.e. the
-  #                start of the simulated window being benchmarked. If that
-  #                week has fewer than min_pool reported cases -- which would
-  #                end sampling before it began -- it moves past such lead-in
-  #                weeks and says how many it skipped.
+  #                start of the simulated window being benchmarked.
   #   YYYY-MM-DD   used as given (BeyondBaseline's old default was 2021-05-31
   #                for every state, which skipped the first two months or so
   #                of each wave).
   start_date: "auto"
-  # Empty = BeyondBaseline's default (50).
+  # The end of the window: sampling runs through the last week with at least
+  # this many reported cases. Sparser weeks inside the window -- typically the
+  # opening weeks of a wave -- are sampled too; when the budget covers a
+  # week's pool, every case is sequenced. Empty = BeyondBaseline's default (50).
   min_pool: ""
 
   # Which recipes get a Nextstrain tree. One tree per entry; "all" means
@@ -384,7 +383,10 @@ sampling:
   # An algorithm that ignores the target distribution is named by the axes it
   # actually reads, so SURS is 4S__surs rather than 4S-4_LL-P__surs. The older
   # spelling still resolves, with a note.
-  nextstrain_recipes: ["4S__surs"]
+  # 4S-4_LL-P__lasso_greedy: the CSTE notebook's best LASSO-Greedy-50 recipe
+  # (cste_and_beyond.ipynb, lasso_greedy50 run), at the same stride as
+  # 4S__surs so the two trees compare like for like.
+  nextstrain_recipes: ["4S__surs", "4S-4_LL-P__lasso_greedy"]
 
 
 # ---------------------------------------------------------------------------

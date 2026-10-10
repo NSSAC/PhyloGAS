@@ -497,7 +497,9 @@ def series_auc(ys, xs=None):
     m = np.isfinite(y)
     if m.sum() < 2:
         return float("nan")
-    trapz_fn = getattr(np, "trapezoid", np.trapz)
+    # getattr's default is evaluated eagerly, so `getattr(np, "trapezoid",
+    # np.trapz)` raised on NumPy releases that have removed trapz.
+    trapz_fn = getattr(np, "trapezoid", None) or np.trapz
     return float(trapz_fn(y[m], x[m]))
 
 # SCEN_LABELS = {
