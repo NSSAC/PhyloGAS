@@ -430,8 +430,22 @@ rule paint_only:
 # --------------------------------------------------------------------------
 # Stage 0: seed acquisition
 # --------------------------------------------------------------------------
+def _seed_qc_input():
+    """The ncov checkout, when seed QC screens with nextclade.
+
+    unpack() so the key vanishes entirely when QC is off or Nextstrain is
+    disabled, rather than becoming an empty-string input.
+    """
+    if (cfg("nextstrain.enabled", False)
+            and str(cfg("seeds.qc", "nextclade")) == "nextclade"):
+        return {"ncov": f"{NS_DIR}/Snakefile"}
+    return {}
+
+
 rule prep_seeds:
     """Fetch seed sequences for the variant of interest and build a schedule."""
+    input:
+        unpack(_seed_qc_input),
     output:
         directory(cfg("seeds.output_folder", "data/importations/sequences")),
     params:
@@ -447,6 +461,7 @@ rule prep_seeds:
         "--state {params.state} --pango {params.pango} "
         "--outlier-method {params.outlier} --seed-mode "
         "--output-folder {output}{params.abm_arg}"
+
 
 
 # --------------------------------------------------------------------------

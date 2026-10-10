@@ -33,8 +33,10 @@ else:
 
 try:
     from . import cluster_seeds
+    from . import seed_qc
 except ImportError:                 # run as a plain script
     import cluster_seeds
+    import seed_qc
 
 COVSPECTRUM_API_URL = 'https://lapis.cov-spectrum.org/open/v2/sample/alignedNucleotideSequences'
 DEFAULT_TSV_URL = 'https://clustertracker.gi.ucsc.edu/data/hardcoded_clusters.tsv'
@@ -413,8 +415,18 @@ def _assign_surrogates(plan, records, chosen):
                  "; all from the same sublineage") + ")")
     return extra, surrogate_of
 
+def _record_sequence(record: str) -> str:
+    """The bases of a single FASTA record, without its header or newlines."""
+    parts = record.split("\n", 1)
+    return parts[1].replace("\n", "").strip() if len(parts) > 1 else ""
+
+
 def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5,
-                          surrogates: bool = True):
+                          surrogates: bool = True, qc_mode: str = "nextclade",
+                          pango_lineages=(), ncov_dir=None,
+                          max_ambiguous: float = seed_qc.MAX_AMBIGUOUS,
+                          max_contamination: int = seed_qc.MAX_CONTAMINATION,
+                          qc_log=None):
     """Retrieve one sequence per importation, substituting when one is missing.
 
     Requests go out in batches (one POST per `batch_size` strains) for
@@ -424,6 +436,12 @@ def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5,
     exhausts every sample is dropped -- and because the schedule is written
     from the surviving clusters, its importation disappears from the schedule
     too, instead of leaving the painter an off-by-one in every later pairing.
+
+    Each retrieved sequence is screened (see seqprep.seed_qc) before it is
+    accepted. A rejected genome is treated exactly like one that never came
+    back, so the cluster advances to its next oldest sample -- a seed founds a
+    whole transmission chain, so one bad genome is inherited by every
+    infection descending from it.
 
     Returns (records, dropped): a strain -> FASTA text map for the chosen
     sequences, and the rows that could not be filled.
@@ -440,6 +458,33 @@ def _fetch_with_fallbacks(plan, batch_size: int = 500, max_rounds: int = 5,
         print(f"\n  Fetch round {round_no}: {len(targets):,} sequence(s)")
         text = fetch_sequences_by_strain_id(targets, batch_size=batch_size)
         got = _parse_fasta_records(text or "")
+        # Screen before accepting. Rejects stay out of `records`, so the loop
+        # below advances those clusters to their next sample.
+        if got and qc_mode != "off":
+            seqs = {k: _record_sequence(v) for k, v in got.items()}
+            rejects, status = seed_qc.screen(
+                seqs, pango_lineages, mode=qc_mode, ncov_dir=ncov_dir,
+                max_ambiguous=max_ambiguous, max_contamination=max_contamination,
+                # The same lineage roll-up prepare_clusters used to choose
+                # these clusters, so "inside the requested lineage" means the
+                # same thing in both places.
+                base_map_fn=(make_variant_base_map if PANGO_ALIASOR_AVAILABLE else None))
+            print(f"    QC: {status}")
+            if rejects:
+                print(f"    QC: rejected {len(rejects):,} of {len(got):,} retrieved "
+                      f"sequence(s); each cluster falls back to its next sample")
+                for strain in list(rejects)[:5]:
+                    print(f"         {strain}: {rejects[strain]}")
+                if len(rejects) > 5:
+                    print(f"         ... and {len(rejects) - 5:,} more")
+            if qc_log is not None:
+                by_strain = dict(zip(pending["attempt"], pending["cluster_id"]))
+                for strain in got:
+                    qc_log.append(dict(cluster_id=by_strain.get(strain, ""),
+                                       attempt=round_no, strain=strain,
+                                       verdict="reject" if strain in rejects else "accept",
+                                       reason=rejects.get(strain, "")))
+            got = {k: v for k, v in got.items() if k not in rejects}
         records.update(got)
         missing_mask = ~pending["attempt"].isin(records)
         filled = pending[~missing_mask]
@@ -535,9 +580,40 @@ def run_seed_mode(args):
         _write_schedules(clusters, output_folder_path, args)
         return
 
+    qc_log = []
+    ncov_dir = Path(args.ncov_dir) if getattr(args, "ncov_dir", "") else None
     records, dropped, surrogate_of = _fetch_with_fallbacks(
         plan, batch_size=args.batch_size, max_rounds=args.max_fetch_rounds,
-        surrogates=not args.no_surrogates)
+        surrogates=not args.no_surrogates,
+        qc_mode=getattr(args, "seed_qc", "nextclade"),
+        pango_lineages=pango_lineages, ncov_dir=ncov_dir,
+        max_ambiguous=getattr(args, "max_ambiguous", seed_qc.MAX_AMBIGUOUS),
+        max_contamination=getattr(args, "max_contamination", seed_qc.MAX_CONTAMINATION),
+        qc_log=qc_log)
+
+    # A replaced seed among the earliest importations is the case worth
+    # seeing: early importations found the largest chains, so a bad genome
+    # there is inherited by most of the painted set. Virginia's second
+    # importation was a mixed Alpha/Delta assembly, and 71% of that state's
+    # sampled genomes were excluded by the ncov build's diagnostics.
+    rejected = [r for r in qc_log if r["verdict"] == "reject"]
+    if rejected:
+        order = {c: i for i, c in enumerate(
+            plan.sort_values(["intro_date", "cluster_id"])["cluster_id"])}
+        early = sorted((order.get(r["cluster_id"], 10**9), r) for r in rejected)[:20]
+        early = [(i, r) for i, r in early if i < 50]
+        if early:
+            print("\n  NOTE: QC replaced the seed for importation(s) " +
+                  ", ".join(f"#{i}" for i, _ in early) + ".", file=sys.stderr)
+            print("        Early importations found the largest transmission chains, so "
+                  "these\n        replacements matter more than their count suggests:",
+                  file=sys.stderr)
+            for i, r in early[:5]:
+                print(f"          #{i}  {r['strain']}: {r['reason']}", file=sys.stderr)
+        qc_path = output_folder_path / f"{args.state.replace(' ', '_')}_seed_qc.csv"
+        seed_qc.write_report(qc_path, qc_log)
+        print(f"  QC report ({len(rejected):,} rejected of {len(qc_log):,} candidates) "
+              f"-> {qc_path.resolve()}")
     if len(dropped):
         banner = "!" * 78
         print(banner, file=sys.stderr)
@@ -675,6 +751,27 @@ def main():
                         help="[Seed Mode] Strains per API request (default: 500). A "
                              "request that fails is retried, then split in half, so a "
                              "large batch costs nothing when the server cannot take it.")
+    parser.add_argument("--seed_qc", "--seed-qc", dest="seed_qc",
+                        choices=("nextclade", "basic", "off"), default="nextclade",
+                        help="Screen each candidate seed before accepting it. "
+                             "'nextclade' applies ncov's own diagnostic criteria plus a "
+                             "clade check (needs a checkout via --ncov_dir; falls back to "
+                             "'basic' with a warning). 'basic' screens ambiguity and "
+                             "terminal coverage only and cannot detect mixed-lineage "
+                             "assemblies. Default: nextclade")
+    parser.add_argument("--ncov_dir", "--ncov-dir", dest="ncov_dir", default="",
+                        help="ncov checkout supplying nextclade and its dataset "
+                             "(phylogas passes nextstrain.dir)")
+    parser.add_argument("--max_ambiguous", "--max-ambiguous", dest="max_ambiguous",
+                        type=float, default=seed_qc.MAX_AMBIGUOUS,
+                        help=f"Reject a seed with more than this fraction of non-ACGT "
+                             f"bases (default: {seed_qc.MAX_AMBIGUOUS})")
+    parser.add_argument("--max_contamination", "--max-contamination",
+                        dest="max_contamination", type=int,
+                        default=seed_qc.MAX_CONTAMINATION,
+                        help=f"Reject a seed with more than this many reversion plus "
+                             f"potential-contaminant mutations, as ncov's diagnostics "
+                             f"count them (default: {seed_qc.MAX_CONTAMINATION})")
     parser.add_argument("--no_surrogates", "--no-surrogates", dest="no_surrogates",
                         action="store_true",
                         help="[Seed Mode] Drop an importation whose cluster has no "

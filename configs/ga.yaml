@@ -139,6 +139,27 @@ seeds:
   # true drops them instead.
   no_surrogates: false
 
+  # Screening of each candidate seed before it is accepted. A seed founds a
+  # whole transmission chain, so one bad genome is inherited by every
+  # infection descending from it: Virginia's SECOND importation was a mixed
+  # Alpha/Delta assembly, and the ncov build's diagnostics then excluded
+  # 10,180 of 14,400 sampled genomes (71%) for contamination inherited from
+  # it. A rejected seed falls back to its cluster's next oldest sample.
+  #
+  #   nextclade  ncov's own diagnostic criteria, plus a check that the called
+  #              lineage sits inside variant.pango -- rolled up with the same
+  #              pango_aliasor machinery that chose the clusters, so no table
+  #              of variants to maintain. Runs nextclade from nextstrain.dir;
+  #              falls back to `basic` with a warning if it is not there.
+  #   basic      ambiguity and terminal coverage only. Cannot detect a
+  #              mixed-lineage assembly: counting differences from a consensus
+  #              does not separate contamination from a year of real
+  #              evolution (the Virginia seed scored 9 against a median of 8).
+  #   off        accept whatever comes back.
+  qc: "nextclade"
+  max_ambiguous: 0.05      # reject above this fraction of non-ACGT bases
+  max_contamination: 5     # reversion + contaminant mutations, as ncov counts them
+
   # Earliest plausible date per variant. A cluster whose first sample predates
   # its variant is re-dated to its first sample after this date, and that
   # sample (not the suspect one) becomes its seed. Unset uses the defaults in

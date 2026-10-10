@@ -226,6 +226,14 @@ def cmd_prep_seeds(args) -> int:
         ("--tick_zero", _cfg_or_flag(cfg, "abm.tick_zero", args.tick_zero)),
         ("--variant_start", _cfg_or_flag(cfg, "seeds.variant_start", args.variant_start)),
         ("--input_file", _cfg_or_flag(cfg, "seeds.input_file", args.input_file)),
+        # Screening of candidate seeds. The ncov checkout supplies nextclade
+        # and its dataset, so the seeds are judged by the same tool that will
+        # later judge the painted genomes.
+        ("--seed_qc", _cfg_or_flag(cfg, "seeds.qc", args.seed_qc)),
+        ("--ncov_dir", _cfg_or_flag(cfg, "nextstrain.dir", args.ncov_dir)),
+        ("--max_ambiguous", _cfg_or_flag(cfg, "seeds.max_ambiguous", args.max_ambiguous)),
+        ("--max_contamination", _cfg_or_flag(cfg, "seeds.max_contamination",
+                                             args.max_contamination)),
     ]
     if _cfg_or_flag(cfg, "seeds.no_surrogates", args.no_surrogates, False):
         cmd.append("--no_surrogates")
@@ -2233,6 +2241,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Cluster table to read instead of downloading UCSC's current "
                          "one. The published EpiHiper schedules came from "
                          "data/importations/sarscov2_clusters_2024_11_12_filtered.tsv.gz.")
+    sp.add_argument("--seed-qc", dest="seed_qc", default=None,
+                    choices=("nextclade", "basic", "off"),
+                    help="Screen candidate seeds before accepting them (config: seeds.qc)")
+    sp.add_argument("--ncov-dir", dest="ncov_dir", default=None,
+                    help="ncov checkout supplying nextclade (config: nextstrain.dir)")
+    sp.add_argument("--max-ambiguous", dest="max_ambiguous", type=float, default=None,
+                    help="Reject a seed above this fraction of non-ACGT bases")
+    sp.add_argument("--max-contamination", dest="max_contamination", type=int, default=None,
+                    help="Reject a seed above this many reversion+contaminant mutations")
     sp.add_argument("--no-surrogates", dest="no_surrogates", action="store_true",
                     default=None,
                     help="Drop importations whose cluster has no retrievable sequence, "
