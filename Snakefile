@@ -920,9 +920,14 @@ if ALLEVENTS:
       output:
           csv=f"{BENCH_DIR}/AUC_truth_rankings.csv",
       params:
-          glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
+          # The configured recipes, spelled out -- NOT a glob of SAMPLE_DIR.
+          # A glob scores whatever is on disk, including an arm left behind by
+          # an earlier run with a different recipe list, which silently mixes
+          # two different paints into one ranking table. Passing the same list
+          # the input: block declares keeps the command and the DAG honest.
+          samples=" ".join(_sample_files()),
       shell:
-          "phylogas benchmark truth --samples '{params.glob}' "
+          "phylogas benchmark truth --samples {params.samples} "
           "--infections {input.infections} --linelist {input.linelist} "
           "--population {input.population} "
           "--start-date $(cat {input.calendar}) "
@@ -946,10 +951,12 @@ if MUGRATION and ALLEVENTS:
         output:
             csv=f"{BENCH_DIR}/Mugration_Metrics.csv",
         params:
-            glob=f"{SAMPLE_DIR}/*_samples.csv.xz",
+            # Spelled out rather than globbed, for the reason in
+            # benchmark_truth: a glob scores stale arms from earlier runs.
+            samples=" ".join(_sample_files()),
         shell:
             "phylogas benchmark mugration --truth {input.truth} "
-            "--samples '{params.glob}' --infections {input.infections} "
+            "--samples {params.samples} --infections {input.infections} "
             "--out {output.csv}"
 
 
