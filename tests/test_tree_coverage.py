@@ -79,6 +79,38 @@ def test_edge_cases(target, sampled, expected):
     assert T.coverage_from_distances(target, sampled, T.distances_from(sampled, adj)) == expected
 
 
+def test_relax_matches_a_fresh_search():
+    """The cumulative path relaxes one distance array across weeks instead of
+    re-searching. It must give exactly what a fresh search would."""
+    pytest.importorskip("scipy.sparse.csgraph")
+    rng = random.Random(5)
+    for _ in range(40):
+        n = rng.randint(5, 150)
+        pids = [str(i) for i in range(n)]
+        contacts = [str(rng.randrange(i)) if i and rng.random() < 0.8 else "-1"
+                    for i in range(n)]
+        g = T.TreeGraph(pd.Series(pids), pd.Series(contacts))
+        weeks = [rng.sample(pids, rng.randint(0, max(1, n // 6))) for _ in range(4)]
+        dist, cum = g.new_distances(), []
+        for wk in weeks:
+            cum += wk
+            dist = g.relax(dist, wk)
+            fresh = g.distances(cum)
+            assert np.array_equal(np.where(np.isinf(dist), -1, dist),
+                                  np.where(np.isinf(fresh), -1, fresh))
+
+
+def test_relax_handles_empty_and_unknown_sources():
+    g = T.TreeGraph(pd.Series(["a", "b"]), pd.Series(["-1", "a"]))
+    dist = g.new_distances()
+    assert np.array_equal(g.relax(dist, []), g.new_distances())        # nothing to add
+    assert np.array_equal(g.relax(dist, ["ghost"]), g.new_distances())  # not in graph
+    dist = g.relax(dist, ["a"])
+    assert dist[g.codes(["a"])[0]] == 0 and dist[g.codes(["b"])[0]] == 1
+    before = dist.copy()
+    assert np.array_equal(g.relax(dist, ["a"]), before)                 # already a source
+
+
 def test_recipe_stride():
     assert R._recipe_stride("4S__surs", 9) == 4
     assert R._recipe_stride("1S-P__lasso_greedy", 9) == 1

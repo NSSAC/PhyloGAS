@@ -435,22 +435,32 @@ def score_samples(
             by_size = {t: ([], []) for t in COVERAGE_SIZE_THRESHOLDS}
             by_age = {ag: ([], []) for ag in age_groups}
             roll_x, roll_y = [], []
+            # The cumulative set only grows, so its distances only fall: carry
+            # one array across the weeks and relax it with each week's new
+            # samples instead of re-searching the graph every time.
+            dist = graph.new_distances()
+            cum_sampled, prev_end = set(), -1
             for end in eval_idx:
+                added = sdf.loc[sdf["_wk"].between(prev_end + 1, end), s_col]
+                dist = graph.relax(dist, added)
+                cum_sampled.update(added)
+                prev_end = end
+
                 # Cumulative: every sample, and every infection up to this
                 # week's end (including any before week 0, as BeyondBaseline
-                # counted cases).
-                # One search serves every size threshold and every age group.
-                s_cum = set(sdf.loc[sdf["_wk"] <= end, s_col])
+                # counted cases). One search serves every size threshold and
+                # every age group.
                 t_cum = targets[targets["_wk"] <= end]
-                dist = graph.distances(s_cum)
                 for t in COVERAGE_SIZE_THRESHOLDS:
                     by_size[t][0].append(end + 1)
-                    by_size[t][1].append(_mrd(t_cum[t_cum["_size"] > t], s_cum, dist))
+                    by_size[t][1].append(_mrd(t_cum[t_cum["_size"] > t], cum_sampled, dist))
                 for ag in age_groups:
                     by_age[ag][0].append(end + 1)
-                    by_age[ag][1].append(_mrd(t_cum[t_cum["age_group"] == ag], s_cum, dist))
+                    by_age[ag][1].append(_mrd(t_cum[t_cum["age_group"] == ag], cum_sampled, dist))
 
-                # Rolling: samples and infections both restricted to the last 8 weeks.
+                # Rolling: samples and infections both restricted to the last
+                # 8 weeks. The window slides, so samples leave it and the
+                # distances are not monotone -- this one is a fresh search.
                 lo = max(0, end - ROLLING_TREE_WEEKS + 1)
                 s_win = set(sdf.loc[sdf["_wk"].between(lo, end), s_col])
                 roll_x.append(end + 1)
