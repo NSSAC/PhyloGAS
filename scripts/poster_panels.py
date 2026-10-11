@@ -753,7 +753,7 @@ def panel_framework(out_path):
     supplies. The diagram draws that bypass as its own path rather than
     leaving it implied by a caption.
     """
-    W, H = 1820, 640
+    W, H = 1820, 600
     p = [svg_open(W, H)]
     p.append(txt(40, 56, "A digital twin makes the answer available",
                  33, INK, weight="bold"))
@@ -822,6 +822,150 @@ def panel_framework(out_path):
     return out_path
 
 
+def panel_profile(M, A, out_path, W=1480):
+    """Per-recipe profile: how each recipe does on each concern, against
+    random sampling on the SAME schedule (so stride is controlled by
+    construction), averaged over the five state twins.
+
+    Colour carries consistency -- how many of five twins the recipe beat
+    random on that goal -- and the number carries size. Changes under 1% of
+    random's value are greyed: tree coverage moves ~0.5% for every recipe, and
+    colouring a consistent-but-negligible change would overstate it.
+
+    The bottom row is the covariation question: across the 18 recipes, does
+    the change on this goal move with the change in flow reconstruction?
+    Built at its placed width (1480) so nothing is scaled down on the poster.
+    """
+    ALGL = {"lasso_greedy": "Model, free", "lasso_stratified": "Model, quota",
+            "stratified": "Quota only"}
+    TGTL = {"P": "population", "LL+P": "half & half", "LL": "reported"}
+    def tgt(sc):
+        return "LL+P" if sc.endswith("LL-P") else "LL" if sc.endswith("LL") else "P"
+    def base(r): return "1S__surs" if r.startswith("1S") else "4S__surs"
+    def val(s, r, c):
+        if c in ("cosine_similarity", "topological_f1"):
+            return float(M[s][r][c])
+        return A[s][c][r]
+    # (metric, header, higher_is_better)
+    COLS = [("cosine_similarity", "Flow\nproportions", True),
+            ("topological_f1", "Flow\ntopology", True),
+            ("coverage_size_100", "Tree\ncoverage", True),
+            ("8_week_rolling_tree_coverage", "Recent tree\ncoverage", True),
+            ("stride_component_coverage", "Clusters\nreached", True),
+            ("stride_window_infections", "Mismatch with\ncase mix", False)]
+    S = [s for s in STATES if s in A]
+    R = [r for r in sorted(M[S[0]]) if not r.endswith("surs")]
+    tab = {}
+    for r in R:
+        row = []
+        for c, _h, hib in COLS:
+            raw = [val(s, r, c) - val(s, base(r), c) for s in S]
+            rel = st.mean(raw) / st.mean(val(s, base(r), c) for s in S) * 100
+            better = sum((x > 0) == hib and x != 0 for x in raw)
+            row.append((rel, better))
+        tab[r] = row
+    R.sort(key=lambda r: -tab[r][0][0])
+    cov = []
+    for c, _h, _b in COLS[1:]:
+        rs = []
+        for s in S:
+            dc = [float(M[s][r]["cosine_similarity"]) - float(M[s][base(r)]["cosine_similarity"]) for r in R]
+            dx = [val(s, r, c) - val(s, base(r), c) for r in R]
+            v = _spear(dx, dc)
+            if v is not None:
+                rs.append(v)
+        cov.append((st.mean(rs), sum(x > 0 for x in rs), len(rs)))
+
+    LW, CW, RH, T = 400, 168, 42, 300
+    x0 = 40 + LW
+    H = T + len(R) * RH + 330
+    p = [svg_open(W, H)]
+    p.append(txt(40, 52, "What each strategy is good at, compared with random sampling",
+                 31, INK, weight="bold"))
+    for k, line in enumerate([
+            "Each row is one recipe, sorted by how well it reconstructed spread. Each cell "
+            "compares it with random",
+            "sampling on the same schedule, averaged over five state twins. Blue = better "
+            "than random in most twins;",
+            "orange = worse; darker = more twins agree. Number = average change; changes "
+            "under 1% are grey."]):
+        p.append(txt(40, 92 + k * 29, line, 21, INK2))
+    # column groups and headers
+    p.append(txt(x0 + CW, T - 104, "Reconstruction", 21, INK, anchor="middle", weight="bold"))
+    p.append(f'<line x1="{x0+6}" y1="{T-96}" x2="{x0+2*CW-6}" y2="{T-96}" stroke="{INK3}" stroke-width="1.5"/>')
+    p.append(txt(x0 + 4 * CW, T - 104, "Surveillance goals", 21, INK, anchor="middle", weight="bold"))
+    p.append(f'<line x1="{x0+2*CW+6}" y1="{T-96}" x2="{x0+6*CW-6}" y2="{T-96}" stroke="{INK3}" stroke-width="1.5"/>')
+    for j, (_c, hdr, hib) in enumerate(COLS):
+        cx = x0 + j * CW + CW / 2
+        for k, line in enumerate(hdr.split("\n")):
+            p.append(txt(cx, T - 66 + k * 23, line, 19, INK, anchor="middle"))
+        p.append(txt(cx, T - 14, "higher better" if hib else "lower better", 16, INK3,
+                     anchor="middle", style="italic"))
+    def wins_colour(w):
+        return _ramp((w - 2.5) / 2.5, lim=1.0)
+    for i, r in enumerate(R):
+        y = T + i * RH
+        sc, a = r.split("__")
+        fam_i = FAMILIES.index(a)
+        p.append(f'<rect x="40" y="{y+6}" width="10" height="{RH-12}" fill="{SERIES[fam_i]}"/>')
+        lab = f"{ALGL[a]} · {TGTL[tgt(sc)]} · {'4-wk' if sc.startswith('4S') else 'weekly'}"
+        p.append(txt(62, y + 28, lab, 20, INK2))
+        for j, (rel, w) in enumerate(tab[r]):
+            x = x0 + j * CW
+            neglig = abs(rel) < 1.0
+            fill = "#f1f0ed" if neglig else wins_colour(w)
+            p.append(f'<rect x="{x+3}" y="{y+2}" width="{CW-6}" height="{RH-4}" fill="{fill}"/>')
+            strong = (w in (0, len(S))) and not neglig
+            p.append(txt(x + CW / 2, y + 28, f"{rel:+.1f}%", 20, INK3 if neglig else INK,
+                         anchor="middle", weight="bold" if strong else "normal"))
+    yb = T + len(R) * RH
+    p.append(f'<line x1="40" y1="{yb+8}" x2="{x0+6*CW}" y2="{yb+8}" stroke="{INK3}" stroke-width="1.5"/>')
+    p.append(txt(40, yb + 44, "Moves with better flow", 20, INK, weight="bold"))
+    p.append(txt(40, yb + 70, "reconstruction? (ρ across recipes)", 20, INK, weight="bold"))
+    p.append(txt(x0 + CW / 2, yb + 56, "—", 22, INK3, anchor="middle"))
+    for j, (rho, pos, n) in enumerate(cov, start=1):
+        agree = pos in (0, n)
+        cx = x0 + j * CW + CW / 2
+        p.append(txt(cx - (10 if agree else 0), yb + 56, f"{rho:+.2f}", 23, INK,
+                     anchor="middle", weight="bold" if agree else "normal"))
+        if agree:
+            p.append(f'<circle cx="{cx+33:.1f}" cy="{yb+48:.1f}" r="5" fill="{INK}"/>')
+    p.append(txt(40, yb + 112, "ρ = rank correlation between the change on that goal "
+                               "and the change in flow proportions, per twin, averaged. "
+                               "● = same sign in all five.", 18, INK3))
+    # the takeaway, asserted only if the data still say it
+    mis_rho, mis_pos, mis_n = cov[-1]
+    clu_rho = cov[3][0]
+    tree_max = max(abs(tab[r][2][0]) for r in R)
+    msg = []
+    if mis_rho > 0.4 and mis_pos == mis_n:
+        msg.append("Reconstruction tracks one thing: the best recipes sample cases least "
+                   "like the current case mix.")
+    if tree_max < 1.0 and abs(clu_rho) < 0.2:
+        msg.append(f"Tree coverage barely differs between recipes (within {tree_max:.1f}% "
+                   "of random), and reaching more clusters doesn't predict who wins.")
+    yy = yb + 160
+    for m in msg:
+        for line in _wrap(m, 112):
+            p.append(txt(40, yy, line, 21, INK, weight="bold"))
+            yy += 29
+        yy += 12
+    p.append("</svg>\n")
+    open(out_path, "w").write("".join(p))
+    return out_path
+
+
+def _wrap(text, n):
+    out, line = [], ""
+    for w_ in text.split():
+        t = (line + " " + w_).strip()
+        if len(t) > n and line:
+            out.append(line); line = w_
+        else:
+            line = t
+    return out + ([line] if line else [])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="poster_project/data")
@@ -842,7 +986,8 @@ def main():
             panel_translation(M, A, os.path.join(a.out, "panel_translation.svg")),
             panel_crosstab(M, os.path.join(a.out, "panel_crosstab.svg")),
             panel_clock(load_clock(a.results), os.path.join(a.out, "panel_clock.svg")),
-            panel_framework(os.path.join(a.out, "panel_framework.svg"))]
+            panel_framework(os.path.join(a.out, "panel_framework.svg")),
+            panel_profile(M, A, os.path.join(a.out, "panel_profile.svg"))]
     for m in made:
         if m:
             print(f"  -> {m}")
