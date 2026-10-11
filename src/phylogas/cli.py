@@ -2386,7 +2386,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="branch_lengths.json, for --mode operational")
     b.add_argument("--date-field", dest="date_field", default="date")
     b.add_argument("--column", default="strain", help="metadata id column")
-    b.add_argument("--coalescent", default="skyline")
+    # "opt", not "skyline", for the same reason cfg/nextstrain/ncov/base.yaml
+    # gives: skyline fits a piecewise-constant Ne trajectory, and on these
+    # builds (~14k tips, ~8e-4 subs/site/year over a 36-week window) most
+    # internal branches are near zero, so the fit is flat rather than
+    # divergent and TreeTime hits its 100-iteration cap. We changed it for the
+    # ncov build and missed this call, so mu_sim had been failing for most
+    # arms -- invisibly, because clock_estimates tolerates per-arm failures.
+    b.add_argument("--coalescent", default="opt",
+                   help="TreeTime coalescent model for the unconstrained refine")
     b.add_argument("--clock-filter-iqd", dest="clock_filter_iqd", type=float, default=0,
                    help="0 (default) disables it. With the rate being fitted, the "
                         "filter prunes valid branches, and by differing amounts per arm.")
