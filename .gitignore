@@ -86,3 +86,6 @@ zenodo_doi.txt
 
 # Job output from slurm/run_<state>.sbatch
 slurm/logs/
+
+# Poster working material (briefs, reference decks, drafts, derived figures)
+poster_project/
