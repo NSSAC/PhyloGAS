@@ -9,7 +9,26 @@ class RateLimitedMutationalModel(_MutationalModel):
 
     # --- Rate Limiting constants ---
     mutation_rate_per_cycle = 3.40e-6
-    peak_viral_load = 1e6  # Example peak viral load
+    # Peak within-host virion count. The class default is the original
+    # placeholder; pass peak_viral_load to override it from config.
+    #
+    # This parameter sets the emergent clock rate. The early-growth target is
+    # rt_early_population_threshold * peak_viral_load, and the number of
+    # replication cycles to reach it is ceil(log_burst(target / initial)),
+    # with burst drawn U{10,1000} per transmission. Averaged over that draw,
+    # with initial=10 and the 1% threshold:
+    #
+    #   peak    E[cycles]   lambda    emergent subs/genome/yr
+    #   1e6        2.02      0.206      ~10   (measured in the delta-wave twins)
+    #   1e9        3.12      0.317      ~15
+    #   1e11       3.60      0.366      ~18
+    #   1e12       4.26      0.433      ~21
+    #
+    # Real SARS-CoV-2 is ~24 (8e-4/site/yr x 29903). Note the ceiling and the
+    # burst-size distribution: evaluating the cycle count at a single "typical"
+    # burst size overestimates E[cycles] substantially, and ignoring the 1%
+    # threshold overestimates it by two more orders of magnitude of target.
+    peak_viral_load = 1e6
     # Fraction of peak viral load to define "early" phase, for calculating replication cycles
     rt_early_population_threshold = 0.01 
     # Probability a mutation occurring in "early" phase (defined by cycles) becomes major
@@ -18,8 +37,15 @@ class RateLimitedMutationalModel(_MutationalModel):
     min_burst_size = 10
     max_burst_size = 1000
 
-    def __init__(self, initial_viral_load, thresholds, prob_matrix, letters_to_use):
+    def __init__(self, initial_viral_load, thresholds, prob_matrix, letters_to_use,
+                 peak_viral_load=None, rt_early_population_threshold=None):
         self.initial_viral_load = initial_viral_load
+        # Instance attributes shadow the class defaults when supplied, so an
+        # unset config keeps the historical behaviour exactly.
+        if peak_viral_load is not None:
+            self.peak_viral_load = float(peak_viral_load)
+        if rt_early_population_threshold is not None:
+            self.rt_early_population_threshold = float(rt_early_population_threshold)
         self.thresholds = np.asarray(thresholds, dtype=np.float64)
         self.prob_matrix = prob_matrix
         self.letters_to_use = np.asarray(letters_to_use)

@@ -148,6 +148,11 @@ def cmd_paint(args) -> int:
         ("--add_metadata", pick(gp + "add_metadata", args.add_metadata)),
         ("--input_graph_painted_prefix", pick(gp + "painted_prefix", args.painted_prefix)),
         ("--initial_viral_load", pick(gp + "initial_viral_load", args.initial_viral_load)),
+        # Optional: unset leaves the mutational model's own defaults in place,
+        # so an existing config keeps producing the same genomes.
+        ("--peak_viral_load", pick(gp + "peak_viral_load", None)),
+        ("--rt_early_population_threshold",
+         pick(gp + "rt_early_population_threshold", None)),
         ("--location", location),
         ("--reference_location", reference_location),
     ]

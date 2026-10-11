@@ -169,6 +169,15 @@ def getClas():
                         help="Enable rate-limiting of mutations based on within-host dynamics and iSNV paper.")
     parser.add_argument("--initial_viral_load", type=float, default=10.0, dest="initial_viral_load",
                         help="Initial viral load for rate-limiting model (relevant if --rate_limit is used).")
+    parser.add_argument("--peak_viral_load", type=float, default=None, dest="peak_viral_load",
+                        help="Peak within-host virion count for the rate-limiting model. "
+                             "Sets the emergent molecular clock: higher peak -> more early "
+                             "replication cycles -> more mutations per transmission. "
+                             "Unset keeps the model default (1e6).")
+    parser.add_argument("--rt_early_population_threshold", type=float, default=None,
+                        dest="rt_early_population_threshold",
+                        help="Fraction of peak viral load that ends the 'early' phase "
+                             "(default 0.01). Unset keeps the model default.")
     # END ADDED ARGUMENTS
 
     parser.add_argument('--version', action='version', version=f'genetic_painter {__version__}')
@@ -1207,7 +1216,14 @@ def generate_sequences(args):
     if use_poor_mut_model:
         mutational_model = model_registry["poor"]()
     elif args.rate_limit:
-        mutational_model = model_registry["rate_limited"](args.initial_viral_load, thresh, prob_matrix, LETTERS)
+        mutational_model = model_registry["rate_limited"](
+            args.initial_viral_load, thresh, prob_matrix, LETTERS,
+            peak_viral_load=args.peak_viral_load,
+            rt_early_population_threshold=args.rt_early_population_threshold)
+        print(f"  rate-limited model: initial={mutational_model.initial_viral_load:g} "
+              f"peak={mutational_model.peak_viral_load:g} "
+              f"early_threshold={mutational_model.rt_early_population_threshold:g}",
+              file=sys.stderr)
     else:
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)
     print(f"Using {mutational_model} for mutations")

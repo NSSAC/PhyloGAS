@@ -562,8 +562,8 @@ def panel_crosstab(M, out_path):
     LW, CW, RH = 330, 450, 150
     T = 330
     p = [svg_open(W, H)]
-    p.append(txt(40, 58, "Freedom to choose, not the quota, is what pays",
-                 34, INK, weight="bold"))
+    p.append(txt(40, 58, "Representativeness evaluation of demographic-aware "
+                 "sampling strategies", 34, INK, weight="bold"))
     p.append(txt(40, 98, "Gain in reconstruction score over random sampling run on the "
                          "same schedule. Above zero = better than random.", 22, INK2))
     p.append(txt(40, 130, "Each cell shows the weekly and the 4-weekly version, and in how "
@@ -614,11 +614,116 @@ def panel_crosstab(M, out_path):
     for k, (s, bold) in enumerate(lines):
         p.append(txt(40, yb + 40 + k * 32 + (14 if bold else 0), s, 22,
                      INK if bold else INK2, weight="bold" if bold else "normal"))
-    p.append(txt(40, yb + 40 + len(lines) * 32 + 44,
+    fy = yb + 40 + len(lines) * 32 + 44
+    p.append(txt(40, fy,
                  "● = beat random in all five state twins.", 20, INK3))
+    p.append(txt(40, fy + 30, "All strategies are implemented in BeyondBaseline; population targets come from the digital twin's synthetic population model.", 20, INK3))
     p.append("</svg>\n")
     open(out_path, "w").write("".join(p))
     return out_path
+
+
+def panel_crosstab_compact(M, out_path, W=1480):
+    """The cross-tab drawn natively at 1480 wide for the alternate layout's
+    right column, with the type sizes of panel_profile beside it, and the
+    header whitespace removed. Same numbers and the same computed claims as
+    panel_crosstab; the main poster keeps using that function unchanged."""
+    ALG = ["lasso_greedy", "lasso_stratified", "stratified"]
+    COLS = {"lasso_greedy": ("Model-guided,", "free choice"),
+            "lasso_stratified": ("Model-guided,", "with quota"),
+            "stratified": ("Quota", "only")}
+    TGT = ["P", "LL+P", "LL"]
+    ROWS = {"P": ("Resemble the", "population (P)"),
+            "LL+P": ("Half and half", "(LL+P)"),
+            "LL": ("Resemble reported", "cases (LL)")}
+    def alg(r): return r.split("__")[1]
+    def scen(r): return r.split("__")[0]
+    def tgt(sc):
+        if sc.endswith("LL-P"): return "LL+P"
+        if sc.endswith("LL"):   return "LL"
+        if sc.endswith("-P"):   return "P"
+        return "none"
+    def base(r): return "1S__surs" if scen(r).startswith("1S") else "4S__surs"
+    cell = {}
+    for r in M[next(iter(M))]:
+        if alg(r) not in ALG:
+            continue
+        d = [float(M[s][r]["cosine_similarity"]) - float(M[s][base(r)]["cosine_similarity"])
+             for s in M]
+        cell[(alg(r), tgt(scen(r)), scen(r)[:2])] = (st.mean(d), sum(x > 0 for x in d), len(d))
+    sched = all(cell[(a, t, "4S")][0] > cell[(a, t, "1S")][0] for a in ALG for t in TGT)
+    order = all(cell[("lasso_greedy", t, c)][0] > cell[("lasso_stratified", t, c)][0]
+                > cell[("stratified", t, c)][0] for t in TGT for c in ("1S", "4S"))
+    p_free = all(cell[("lasso_greedy", "P", c)][0] > cell[("lasso_greedy", "LL", c)][0]
+                 for c in ("1S", "4S"))
+    quota_neg = all(cell[("stratified", t, c)][0] < 0 for t in TGT for c in ("1S", "4S"))
+    worst = min(cell, key=lambda k: cell[k][0])
+
+    LW, RH, T = 300, 104, 200
+    CW = (W - 40 - LW - 20) // 3
+    lines = []
+    if sched and order:
+        lines.append(("Two patterns hold in every cell: the gain over random is larger on the "
+                      "4-weekly schedule, and model-guided", False))
+        lines.append(("free choice beats model-guided quota, which beats quota only.", False))
+    if p_free and quota_neg:
+        lines.append(("Targeting the population pays only with free choice. Quota-only sampling "
+                      "lost to random in all six", True))
+        lines.append((f"combinations, and with the population target it did worst of all "
+                      f"({cell[worst][0]:+.3f}).", True))
+    yb = T + 3 * RH
+    H = yb + 34 + len(lines) * 28 + 14 + 36 + 28 + 22
+    p = [svg_open(W, H)]
+    p.append(txt(40, 52, "Representativeness evaluation of demographic-aware sampling "
+                 "strategies", 31, INK, weight="bold"))
+    p.append(txt(40, 92, "Gain in reconstruction score over random sampling run on the same "
+                         "schedule. Above zero = better than random.", 21, INK2))
+    p.append(txt(40, 121, "Each cell shows the weekly and the 4-weekly version, and in how many "
+                          "of the five state twins it beat random.", 21, INK2))
+    for j, a in enumerate(ALG):
+        x = 40 + LW + j * CW + (CW - 14) / 2
+        l1, l2 = COLS[a]
+        p.append(txt(x, T - 44, l1, 21, TEXT_SERIES[FAMILIES.index(a)], anchor="middle",
+                     weight="bold"))
+        p.append(txt(x, T - 18, l2, 21, TEXT_SERIES[FAMILIES.index(a)], anchor="middle",
+                     weight="bold"))
+    for i, t in enumerate(TGT):
+        y = T + i * RH
+        l1, l2 = ROWS[t]
+        p.append(txt(40, y + RH / 2 - 10, l1, 20, INK, weight="bold"))
+        p.append(txt(40, y + RH / 2 + 16, l2, 20, INK, weight="bold"))
+        for j, a in enumerate(ALG):
+            x = 40 + LW + j * CW
+            vals = [cell.get((a, t, c)) for c in ("1S", "4S")]
+            mu = st.mean(v[0] for v in vals if v)
+            p.append(f'<rect x="{x}" y="{y}" width="{CW-14}" height="{RH-12}" '
+                     f'fill="{_ramp(mu, lim=0.20)}" stroke="#ffffff" stroke-width="2"/>')
+            for k, v in enumerate(vals):
+                if v is None:
+                    continue
+                d, pos, n = v
+                sweep = pos == n and d > 0
+                yy = y + 38 + k * 38
+                p.append(txt(x + 18, yy, "weekly" if k == 0 else "4-weekly", 18, INK3))
+                p.append(txt(x + 196, yy, f"{d:+.3f}", 24, INK, anchor="end",
+                             weight="bold" if sweep else "normal"))
+                p.append(txt(x + 210, yy, f"{pos}/{n} states", 17, INK if sweep else INK3))
+                if sweep:
+                    p.append(f'<circle cx="{x+CW-36:.1f}" cy="{yy-6:.1f}" r="6" fill="{INK}"/>')
+    y = yb + 34
+    for s_, bold in lines:
+        if bold and not any(b for _s, b in lines[:lines.index((s_, bold))]):
+            y += 14
+        p.append(txt(40, y, s_, 20, INK if bold else INK2, weight="bold" if bold else "normal"))
+        y += 28
+    p.append(txt(40, y + 8, "● = beat random in all five state twins.", 18, INK3))
+    p.append(txt(40, y + 36, "All strategies are implemented in BeyondBaseline; population "
+                 "targets come from the digital twin's synthetic population model.", 18, INK3))
+    p.append("</svg>\n")
+    open(out_path, "w").write("".join(p))
+    return out_path
+
+
 
 
 def load_clock(results_dir):
@@ -822,7 +927,7 @@ def panel_framework(out_path):
     return out_path
 
 
-def panel_profile(M, A, out_path, W=1480):
+def panel_profile(M, A, out_path, W=1480, RH=42, T=300, bottom=330):
     """Per-recipe profile: how each recipe does on each concern, against
     random sampling on the SAME schedule (so stride is controlled by
     construction), averaged over the five state twins.
@@ -876,9 +981,9 @@ def panel_profile(M, A, out_path, W=1480):
                 rs.append(v)
         cov.append((st.mean(rs), sum(x > 0 for x in rs), len(rs)))
 
-    LW, CW, RH, T = 400, 168, 42, 300
+    LW, CW = 400, 168
     x0 = 40 + LW
-    H = T + len(R) * RH + 330
+    H = T + len(R) * RH + bottom
     p = [svg_open(W, H)]
     p.append(txt(40, 52, "What each strategy is good at, compared with random sampling",
                  31, INK, weight="bold"))
@@ -909,14 +1014,14 @@ def panel_profile(M, A, out_path, W=1480):
         fam_i = FAMILIES.index(a)
         p.append(f'<rect x="40" y="{y+6}" width="10" height="{RH-12}" fill="{SERIES[fam_i]}"/>')
         lab = f"{ALGL[a]} · {TGTL[tgt(sc)]} · {'4-wk' if sc.startswith('4S') else 'weekly'}"
-        p.append(txt(62, y + 28, lab, 20, INK2))
+        p.append(txt(62, y + round(RH * 2 / 3), lab, 20, INK2))
         for j, (rel, w) in enumerate(tab[r]):
             x = x0 + j * CW
             neglig = abs(rel) < 1.0
             fill = "#f1f0ed" if neglig else wins_colour(w)
             p.append(f'<rect x="{x+3}" y="{y+2}" width="{CW-6}" height="{RH-4}" fill="{fill}"/>')
             strong = (w in (0, len(S))) and not neglig
-            p.append(txt(x + CW / 2, y + 28, f"{rel:+.1f}%", 20, INK3 if neglig else INK,
+            p.append(txt(x + CW / 2, y + round(RH * 2 / 3), f"{rel:+.1f}%", 20, INK3 if neglig else INK,
                          anchor="middle", weight="bold" if strong else "normal"))
     yb = T + len(R) * RH
     p.append(f'<line x1="40" y1="{yb+8}" x2="{x0+6*CW}" y2="{yb+8}" stroke="{INK3}" stroke-width="1.5"/>')
@@ -987,7 +1092,11 @@ def main():
             panel_crosstab(M, os.path.join(a.out, "panel_crosstab.svg")),
             panel_clock(load_clock(a.results), os.path.join(a.out, "panel_clock.svg")),
             panel_framework(os.path.join(a.out, "panel_framework.svg")),
-            panel_profile(M, A, os.path.join(a.out, "panel_profile.svg"))]
+            panel_profile(M, A, os.path.join(a.out, "panel_profile.svg")),
+            # alternate layout: both panels native at the right column's width
+            panel_crosstab_compact(M, os.path.join(a.out, "panel_crosstab_compact.svg")),
+            panel_profile(M, A, os.path.join(a.out, "panel_profile_compact.svg"),
+                          RH=34, T=290, bottom=270)]
     for m in made:
         if m:
             print(f"  -> {m}")

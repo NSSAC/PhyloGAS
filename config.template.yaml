@@ -290,6 +290,29 @@ genetic_painter:
   # poor       : 50% random substitution null model
   mutation_model: "rate_limit"
   initial_viral_load: 10        # transmission bottleneck
+
+  # Peak within-host virion count. This sets the emergent molecular clock:
+  # the early-growth target is rt_early_population_threshold x peak_viral_load,
+  # and the replication cycles needed to reach it drive the Poisson mean for
+  # de novo mutations. 1e6 was a placeholder, not a measured value.
+  #
+  # Averaged over the per-transmission burst draw U{10,1000}, initial load 10,
+  # and the 1% early-phase threshold:
+  #
+  #   peak    E[cycles]   emergent subs/genome/yr
+  #   1e6        2.02       ~10   <- the delta-wave twins as painted to date
+  #   1e9        3.12       ~15
+  #   1e11       3.60       ~18
+  #   1e12       4.26       ~21
+  #
+  # Real SARS-CoV-2 is ~24 (8e-4/site/yr x 29903 bases). 1e11 is the upper end
+  # of the biophysical range for total within-host virions (Sender et al. 2021,
+  # PNAS 118:e2024815118) and closes most, not all, of the 2.4x gap. Comment
+  # this out to restore the historical 1e6 behaviour.
+  peak_viral_load: 1.0e+11   # YAML 1.1 needs the point and signed exponent to parse as a float
+  # Fraction of peak that ends the "early" phase. Left at the model default;
+  # it is the other lever on cycle count and has not been re-examined.
+  # rt_early_population_threshold: 0.01
   proportional: true            # use MSA-derived substitution probabilities
 
   # -- Time window -----------------------------------------------------------

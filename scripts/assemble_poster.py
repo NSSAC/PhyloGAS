@@ -76,6 +76,27 @@ def logo(p, path, x, y, w, h):
     return dpi
 
 
+SHOT = "poster_project/assets/nextstrain_importations_screenshot.png"
+CONFERENCE = ("ASM Bioinformatics, Genomics and Big Data Conference (ASM BIG)  \u00b7  "
+              "Washington, DC  \u00b7  October 11\u201314, 2026")
+
+
+def raster(p, path, x, y, w):
+    """Embed a PNG at width w, aspect preserved. Returns the bottom edge."""
+    import base64, struct
+    raw = open(path, "rb").read()
+    iw, ih = struct.unpack(">II", raw[16:24])
+    h = w * ih / iw
+    dpi = iw / (w / 100.0)
+    if dpi < 150:
+        WARN.append(f"{os.path.basename(path)} renders at {dpi:.0f} dpi (want >=150)")
+    b64 = base64.b64encode(raw).decode("ascii")
+    p.append(f'<image x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" '
+             f'preserveAspectRatio="xMidYMid meet" xlink:href="data:image/png;base64,{b64}" '
+             f'href="data:image/png;base64,{b64}"/>')
+    return y + h
+
+
 def esc(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -137,6 +158,32 @@ def headline(data_dir):
     m, sd = st.mean(d), st.stdev(d)
     t = m / (sd / math.sqrt(len(d)))
     return m, sum(x > 0 for x in d), t
+
+
+def baselines(data_dir):
+    """Absolute cosine of the two random baselines, per schedule.
+
+    Every result on the poster is a difference from these, so the methods
+    section states them: "+0.072 over random" is meaningless without knowing
+    what random scored.
+    """
+    M = {s: {r["label"]: r for r in csv.DictReader(
+         open(os.path.join(data_dir, f"mugration_foil_{s}.csv")))} for s in STATES}
+    return {k: st.mean(float(M[s][v]["cosine_similarity"]) for s in STATES)
+            for k, v in (("weekly", "1S__surs"), ("4-weekly", "4S__surs"))}
+
+
+def sweeps(data_dir):
+    """How many non-random recipes beat random in every twin, and out of how
+    many. Computed, not asserted: an earlier draft of this sentence said
+    "four of 20" when it is three of 18."""
+    M = {s: {r["label"]: r for r in csv.DictReader(
+         open(os.path.join(data_dir, f"mugration_foil_{s}.csv")))} for s in STATES}
+    base = lambda r: "1S__surs" if r.startswith("1S") else "4S__surs"
+    R = [r for r in sorted(M[STATES[0]]) if not r.endswith("surs")]
+    n = sum(all(float(M[s][r]["cosine_similarity"])
+                > float(M[s][base(r)]["cosine_similarity"]) for s in STATES) for r in R)
+    return n, len(R)
 
 
 def clock(results_dir):
@@ -262,10 +309,19 @@ def main():
     ap.add_argument("--figures", default="poster_project/figures")
     ap.add_argument("--data", default="poster_project/data")
     ap.add_argument("--results", default="results")
-    ap.add_argument("--out", default="poster_project/poster.svg")
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--layout", choices=["main", "alt"], default="main",
+                    help="main: the v9 poster. alt: conference line in the header, "
+                         "Nextstrain screenshot in the middle column, cross-tab moved to "
+                         "the top of the right column, conclusions under the screenshot.")
     a = ap.parse_args()
+    if a.out is None:
+        a.out = ("poster_project/poster_alt.svg" if a.layout == "alt"
+                 else "poster_project/poster.svg")
     F = lambda n: os.path.join(a.figures, n)
     hd_m, hd_w, hd_t = headline(a.data)
+    BASE = baselines(a.data)
+    SWEEP_N, SWEEP_TOT = sweeps(a.data)
     C = clock(a.results)
     truths = [v["truth"] for v in C.values()]
     ratio = 8e-4 / st.mean(truths) if truths else None
@@ -321,9 +377,9 @@ def main():
              "which cases are chosen? In a real outbreak nobody can check, because the "
              "true path of spread is never known. In a simulated outbreak, it can be.",
              nA, fill=INK)
-    y += 34
+    y += 28
     y = storyboard(p, xA, y + 10)
-    y += 40
+    y += 34
     y = para(p, xA, y, "Illustration. Dots are infections, lines are transmissions, "
              "orange lines cross a county boundary. The phylogenetic tree is built only "
              "from sequenced cases, so which county-to-county links it can recover "
@@ -374,74 +430,137 @@ def main():
              "often the virus moved between each pair of counties. We compare those "
              "shares with the true shares from the simulation using cosine similarity: "
              "1 means identical, 0 means unrelated.", nA)
+    y += 2
+    y = para(p, xA, y, "Every result shown is the change from random sampling on the "
+             "same schedule: zero means no better than picking at random. Random "
+             f"scored {BASE['weekly']:.2f} weekly and {BASE['4-weekly']:.2f} "
+             f"four-weekly \u2014 only {SWEEP_N} of {SWEEP_TOT} recipes beat it in all "
+             "five twins.", nA, fill=INK)
     check("A", y, BOT)
 
-    # ---- column B --------------------------------------------------------
-    xB, wB, nB = 1560, 1600, 108
-    y = embed(p, F("panel_framework.svg"), xB, TOP - 30, wB)
-    y = embed(p, F("panel_crosstab.svg"), xB, y + 10, wB)
-    y = heading(p, xB, y + 20, "Do the synthetic genomes behave like real ones?", w=420)
-    have_sim = {s: v for s, v in C.items() if v["sim"]}
-    tips = max((v["tips"] for v in C.values()), default=0)
-    y = para(p, xB, y, f"Each twin's true mutation rate was fitted on {tips:,} synthetic "
-             "genomes and their dates, with no tree involved. Nextstrain, given one random "
-             "sample and no rate, estimated it from its own tree:", nB, size=25, lead=34)
-    y += 6
-    for s, v in have_sim.items():
-        gap = abs(v["sim"] - v["truth"]) / v["truth"] * 100
-        p.append(txt(xB + 20, y + 4, STATE_NAME[s], 27, INK, weight="bold"))
-        p.append(txt(xB + 300, y + 4, f"true {v['truth']*1e4:.2f}\u00d710\u207b\u2074", 27, T_BLUE))
-        p.append(txt(xB + 650, y + 4, f"Nextstrain {v['sim']*1e4:.2f}\u00d710\u207b\u2074", 27, T_AQUA))
-        p.append(txt(xB + 1080, y + 4, f"{gap:.1f}% apart", 27, INK, weight="bold"))
-        y += 42
-    if not have_sim:
-        WARN.append("no mu_sim rows: validation box has no comparison")
-    if ratio:
-        y = para(p, xB, y + 4, f"The twin's rate is about {ratio:.1f}\u00d7 slower than real "
-                 "SARS-CoV-2 (\u22488\u00d710\u207b\u2074): fewer mutations give the tree less "
-                 "to work with. Calibrating it upward is ongoing work.", nB, size=23,
-                 lead=31, fill=INK3)
-    y = heading(p, xB, y + 24, "References", w=260)
-    for r in ["Hadfield J, et al. Nextstrain: real-time tracking of pathogen evolution. "
-              "Bioinformatics. 2018;34(23):4121\u20134123.",
-              "Sagulenko P, Puller V, Neher RA. TreeTime: maximum-likelihood phylodynamic "
-              "analysis. Virus Evolution. 2018;4(1):vex042.",
-              "[ADD: EpiHiper / synthetic population and genetic painter citations]"]:
-        ph = r.startswith("[ADD")
-        y = para(p, xB, y, r, 124, size=21, lead=28,
-                 fill="#b4322f" if ph else INK3, weight="bold" if ph else "normal")
-        y += 4
-    check("B", y, BOT)
+    if a.layout == "alt":
+        # ---- column B (alt): framework, the twin in Nextstrain, conclusions, refs
+        xB, wB = 1560, 1600
+        y = embed(p, F("panel_framework.svg"), xB, TOP - 30, wB)
+        y = raster(p, SHOT, xB + 60, y + 14, wB - 120)      # ~230 dpi at this width
+        y = para(p, xB + 35, y + 28, "Virginia Delta-wave twin: importation locations from "
+                 "a previous analysis (map, per-county z-score of introductions vs. sampling), "
+                 "the Nextstrain time tree, and inferred county-to-county transmissions.",
+                 128, size=21, lead=28, fill=INK3)
+        y = heading(p, xB, y + 18, "Conclusions")
+        have_sim = {s_: v for s_, v in C.items() if v["sim"]}
+        pval = "p < 0.01" if hd_t > 4.604 else ("p < 0.05" if hd_t > 2.776 else "n.s.")
+        gaps = [abs(v["sim"] - v["truth"]) / v["truth"] * 100 for v in have_sim.values()]
+        concl = [
+            f"Picking cases so the sample resembles the whole population, with the algorithm "
+            f"free to choose from a four-week pool, reconstructed county-to-county spread "
+            f"best: {hd_m:+.3f} over random, better in {hd_w} of 5 state twins (paired t = "
+            f"{hd_t:.1f}, {pval}).",
+            "Rigid demographic quotas lost to random in every combination tested. The same "
+            "target helps or hurts depending on whether the algorithm is free to choose.",
+            "Common surveillance goals did not explain the winners: tree coverage barely "
+            "differed between recipes, and reaching more clusters did not predict success. "
+            "The winners sampled cases least like the current case mix.",
+        ]
+        if gaps:
+            concl.append(
+                f"Nextstrain recovered the simulation's mutation rate from a single random "
+                f"sample to within {max(gaps):.1f}%"
+                + (f" ({len(gaps)} of 5 twins)" if len(gaps) < 5 else "")
+                + ": a readable molecular clock"
+                + (f", though about {ratio:.1f}\u00d7 slower than real SARS-CoV-2."
+                   if ratio else "."))
+        for i, c in enumerate(concl, 1):
+            p.append(f'<circle cx="{xB+18}" cy="{y-9}" r="19" fill="{BLUE}"/>')
+            p.append(txt(xB + 18, y, str(i), 26, "#ffffff", anchor="middle", weight="bold"))
+            y = para(p, xB + 56, y, c, 118, size=25, lead=33, fill=INK)
+            y += 12
+        y = heading(p, xB, y + 6, "References", w=260)
+        for r in ["Chen J, Hoops S, Mortveit HS, et al. EpiHiper \u2014 a high performance "
+                  "computational modeling framework to support epidemic science. "
+                  "PNAS Nexus. 2025;4(1):pgae557.",
+                  "Hadfield J, et al. Nextstrain: real-time tracking of pathogen evolution. "
+                  "Bioinformatics. 2018;34(23):4121\u20134123.",
+                  "Sagulenko P, Puller V, Neher RA. TreeTime: maximum-likelihood "
+                  "phylodynamic analysis. Virus Evolution. 2018;4(1):vex042."]:
+            y = para(p, xB, y, r, 128, size=21, lead=27, fill=INK3)
+            y += 2
+        check("B", y, BOT)
 
-    # ---- column C --------------------------------------------------------
-    xC, wC = 3240, 1480
-    y = embed(p, F("panel_profile.svg"), xC, TOP - 30, wC)
-    y = heading(p, xC, y + 10, "Conclusions")
-    have_sim = {s: v for s, v in C.items() if v["sim"]}
-    pval = "p < 0.01" if hd_t > 4.604 else ("p < 0.05" if hd_t > 2.776 else "n.s.")
-    gaps = [abs(v["sim"] - v["truth"]) / v["truth"] * 100 for v in have_sim.values()]
-    concl = [
-        f"Picking cases so the sample resembles the whole population, with the algorithm "
-        f"free to choose from a four-week pool, reconstructed county-to-county spread best: "
-        f"{hd_m:+.3f} over random, better in {hd_w} of 5 state twins (paired t = "
-        f"{hd_t:.1f}, {pval}).",
-        "Rigid demographic quotas lost to random in every combination tested. The same "
-        "target helps or hurts depending on whether the algorithm is free to choose.",
-        "Common surveillance goals did not explain the winners: tree coverage barely "
-        "differed between recipes, and reaching more clusters did not predict success. "
-        "The winners sampled cases least like the current case mix.",
-    ]
-    if gaps:
-        concl.append(f"Nextstrain recovered the simulation's mutation rate from a single "
-                     f"random sample to within {max(gaps):.1f}%"
-                     + (f" ({len(gaps)} of 5 twins)" if len(gaps) < 5 else "")
-                     + ", so the synthetic genomes carry a readable molecular clock.")
-    for i, c in enumerate(concl, 1):
-        p.append(f'<circle cx="{xC+18}" cy="{y-9}" r="19" fill="{BLUE}"/>')
-        p.append(txt(xC + 18, y, str(i), 26, "#ffffff", anchor="middle", weight="bold"))
-        y = para(p, xC + 56, y, c, 94, size=25, lead=33, fill=INK)
-        y += 14
-    check("C", y, BOT)
+        # ---- column C (alt): cross-tab on top, then the per-recipe profile
+        xC, wC = 3240, 1480
+        y = embed(p, F("panel_crosstab_compact.svg"), xC, TOP - 30, wC)
+        y = embed(p, F("panel_profile_compact.svg"), xC, y + 20, wC)
+        check("C", y, BOT)
+    else:
+        # ---- column B --------------------------------------------------------
+        xB, wB, nB = 1560, 1600, 108
+        y = embed(p, F("panel_framework.svg"), xB, TOP - 30, wB)
+        y = embed(p, F("panel_crosstab.svg"), xB, y + 10, wB)
+        y = heading(p, xB, y + 20, "Do the synthetic genomes behave like real ones?", w=420)
+        have_sim = {s: v for s, v in C.items() if v["sim"]}
+        tips = max((v["tips"] for v in C.values()), default=0)
+        y = para(p, xB, y, f"Each twin's true mutation rate was fitted on {tips:,} synthetic "
+                 "genomes and their dates, with no tree involved. Nextstrain, given one random "
+                 "sample and no rate, estimated it from its own tree:", nB, size=25, lead=34)
+        y += 6
+        for s, v in have_sim.items():
+            gap = abs(v["sim"] - v["truth"]) / v["truth"] * 100
+            p.append(txt(xB + 20, y + 4, STATE_NAME[s], 27, INK, weight="bold"))
+            p.append(txt(xB + 300, y + 4, f"true {v['truth']*1e4:.2f}\u00d710\u207b\u2074", 27, T_BLUE))
+            p.append(txt(xB + 650, y + 4, f"Nextstrain {v['sim']*1e4:.2f}\u00d710\u207b\u2074", 27, T_AQUA))
+            p.append(txt(xB + 1080, y + 4, f"{gap:.1f}% apart", 27, INK, weight="bold"))
+            y += 42
+        if not have_sim:
+            WARN.append("no mu_sim rows: validation box has no comparison")
+        if ratio:
+            y = para(p, xB, y + 4, f"The twin's rate is about {ratio:.1f}\u00d7 slower than real "
+                     "SARS-CoV-2 (\u22488\u00d710\u207b\u2074): fewer mutations give the tree less "
+                     "to work with. Calibrating it upward is ongoing work.", nB, size=23,
+                     lead=31, fill=INK3)
+        y = heading(p, xB, y + 10, "References", w=260)
+        for r in ["Chen J, Hoops S, Mortveit HS, et al. EpiHiper \u2014 a high performance "
+                  "computational modeling framework to support epidemic science. "
+                  "PNAS Nexus. 2025;4(1):pgae557.",
+                  "Hadfield J, et al. Nextstrain: real-time tracking of pathogen evolution. "
+                  "Bioinformatics. 2018;34(23):4121\u20134123.",
+                  "Sagulenko P, Puller V, Neher RA. TreeTime: maximum-likelihood phylodynamic "
+                  "analysis. Virus Evolution. 2018;4(1):vex042."]:
+            ph = r.startswith("[ADD")
+            y = para(p, xB, y, r, 128, size=21, lead=27,
+                     fill="#b4322f" if ph else INK3, weight="bold" if ph else "normal")
+            y += 2
+        check("B", y, BOT)
+
+        # ---- column C --------------------------------------------------------
+        xC, wC = 3240, 1480
+        y = embed(p, F("panel_profile.svg"), xC, TOP - 30, wC)
+        y = heading(p, xC, y + 10, "Conclusions")
+        have_sim = {s: v for s, v in C.items() if v["sim"]}
+        pval = "p < 0.01" if hd_t > 4.604 else ("p < 0.05" if hd_t > 2.776 else "n.s.")
+        gaps = [abs(v["sim"] - v["truth"]) / v["truth"] * 100 for v in have_sim.values()]
+        concl = [
+            f"Picking cases so the sample resembles the whole population, with the algorithm "
+            f"free to choose from a four-week pool, reconstructed county-to-county spread best: "
+            f"{hd_m:+.3f} over random, better in {hd_w} of 5 state twins (paired t = "
+            f"{hd_t:.1f}, {pval}).",
+            "Rigid demographic quotas lost to random in every combination tested. The same "
+            "target helps or hurts depending on whether the algorithm is free to choose.",
+            "Common surveillance goals did not explain the winners: tree coverage barely "
+            "differed between recipes, and reaching more clusters did not predict success. "
+            "The winners sampled cases least like the current case mix.",
+        ]
+        if gaps:
+            concl.append(f"Nextstrain recovered the simulation's mutation rate from a single "
+                         f"random sample to within {max(gaps):.1f}%"
+                         + (f" ({len(gaps)} of 5 twins)" if len(gaps) < 5 else "")
+                         + ", so the synthetic genomes carry a readable molecular clock.")
+        for i, c in enumerate(concl, 1):
+            p.append(f'<circle cx="{xC+18}" cy="{y-9}" r="19" fill="{BLUE}"/>')
+            p.append(txt(xC + 18, y, str(i), 26, "#ffffff", anchor="middle", weight="bold"))
+            y = para(p, xC + 56, y, c, 94, size=25, lead=33, fill=INK)
+            y += 14
+        check("C", y, BOT)
 
     p.append(f'<rect x="0" y="{H-12}" width="{W}" height="12" fill="{BLUE}"/>')
     p.append("</svg>\n")

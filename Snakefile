@@ -521,6 +521,10 @@ rule paint_network:
         painted_prefix=cfg("genetic_painter.painted_prefix", "E2"),
         mutation_model=cfg("genetic_painter.mutation_model", "rate_limit"),
         initial_viral_load=cfg("genetic_painter.initial_viral_load", 10),
+        # Sets the emergent molecular clock, so a change must repaint.
+        peak_viral_load=cfg("genetic_painter.peak_viral_load", None),
+        rt_early_population_threshold=cfg(
+            "genetic_painter.rt_early_population_threshold", None),
         random_seed=cfg("random_seed", 42),
         phylogas_version=_pkg_version("phylogas"),
     shell:
