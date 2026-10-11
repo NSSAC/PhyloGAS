@@ -174,6 +174,22 @@ def getClas():
                              "Sets the emergent molecular clock: higher peak -> more early "
                              "replication cycles -> more mutations per transmission. "
                              "Unset keeps the model default (1e6).")
+    parser.add_argument("--burst_distribution", default=None, dest="burst_distribution",
+                        choices=["uniform", "exponential"],
+                        help="Shape of the per-transmission burst-size draw. "
+                             "'uniform' (default) is random.randint(min,max); "
+                             "'exponential' draws mean mean_burst_size, floored at "
+                             "min_burst_size and capped at max_burst_size.")
+    parser.add_argument("--mean_burst_size", type=float, default=None,
+                        dest="mean_burst_size",
+                        help="Mean of the exponential burst draw. Burst size enters the "
+                             "BASE of the replication-cycle logarithm, so E[cycles] is "
+                             "more sensitive to this than to peak_viral_load.")
+    parser.add_argument("--min_burst_size", type=int, default=None, dest="min_burst_size",
+                        help="Lower bound on burst size (must exceed 1). With a skewed "
+                             "draw this bound, not the cap, sets the tail of E[cycles].")
+    parser.add_argument("--max_burst_size", type=int, default=None, dest="max_burst_size",
+                        help="Upper bound on burst size.")
     parser.add_argument("--rt_early_population_threshold", type=float, default=None,
                         dest="rt_early_population_threshold",
                         help="Fraction of peak viral load that ends the 'early' phase "
@@ -1219,10 +1235,18 @@ def generate_sequences(args):
         mutational_model = model_registry["rate_limited"](
             args.initial_viral_load, thresh, prob_matrix, LETTERS,
             peak_viral_load=args.peak_viral_load,
-            rt_early_population_threshold=args.rt_early_population_threshold)
-        print(f"  rate-limited model: initial={mutational_model.initial_viral_load:g} "
-              f"peak={mutational_model.peak_viral_load:g} "
-              f"early_threshold={mutational_model.rt_early_population_threshold:g}",
+            rt_early_population_threshold=args.rt_early_population_threshold,
+            burst_distribution=args.burst_distribution,
+            mean_burst_size=args.mean_burst_size,
+            min_burst_size=args.min_burst_size,
+            max_burst_size=args.max_burst_size)
+        _m = mutational_model
+        _burst = (f"exponential(mean={_m.mean_burst_size:g})"
+                  if _m.burst_distribution == "exponential" else "uniform")
+        print(f"  rate-limited model: initial={_m.initial_viral_load:g} "
+              f"peak={_m.peak_viral_load:g} "
+              f"early_threshold={_m.rt_early_population_threshold:g} "
+              f"burst={_burst} in [{_m.min_burst_size},{_m.max_burst_size}]",
               file=sys.stderr)
     else:
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)

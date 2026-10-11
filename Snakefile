@@ -525,6 +525,10 @@ rule paint_network:
         peak_viral_load=cfg("genetic_painter.peak_viral_load", None),
         rt_early_population_threshold=cfg(
             "genetic_painter.rt_early_population_threshold", None),
+        burst_distribution=cfg("genetic_painter.burst_distribution", None),
+        mean_burst_size=cfg("genetic_painter.mean_burst_size", None),
+        min_burst_size=cfg("genetic_painter.min_burst_size", None),
+        max_burst_size=cfg("genetic_painter.max_burst_size", None),
         random_seed=cfg("random_seed", 42),
         phylogas_version=_pkg_version("phylogas"),
     shell:

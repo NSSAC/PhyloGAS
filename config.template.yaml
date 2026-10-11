@@ -289,7 +289,31 @@ genetic_painter:
   # simple     : per-site threshold draw
   # poor       : 50% random substitution null model
   mutation_model: "rate_limit"
-  initial_viral_load: 10        # transmission bottleneck
+  # Transmission bottleneck: founding virions per transmission. Genomic
+  # studies of SARS-CoV-2 put Nb at roughly 1-5 with a median near 1-2
+  # (Popa et al. 2020; Lythgoe et al. 2021; Martin & Koelle 2021).
+  initial_viral_load: 2
+
+  # Burst size: virions per infected cell per replication cycle. It enters the
+  # BASE of the replication-cycle logarithm, so the emergent clock is more
+  # sensitive to this than to peak_viral_load. "uniform" is the historical
+  # draw and is what an unset config uses.
+  #
+  #   draw                         E[w]  median   E[cycles]   emergent subs/yr
+  #   uniform 10-1000               505     505       4.01        ~20
+  #   exponential mean 100          101      70       5.72        ~28
+  #   exponential mean 250          245     173       4.83        ~24
+  #
+  # Real SARS-CoV-2 is ~24. 100 is the biologically motivated mean rather than
+  # the one that lands on that number -- picking the mean to hit the target
+  # would be fitting a free parameter. Expect some overshoot in the projection
+  # and some of it absorbed by saturation at hotspots, which these figures do
+  # not model. Only ~0.004% of draws reach the cap at mean 100, while ~9.5%
+  # hit the floor, so min_burst_size is the bound that matters.
+  burst_distribution: "exponential"
+  mean_burst_size: 100
+  min_burst_size: 10
+  max_burst_size: 1000
 
   # Peak within-host virion count. This sets the emergent molecular clock:
   # the early-growth target is rt_early_population_threshold x peak_viral_load,

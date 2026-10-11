@@ -34,11 +34,43 @@ class RateLimitedMutationalModel(_MutationalModel):
     # Probability a mutation occurring in "early" phase (defined by cycles) becomes major
     rt_early_mutation_probability = 1.0
     # Min/max burst size for sampling
+    # Burst size: virions produced per infected cell per replication cycle.
+    #
+    # "uniform" is the historical draw, random.randint(min, max). It is kept as
+    # the default so an unset config reproduces earlier runs bit for bit,
+    # including the RNG stream.
+    #
+    # "exponential" draws from an exponential with mean mean_burst_size,
+    # floored at min_burst_size and capped at max_burst_size. Real burst-size
+    # distributions are right-skewed; a uniform draw represents them poorly at
+    # either end. Note which bound matters: at mean 100 only ~0.004% of draws
+    # exceed the 1000 cap, while ~9.5% fall under the floor of 10, so the floor
+    # sets the heavy tail of E[cycles], not the cap.
+    #
+    # E[cycles] is far more sensitive to this than to peak_viral_load, because
+    # burst size sits in the BASE of ceil(log_w(target/initial)). With
+    # initial=2, peak=1e11 and the 1% threshold:
+    #
+    #   draw                         E[w]  median   E[cycles]   emergent subs/yr
+    #   uniform 10-1000               505     505       4.01        ~20
+    #   exponential mean 100          101      70       5.72        ~28
+    #   exponential mean 250          245     173       4.83        ~24
+    #
+    # Real SARS-CoV-2 is ~24. Choosing the mean to land on that number would be
+    # fitting a free parameter to the target; 100 is the biologically motivated
+    # value and the emergent rate is left to come out where it comes out. The
+    # subs/yr column also assumes the measured 0.54 observable/raw saturation
+    # fraction holds at higher rates, which it will not -- expect the realised
+    # figure to sit below the projection.
+    burst_distribution = "uniform"      # "uniform" | "exponential"
+    mean_burst_size = 100.0             # exponential only
     min_burst_size = 10
     max_burst_size = 1000
 
     def __init__(self, initial_viral_load, thresholds, prob_matrix, letters_to_use,
-                 peak_viral_load=None, rt_early_population_threshold=None):
+                 peak_viral_load=None, rt_early_population_threshold=None,
+                 burst_distribution=None, mean_burst_size=None,
+                 min_burst_size=None, max_burst_size=None):
         self.initial_viral_load = initial_viral_load
         # Instance attributes shadow the class defaults when supplied, so an
         # unset config keeps the historical behaviour exactly.
@@ -46,6 +78,24 @@ class RateLimitedMutationalModel(_MutationalModel):
             self.peak_viral_load = float(peak_viral_load)
         if rt_early_population_threshold is not None:
             self.rt_early_population_threshold = float(rt_early_population_threshold)
+        if burst_distribution is not None:
+            d = str(burst_distribution).strip().lower()
+            if d not in ("uniform", "exponential"):
+                raise ValueError(
+                    f"burst_distribution must be 'uniform' or 'exponential', got {d!r}")
+            self.burst_distribution = d
+        if mean_burst_size is not None:
+            self.mean_burst_size = float(mean_burst_size)
+        if min_burst_size is not None:
+            self.min_burst_size = int(min_burst_size)
+        if max_burst_size is not None:
+            self.max_burst_size = int(max_burst_size)
+        if self.min_burst_size > self.max_burst_size:
+            raise ValueError("min_burst_size exceeds max_burst_size")
+        if self.min_burst_size <= 1:
+            # calculate_replication_cycles returns 1 for burst <= 1, which
+            # silently collapses the cycle count rather than erroring.
+            raise ValueError("min_burst_size must be greater than 1")
         self.thresholds = np.asarray(thresholds, dtype=np.float64)
         self.prob_matrix = prob_matrix
         self.letters_to_use = np.asarray(letters_to_use)
@@ -104,7 +154,7 @@ class RateLimitedMutationalModel(_MutationalModel):
 
     def mutate(self, sequence):
         # --- Rate Limiting Logic ---
-        burst_size = random.randint(self.min_burst_size, self.max_burst_size)
+        burst_size = self._draw_burst()
         effective_initial_load = self.initial_viral_load
 
         replication_cycles_for_early_phase = self.calculate_replication_cycles(
@@ -143,6 +193,18 @@ class RateLimitedMutationalModel(_MutationalModel):
         change_indices = np.unique(picks)
 
         return self.weighted_change(sequence, change_indices)
+
+    def _draw_burst(self):
+        """One burst size for this transmission.
+
+        The uniform branch keeps random.randint so that an unset config draws
+        from the same RNG stream as before and reproduces earlier runs; the
+        exponential branch uses this model's own seeded Generator.
+        """
+        if self.burst_distribution == "exponential":
+            w = self._rng.exponential(self.mean_burst_size)
+            return int(min(max(w, self.min_burst_size), self.max_burst_size))
+        return random.randint(self.min_burst_size, self.max_burst_size)
 
     def weighted_change(self, sequence_array, change_indices):
         """

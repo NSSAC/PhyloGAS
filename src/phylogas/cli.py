@@ -153,6 +153,10 @@ def cmd_paint(args) -> int:
         ("--peak_viral_load", pick(gp + "peak_viral_load", None)),
         ("--rt_early_population_threshold",
          pick(gp + "rt_early_population_threshold", None)),
+        ("--burst_distribution", pick(gp + "burst_distribution", None)),
+        ("--mean_burst_size", pick(gp + "mean_burst_size", None)),
+        ("--min_burst_size", pick(gp + "min_burst_size", None)),
+        ("--max_burst_size", pick(gp + "max_burst_size", None)),
         ("--location", location),
         ("--reference_location", reference_location),
     ]
