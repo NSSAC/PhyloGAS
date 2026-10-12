@@ -106,6 +106,50 @@ Implementing it needs the painter to account for the mutations it places per
 record, which it does not currently do, so row 5 of the table below is not
 runnable yet.
 
+### 1b. The generation interval is the clock's denominator
+
+The emergent clock factors into three terms:
+
+    observed subs/genome/day  =  lambda * s / GI
+
+`lambda` is mutations placed per transmission and `s` the fraction of them
+still visible as differences; both belong to the painter and respond to
+`mean_burst_size`, `initial_viral_load` and `peak_viral_load`. `GI` -- the
+generation interval, infector exposure to infectee exposure -- belongs
+entirely to EpiHiper. Nothing downstream of the ABM can change it, which makes
+it the one term we must measure rather than tune, and the one term that will
+move if the disease-progression parameterisation is ever changed.
+
+`phylogas benchmark sequence` now reports it alongside parent->child
+divergence, computed over every transmission edge in the all-events table.
+**Measured on `va_delta_wave`: mean 6.88 d, median 6, IQR 5-8, range 1-17**
+over all 5,292,666 edges, with no edge failing to join an infector row.
+
+Two notes on what that number is:
+
+* It is the **generation** interval, not the serial interval. Serial is onset
+  to onset and would need the symptom columns; the clock wants transmission to
+  transmission, which is what exposure-to-exposure gives.
+* It is the **realised** interval of the run, not a configured one. EpiHiper's
+  progression model produces the distribution; we observe it.
+
+The interval is read from the `exposure_tick` column on each row and joined
+through an `alias_pid -> exposure_tick` table, never parsed back out of the
+`"{pid}.{tick}"` alias. That format is real -- it holds on all 5.3M rows -- but
+it is an undocumented coupling between the painter's FASTA naming, TwinSampler's
+columns and every consumer, and a consumer that silently depends on it will
+break quietly when it changes. `check_alias_convention` therefore asserts it
+once, in the one place where the tick is available both ways, and warns if it
+breaks: the intervals are unaffected, but matching a genome to an infection is
+not, and *that* is the dependency worth a loud failure. A table without
+`exposure_tick` falls back to `sim_tick` with a warning -- that is the
+state-transition tick, and it overstated the same run's interval by 0.31 d
+(7.19 vs 6.88) -- and a table with no tick column at all reports nothing rather
+than reconstructing one.
+
+Ticks are days. `exposure_tick` and `exposure_date` agree to the day across
+all 5.3M rows with zero residual, so `--days-per-tick` defaults to 1.
+
 ### Why root-to-tip and not something cleverer
 
 It is what TempEst and TreeTime regress, and what the ~8e-4 subs/site/year

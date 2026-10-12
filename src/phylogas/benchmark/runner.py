@@ -18,22 +18,42 @@ from .scoring import score_matrices, score_offdiagonals
 # --------------------------------------------------------------------------
 # shared IO
 # --------------------------------------------------------------------------
-def read_infections(path: str) -> pd.DataFrame:
+def read_infections(path: str, usecols: list[str] | None = None) -> pd.DataFrame:
     """Read the ABM all-events file (the transmission ground truth).
 
     Uses the C parser explicitly. BeyondBaseline read this with
     ``sep=None, engine="python"``, which forces the sniffer and the pure-Python
     parser -- about 2.8x slower on a 300k-row file.
+
+    `usecols` is a *wish list*, not a requirement: it is intersected with the
+    header, so a caller may name a column that only some vintages of the table
+    carry without having to probe for it first. Worth using -- the full table
+    is 46 mostly-string columns and about 8.6 GB in memory at 5.3M rows, while
+    the three columns a transmission edge actually needs are under 1 GB. That
+    difference is what decides whether several states fit on one node.
     """
     dtypes = {
         "alias_pid": str, "alias_contact": str,
         "sim_pid": str, "pid": str, "contact_pid": str,
     }
+    cols = None
+    if usecols:
+        header = pd.read_csv(path, nrows=0)
+        have = {c.strip() for c in header.columns}
+        cols = [c for c in usecols if c in have]
+        missing = [c for c in usecols if c not in have]
+        if not cols:
+            raise SystemExit(
+                f"ERROR: none of the requested columns are in {path}\n"
+                f"  wanted: {', '.join(usecols)}\n"
+                f"  have:   {', '.join(sorted(have))}")
+        if missing:
+            print(f"  (not in this table, skipped: {', '.join(missing)})")
     try:
-        df = pd.read_csv(path, dtype=dtypes)
+        df = pd.read_csv(path, dtype=dtypes, usecols=cols)
     except (ValueError, pd.errors.ParserError):
         # Fall back to sniffing only if the comma-delimited read fails.
-        df = pd.read_csv(path, sep=None, engine="python", dtype=dtypes)
+        df = pd.read_csv(path, sep=None, engine="python", dtype=dtypes, usecols=cols)
     df.columns = [c.strip() for c in df.columns]
     return df
 
@@ -137,6 +157,138 @@ def benchmark_mugration(
 
 
 # --------------------------------------------------------------------------
+# realised generation interval
+# --------------------------------------------------------------------------
+# Candidate tick columns, best first. `exposure_tick` is the one that means
+# "when this infection was infected"; `sim_tick` is the tick of the row's
+# state transition, which is later by the incubation period and varies between
+# rows for the same infection. Using sim_tick would measure neither the
+# generation nor the serial interval, so it is only a fallback for an older
+# table that lacks exposure_tick.
+_GI_TICK_COLUMNS = ("exposure_tick", "sim_tick", "tick")
+
+
+def _gi_tick_column(inf: pd.DataFrame) -> str | None:
+    return next((c for c in _GI_TICK_COLUMNS if c in inf.columns), None)
+
+
+def check_alias_convention(inf: pd.DataFrame, tick_col: str, n: int = 50_000) -> bool:
+    """Confirm that `alias_pid` really is "{pid}.{exposure_tick}".
+
+    Nothing in the generation-interval code below depends on that format -- it
+    reads ticks from their own column. But `benchmark_sequence` does depend on
+    it, because the painted FASTA names each genome with the alias and the only
+    way to match a genome to an infection is by that string. So rather than
+    leave the convention an unstated coupling between the painter, TwinSampler
+    and every consumer, check it here where the tick is available both ways and
+    say so when it breaks. A warning, not an error: a mismatch makes the genome
+    matching suspect, not the intervals.
+    """
+    sub = inf if len(inf) <= n else inf.sample(n, random_state=0)
+    suffix = pd.to_numeric(sub["alias_pid"].astype(str).str.rsplit(".", n=1).str[-1],
+                           errors="coerce")
+    own = pd.to_numeric(sub[tick_col], errors="coerce")
+    bad = int((suffix != own).sum())
+    if bad:
+        print(f"  WARNING: alias_pid suffix disagrees with {tick_col} on "
+              f"{bad:,}/{len(sub):,} checked rows. The intervals below are "
+              f"unaffected, but genome matching by alias is no longer reliable.",
+              file=sys.stderr)
+    return bad == 0
+
+
+def generation_interval(
+    inf: pd.DataFrame,
+    tick_col: str | None = None,
+    days_per_tick: float = 1.0,
+    plausible_window: int | None = 60,
+) -> dict:
+    """Realised infector->infectee interval, read from columns not from ids.
+
+    This is the **generation** interval: exposure of the infector to exposure
+    of the infectee. It is not the serial interval, which is onset to onset and
+    would need the symptom columns. And it is the *realised* interval of this
+    run, not a configured one -- EpiHiper's disease progression produces it, so
+    it is a measurement of the ABM rather than a parameter of ours.
+
+    It matters because it is the denominator of the molecular clock:
+    ``subs/genome/day = mutations-per-transmission x saturation / GI``. Two of
+    those three come from the painter; this one is set entirely upstream, so
+    assuming it rather than measuring it silently misattributes the whole
+    difference to the mutational model.
+
+    Each row carries its own infection's tick, so the infectee's exposure needs
+    no lookup at all. The infector's does, and the lookup is a join of
+    ``alias_contact`` against a ``{alias_pid -> tick}`` table -- never a parse
+    of the tick back out of the id string. `plausible_window` then bounds how
+    far apart a joined pair may be: anything outside it is reported rather than
+    dropped, since a long tail here would be a real finding and a *negative*
+    interval would mean the join had matched the wrong row.
+    """
+    tick_col = tick_col or _gi_tick_column(inf)
+    if tick_col is None or "alias_contact" not in inf.columns:
+        print(f"  generation interval: skipped (no tick column; looked for "
+              f"{', '.join(_GI_TICK_COLUMNS)})", file=sys.stderr)
+        return {}
+    if tick_col != "exposure_tick":
+        print(f"  WARNING: no exposure_tick column; falling back to '{tick_col}', "
+              f"which is the state-transition tick and overstates the interval.",
+              file=sys.stderr)
+
+    check_alias_convention(inf, tick_col)
+
+    # One tick per infection. The all-events table is already one row per
+    # alias_pid, but an older or filtered table can carry a row per state
+    # transition, and exposure_tick is constant within an infection either way.
+    own = (inf.assign(_t=pd.to_numeric(inf[tick_col], errors="coerce"))
+              .dropna(subset=["_t"])
+              .drop_duplicates("alias_pid")
+              .set_index("alias_pid")["_t"])
+
+    parent = inf["alias_contact"].astype(str)
+    edges = ~parent.isin(["-1", "nan", "", "None"]) & inf["alias_contact"].notna()
+    child_t = pd.to_numeric(inf.loc[edges, tick_col], errors="coerce")
+    parent_t = parent[edges].map(own)
+
+    gi = (child_t - parent_t).dropna()
+    n_edges, n_joined = int(edges.sum()), len(gi)
+    if not n_joined:
+        print("  generation interval: no edge joined an infector row", file=sys.stderr)
+        return {"gi_edges": n_edges, "gi_pairs_joined": 0}
+
+    g = gi.to_numpy(dtype=float) * days_per_tick
+    out = {
+        "gi_edges": n_edges,
+        "gi_pairs_joined": n_joined,
+        "gi_parent_unmatched": n_edges - n_joined,
+        "gi_mean_days": float(g.mean()),
+        "gi_median_days": float(np.median(g)),
+        "gi_q25_days": float(np.percentile(g, 25)),
+        "gi_q75_days": float(np.percentile(g, 75)),
+        "gi_min_days": float(g.min()),
+        "gi_max_days": float(g.max()),
+        "gi_nonpositive": int((g <= 0).sum()),
+    }
+    if plausible_window:
+        out["gi_outside_window"] = int((g > plausible_window * days_per_tick).sum())
+
+    print("\nRealised generation interval (infector exposure -> infectee exposure):")
+    print(f"  pairs joined             {n_joined:,} of {n_edges:,} edges"
+          f" ({out['gi_parent_unmatched']:,} infector row absent)")
+    print(f"  mean / median            {out['gi_mean_days']:.2f} / "
+          f"{out['gi_median_days']:.1f} days")
+    print(f"  IQR                      {out['gi_q25_days']:.0f}-{out['gi_q75_days']:.0f}"
+          f"  (range {out['gi_min_days']:.0f}-{out['gi_max_days']:.0f})")
+    if out["gi_nonpositive"]:
+        print(f"  WARNING: {out['gi_nonpositive']:,} pairs have an infectee exposed no "
+              f"later than its infector, which means the join matched a wrong row.")
+    if out.get("gi_outside_window"):
+        print(f"  NOTE: {out['gi_outside_window']:,} pairs exceed the {plausible_window}-tick "
+              f"plausibility window; kept, not dropped.")
+    return out
+
+
+# --------------------------------------------------------------------------
 # phylogas benchmark sequence
 # --------------------------------------------------------------------------
 def benchmark_sequence(
@@ -144,12 +296,20 @@ def benchmark_sequence(
     infections: str,
     out_csv: str | None = None,
     max_pairs: int | None = 200_000,
+    days_per_tick: float = 1.0,
+    gi_window: int | None = 60,
 ) -> pd.DataFrame:
     """Measure realised parent->child divergence in the painted genomes.
 
     This is the check that surfaced the re-importation bug: every transmission
     edge should show a small number of substitutions. A heavy tail means
     children are being handed the wrong parent genome.
+
+    It also reports the realised generation interval over the same edges,
+    because the two together are the molecular clock: substitutions per
+    transmission divided by days per transmission is subs/genome/day. Measuring
+    them from one pass over one file is what keeps the numerator and the
+    denominator describing the same run.
     """
     import gzip
     import lzma
@@ -157,9 +317,19 @@ def benchmark_sequence(
     from Bio import SeqIO
 
     print(f"Infections : {infections}")
-    inf = read_infections(infections)
+    # Only the edge and its tick: this rule never touches the demographic
+    # columns, and loading all 46 of them costs ~8.6 GB at 5.3M rows against
+    # ~0.8 GB for these three. The genome dict below is the real floor
+    # (~11.6 GB for the pairs of one state), so trimming here is what lets
+    # several states share a node.
+    inf = read_infections(infections, usecols=["alias_pid", "alias_contact",
+                                               *_GI_TICK_COLUMNS])
     if "alias_pid" not in inf.columns or "alias_contact" not in inf.columns:
         raise SystemExit("ERROR: the infections file needs alias_pid and alias_contact.")
+
+    # Measured before the pair subsampling below, so the interval is over every
+    # edge while the divergence is over a sample of them.
+    gi = generation_interval(inf, days_per_tick=days_per_tick, plausible_window=gi_window)
 
     # Each row is one infection: alias_pid is its id and alias_contact its
     # infector's infection id -- the same "{pid}.{tick}" key the painted FASTA
@@ -224,6 +394,18 @@ def benchmark_sequence(
         print(f"  {k:24s} {v}")
     if summary["pairs_over_8"]:
         print("  WARNING: pairs with >8 substitutions suggest mis-assigned parent genomes.")
+
+    # Added after the print loop above, which would otherwise repeat the
+    # interval lines generation_interval has already written.
+    if gi.get("gi_mean_days"):
+        # The emergent clock, assembled from the two halves rather than
+        # asserted: this is what a tree-free root-to-tip regression should find.
+        per_day = summary["mean_substitutions"] / gi["gi_mean_days"]
+        summary["implied_subs_per_genome_per_day"] = per_day
+        summary["implied_subs_per_genome_per_year"] = per_day * 365.0
+        print(f"\nImplied clock = {summary['mean_substitutions']:.3f} subs/transmission "
+              f"/ {gi['gi_mean_days']:.2f} d = {per_day * 365.0:.2f} subs/genome/yr")
+    summary.update(gi)
 
     df = pd.DataFrame([summary])
     if out_csv:

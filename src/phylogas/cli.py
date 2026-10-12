@@ -1431,6 +1431,7 @@ def cmd_benchmark(args) -> int:
         runner.benchmark_sequence(
             painted_fasta=args.painted, infections=args.infections,
             out_csv=args.out, max_pairs=args.max_pairs,
+            days_per_tick=args.days_per_tick, gi_window=args.gi_window,
         )
     elif args.what == "compare":
         from .benchmark import runner
@@ -2357,6 +2358,14 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--infections", required=True, help="ABM all-events transmission file")
     b.add_argument("--out", default=None)
     b.add_argument("--max-pairs", dest="max_pairs", type=int, default=200000)
+    b.add_argument("--days-per-tick", dest="days_per_tick", type=float, default=1.0,
+                   help="Tick length, for the generation interval. EpiHiper ticks "
+                        "are days: exposure_tick and exposure_date agree to the day "
+                        "with no residual, so leave this at 1 unless that changes.")
+    b.add_argument("--gi-window", dest="gi_window", type=int, default=60,
+                   help="Plausibility window in ticks for the generation interval. "
+                        "Pairs beyond it are counted and reported, never dropped (0 "
+                        "to skip the check).")
     b.set_defaults(func=cmd_benchmark)
 
     b = bsub.add_parser("compare",
