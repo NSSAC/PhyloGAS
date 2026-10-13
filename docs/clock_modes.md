@@ -108,6 +108,11 @@ runnable yet.
 
 ### 1b. The generation interval is the clock's denominator
 
+> For the full accounting of which terms the ABM owns versus the painter --
+> including the identity validated at two parameter settings and which measures
+> survive an ABM change -- see **`abm_contribution.md`**.
+
+
 The emergent clock factors into three terms:
 
     observed subs/genome/day  =  lambda * s / GI
@@ -122,8 +127,26 @@ move if the disease-progression parameterisation is ever changed.
 
 `phylogas benchmark sequence` now reports it alongside parent->child
 divergence, computed over every transmission edge in the all-events table.
-**Measured on `va_delta_wave`: mean 6.88 d, median 6, IQR 5-8, range 1-17**
-over all 5,292,666 edges, with no edge failing to join an infector row.
+**Measured across all five twins: 6.76-6.93 d (mean 6.87), median 6, IQR 5-8,
+range 1-17**, over 23.7M transmission edges in total. In every state, all edges
+joined an infector row, none gave a non-positive interval, and none exceeded the
+60-tick plausibility window:
+
+| state | edges | GI (d) | subs/transmission | implied subs/genome/yr |
+|---|---|---|---|---|
+| ga | 6,126,993 | 6.93 | 0.583 | 30.71 |
+| ma | 3,861,499 | 6.88 | 0.582 | 30.87 |
+| mn | 4,287,236 | 6.76 | 0.582 | 31.40 |
+| va | 5,292,666 | 6.88 | 0.584 | 30.99 |
+| wa | 4,166,779 | 6.91 | 0.586 | 30.98 |
+
+Epidemic size varies 59% across these (ma to ga) while both per-transmission
+quantities barely move, which is the useful part: **the painter contributes
+0.7% of cross-state spread and the ABM contributes 2.5%.** The implied clock's
+2.2% spread is almost entirely the interval's -- mn has the shortest interval
+and the fastest clock, and 0.582/6.76*365 = 31.42 recovers its value from the
+denominator alone. So when the emergent clock shifts between twins, the
+generation interval is the first thing to look at, not the mutational model.
 
 Two notes on what that number is:
 
@@ -149,6 +172,67 @@ than reconstructing one.
 
 Ticks are days. `exposure_tick` and `exposure_date` agree to the day across
 all 5.3M rows with zero residual, so `--days-per-tick` defaults to 1.
+
+### 1c. Saturation, without the painter accounting
+
+Row 5 of the table below used to read "not implemented", because comparing
+`mu_placed` to `mu_truth` needs the painter to count the mutations it places
+and it does not. The generation interval supplies a way round that.
+
+One-step parent->child divergence is a count of *observable differences* over a
+single transmission, so in principle it undercounts two hits at the same site
+just as `mu_truth` does. But at 0.583 substitutions over 29,903 sites the
+within-transmission collision rate is 0.583^2/29903 = **1.1e-5**, so over one
+step the two coincide to five decimal places. One-step divergence therefore
+*is* the placed-mutation count for practical purposes, and dividing it by the
+interval gives the clock a root-to-tip regression would find if nothing
+saturated along the way.
+
+Measured across the five twins (`mu_truth` from `clock_estimates.csv`,
+divergence and interval from `sequence_divergence.csv`):
+
+| state | mu_truth (subs/genome/day) | implied one-step | ratio | lost | r2 of mu_truth fit |
+|---|---|---|---|---|---|
+| ga | 0.069765 | 0.084127 | 0.829 | 17.1% | 0.52 |
+| ma | 0.075831 | 0.084593 | 0.896 | 10.4% | 0.37 |
+| mn | 0.070702 | 0.086095 | 0.821 | 17.9% | 0.47 |
+| va | 0.072944 | 0.084884 | 0.859 | 14.1% | 0.53 |
+| wa | 0.071993 | 0.084805 | 0.849 | 15.1% | 0.41 |
+| **mean** | **0.072247** | **0.084895** | **0.851** | **14.9%** | |
+
+So roughly **15% of the one-step signal is lost** to back-mutation and
+homoplasy along root-to-tip paths -- a measurement rather than an assumption
+for the first time.
+
+**Do not quote that as a tight constant.** The per-state range is 10.4-17.9%,
+which is far wider than the 0.7% spread in one-step divergence or the 2.5%
+spread in the interval. The loose term is `mu_truth` itself: those regressions
+carry r2 of only 0.36-0.53, and ma is the outlier on both its `mu_truth`
+(9.30e-4, the highest) and its ratio (0.896). Treat ~15% as the central
+estimate and the spread as regression noise in the root-to-tip fit, not as real
+variation in saturation between twins.
+
+The direction was forced, though, and that is the part worth trusting. Before
+the burst/viral-load recalibration the same ratio was **0.908 (9.2% lost)**,
+from 0.205 subs/transmission against a `mu_truth` of 9.90 subs/genome/yr.
+Raising mutations per transmission 2.8x puts more hits on the same sites, so
+the loss had to grow. Holding the old ratio fixed under-predicted the new
+divergence by 6.7% (predicted 0.547, observed 0.583); releasing it recovers the
+observed value exactly, which is what makes the 0.908 -> 0.851 shift a
+measurement of saturation rather than a residual.
+
+Practical consequence for reporting: **the implied figure is not comparable to
+the ~8e-4 subs/site/year literature rate**, which is itself a root-to-tip
+estimate. `mu_truth` is the comparable quantity -- mean **8.864e-4, 1.108x
+real**, range 8.56e-4 to 9.30e-4 -- while the implied figure (30.99
+subs/genome/yr, or 1.04e-3 per site) sits above it by exactly the saturation
+factor. Quoting the wrong one of the two overstates the twin's clock by ~15%.
+
+> Read `clock_estimates.csv` with a csv-aware parser. The `method` column
+> contains a comma, so `awk -F,` shifts every later field and will hand you
+> `slope_subs_per_genome_per_day` where you asked for
+> `rate_subs_per_site_per_year` -- that is how a draft of this section once
+> reported 2181 subs/genome/yr.
 
 ### Why root-to-tip and not something cleverer
 
@@ -237,7 +321,7 @@ the sampler.
 | 2 | Does our simulation evolve like SARS-CoV-2 does? | generative | `all_infections` | `mu_truth` vs `mu_real` |
 | 3 | How much does each sampling strategy bias the rate estimate? | generative | every `strategy` arm | `mu_sim(arm)` vs `mu_truth` |
 | 4 | Would our simulated outbreak look right on an Auspice dashboard? | operational | `strategy` arms | trees, clades, traits vs a real build |
-| 5 | Are the simulated sequences saturating? | n/a | `all_infections` | `mu_placed` vs `mu_truth` — **not implemented** |
+| 5 | Are the simulated sequences saturating? | n/a | `all_infections` | one-step divergence / GI vs `mu_truth` — **see 1c** |
 | 6 | What rate did the painter actually generate? | generative | `all_infections` | `mu_lineage` vs the literature ~8e-4 |
 | 7 | How much of the wave's apparent rate is importation? | generative | `all_infections` | `w`, with `mu_lineage` vs `mu_between_chains` |
 | 8 | Would real surveillance of this wave measure the same? | generative | `all_infections` | `mu_seed_trend` vs `mu_seed_trend_weighted` |
