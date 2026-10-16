@@ -43,7 +43,7 @@ git clone https://github.com/NSSAC/PhyloGAS.git
 cd PhyloGAS
 
 # Create the environment and install all dependencies
-mamba env create -f environment.yml
+conda env create -f environment.yml
 conda activate phylogas_env
 
 # Install PhyloGAS itself (editable)
