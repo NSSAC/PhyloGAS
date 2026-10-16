@@ -464,3 +464,90 @@ def test_benchmark_defaults_to_auto():
     c = Config({"ascertainment": {"output": "nowhere/linelist.csv"}})
     p, why = c.resolve_benchmark_input("benchmark.allevents", "allevents")
     assert p is None and "auto" in why
+
+
+def _rate_limited(**kw):
+    """A rate-limited model at the configured viral loads, full genome length."""
+    import numpy as np
+
+    from phylogas.painter.mutational_models import registry
+
+    n = 29903
+    thresholds = np.full(n, 100.0)
+    thresholds[:3000] = 70.0
+    letters = np.array(list("ACGTNRKSYMWBHDV"))
+    prob = np.zeros((len(letters), n))
+    prob[:4, :] = 0.25
+    kw.setdefault("peak_viral_load", 1.0e11)
+    kw.setdefault("rt_early_population_threshold", 0.01)
+    return registry["rate_limited"](
+        kw.pop("initial_viral_load", 2), thresholds, prob, letters, **kw)
+
+
+def test_burst_distributions_give_expected_lambda():
+    """Each burst draw implies a known substitutions-per-transmission.
+
+    lambda is what sets both the emergent clock (lambda / generation interval)
+    and the parent->child divergence a tree works from, so a silent change here
+    moves every downstream genomic result. The numbers come from the tables in
+    rate_limited.py and the configs; if this test fails, those are stale too.
+    """
+    cases = [
+        (dict(), 0.408),                                        # uniform default
+        (dict(burst_distribution="exponential", mean_burst_size=100,
+              min_burst_size=10, max_burst_size=1000), 0.582),
+        (dict(burst_distribution="lognormal", median_burst_size=1000,
+              burst_sigma=0.7, min_burst_size=100,
+              max_burst_size=10000), 0.343),
+    ]
+    for kw, expected in cases:
+        got = _rate_limited(**kw).burst_summary()["lambda_per_transmission"]
+        assert abs(got - expected) < 0.01, f"{kw} -> lambda {got:.4f}, expected {expected}"
+
+
+def test_burst_summary_does_not_disturb_the_rng_stream():
+    """Reporting lambda must not change the painting.
+
+    burst_summary draws tens of thousands of burst sizes. If it took them from
+    the model's own Generator it would shift every subsequent mutation draw, so
+    merely logging the configuration would silently produce different genomes.
+    """
+    import random
+
+    import numpy as np
+
+    kw = dict(burst_distribution="lognormal", median_burst_size=1000,
+              burst_sigma=0.7, min_burst_size=100, max_burst_size=10000)
+
+    # One model per arm, five draws from it. Building a fresh model per draw
+    # would reseed its Generator from the global stream each time and compare
+    # two different things.
+    random.seed(42)
+    np.random.seed(42)
+    model = _rate_limited(**kw)
+    without = [model._draw_burst() for _ in range(5)]
+
+    random.seed(42)
+    np.random.seed(42)
+    model = _rate_limited(**kw)
+    model.burst_summary()
+    after = [model._draw_burst() for _ in range(5)]
+
+    assert without == after, f"burst_summary shifted the stream: {without} vs {after}"
+
+
+def test_burst_configuration_is_validated():
+    import pytest
+
+    bad = [
+        dict(burst_distribution="normal"),
+        dict(burst_distribution="lognormal", burst_sigma=0.0),
+        dict(burst_distribution="lognormal", median_burst_size=1.0),
+        # burst <= 1 makes calculate_replication_cycles return 1, collapsing
+        # the cycle count silently instead of erroring.
+        dict(min_burst_size=1),
+        dict(min_burst_size=500, max_burst_size=100),
+    ]
+    for kw in bad:
+        with pytest.raises(ValueError):
+            _rate_limited(**kw)

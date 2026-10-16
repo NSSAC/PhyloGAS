@@ -155,6 +155,8 @@ def cmd_paint(args) -> int:
          pick(gp + "rt_early_population_threshold", None)),
         ("--burst_distribution", pick(gp + "burst_distribution", None)),
         ("--mean_burst_size", pick(gp + "mean_burst_size", None)),
+        ("--median_burst_size", pick(gp + "median_burst_size", None)),
+        ("--burst_sigma", pick(gp + "burst_sigma", None)),
         ("--min_burst_size", pick(gp + "min_burst_size", None)),
         ("--max_burst_size", pick(gp + "max_burst_size", None)),
         ("--location", location),

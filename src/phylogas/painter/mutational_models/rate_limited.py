@@ -62,15 +62,53 @@ class RateLimitedMutationalModel(_MutationalModel):
     # subs/yr column also assumes the measured 0.54 observable/raw saturation
     # fraction holds at higher rates, which it will not -- expect the realised
     # figure to sit below the projection.
-    burst_distribution = "uniform"      # "uniform" | "exponential"
+    # "lognormal" is the literature-grounded option. Bar-On et al. (eLife
+    # 2020, SARS-CoV-2 by the numbers) put coronavirus burst size at ~10^3
+    # virions per cell, as an ORDER OF MAGNITUDE -- their underlying figure is
+    # 6-7x10^2 PFU/cell measured for MHV, a murine coronavirus, not for
+    # SARS-CoV-2 directly. So 10^3 is a point estimate with a 10^2-10^4 band.
+    #
+    # Two things follow for how this is parameterised:
+    #
+    #  * median_burst_size = 1000 puts the CITED value at the median, which is
+    #    what "~10^3" means. The exponential branch cannot do that: an
+    #    exponential with mean 1000 has median 693, so half its draws fall
+    #    below the literature estimate and E[cycles] rises accordingly.
+    #  * burst_sigma is NOT from the literature. It is a modelling choice,
+    #    constrained only by staying inside the order-of-magnitude band:
+    #    sigma 0.7 puts ~90% of draws in [320, 3200] and gives E[w] ~1280;
+    #    sigma 1.0 gives E[w] ~1600, arguably past the cited central value;
+    #    sigma 0.5 is tighter than the stated uncertainty warrants. Report it
+    #    as a choice with a range, never as a cited quantity.
+    #
+    # min/max_burst_size should bracket the cited band rather than sit inside
+    # it -- a floor of 10 is an order of magnitude BELOW Bar-On's lower bound
+    # and cannot be justified while citing him.
+    #
+    #   distribution                  E[w]   med    E[cycles]  lambda
+    #   uniform 10-1000                505    505     4.01      0.408
+    #   exponential mean 100           101     69     5.72      0.582
+    #   exponential mean 1000         1007    696     3.69      0.375
+    #   lognormal med 1000 s=0.7      1279   1002     3.37      0.343
+    #
+    # lambda is substitutions placed per transmission, and it is also the
+    # per-transmission divergence a benchmark will measure (within-transmission
+    # collisions are ~1e-5 at these rates). Real transmission pairs differ by
+    # ~0.3 substitutions, so lambda is the term to match for tree-topology
+    # realism; the molecular clock is lambda/GI and needs the generation
+    # interval too. See docs/abm_contribution.md.
+    burst_distribution = "uniform"      # "uniform" | "exponential" | "lognormal"
     mean_burst_size = 100.0             # exponential only
+    median_burst_size = 1000.0          # lognormal only (the cited ~10^3)
+    burst_sigma = 0.7                   # lognormal only; a choice, not a citation
     min_burst_size = 10
     max_burst_size = 1000
 
     def __init__(self, initial_viral_load, thresholds, prob_matrix, letters_to_use,
                  peak_viral_load=None, rt_early_population_threshold=None,
                  burst_distribution=None, mean_burst_size=None,
-                 min_burst_size=None, max_burst_size=None):
+                 min_burst_size=None, max_burst_size=None,
+                 median_burst_size=None, burst_sigma=None):
         self.initial_viral_load = initial_viral_load
         # Instance attributes shadow the class defaults when supplied, so an
         # unset config keeps the historical behaviour exactly.
@@ -80,12 +118,17 @@ class RateLimitedMutationalModel(_MutationalModel):
             self.rt_early_population_threshold = float(rt_early_population_threshold)
         if burst_distribution is not None:
             d = str(burst_distribution).strip().lower()
-            if d not in ("uniform", "exponential"):
+            if d not in ("uniform", "exponential", "lognormal"):
                 raise ValueError(
-                    f"burst_distribution must be 'uniform' or 'exponential', got {d!r}")
+                    "burst_distribution must be 'uniform', 'exponential' or "
+                    f"'lognormal', got {d!r}")
             self.burst_distribution = d
         if mean_burst_size is not None:
             self.mean_burst_size = float(mean_burst_size)
+        if median_burst_size is not None:
+            self.median_burst_size = float(median_burst_size)
+        if burst_sigma is not None:
+            self.burst_sigma = float(burst_sigma)
         if min_burst_size is not None:
             self.min_burst_size = int(min_burst_size)
         if max_burst_size is not None:
@@ -96,6 +139,18 @@ class RateLimitedMutationalModel(_MutationalModel):
             # calculate_replication_cycles returns 1 for burst <= 1, which
             # silently collapses the cycle count rather than erroring.
             raise ValueError("min_burst_size must be greater than 1")
+        if self.burst_distribution == "lognormal":
+            if self.median_burst_size <= 1:
+                raise ValueError("median_burst_size must be greater than 1")
+            if self.burst_sigma <= 0:
+                raise ValueError("burst_sigma must be positive")
+            # mean_burst_size does not enter the lognormal draw. Say so rather
+            # than letting a config that sets both imply it does.
+            if mean_burst_size is not None:
+                print("  NOTE: mean_burst_size is ignored for "
+                      "burst_distribution='lognormal'; the draw is set by "
+                      "median_burst_size and burst_sigma.", file=sys.stderr)
+            self._log_median = math.log(self.median_burst_size)
         self.thresholds = np.asarray(thresholds, dtype=np.float64)
         self.prob_matrix = prob_matrix
         self.letters_to_use = np.asarray(letters_to_use)
@@ -194,13 +249,59 @@ class RateLimitedMutationalModel(_MutationalModel):
 
         return self.weighted_change(sequence, change_indices)
 
+    def burst_summary(self, n=50_000):
+        """Report the burst draw and the lambda it implies, before painting.
+
+        lambda -- substitutions placed per transmission -- is what sets both
+        the emergent molecular clock (lambda / generation interval) and the
+        per-transmission divergence a tree has to work from. Until this was
+        printed, the only way to learn it was to finish a full paint and run
+        `phylogas benchmark sequence`, which is how a 2.8x change in lambda
+        went unnoticed through a complete five-state run.
+
+        E[cycles] is a mean over ceil(log_burst(target/initial)), so it is
+        QUANTISED: every burst above target^(1/3) needs 3 cycles, above
+        target^(1/4) needs 4, and so on. That makes lambda insensitive to the
+        burst distribution over wide ranges and very sensitive at the integer
+        boundaries, which is why it is worth reporting rather than estimating
+        from the distribution's mean.
+
+        Uses its own fixed Generator, NOT self._rng: drawing from the model's
+        stream here would shift every subsequent mutation draw and change the
+        painting.
+        """
+        rng = np.random.default_rng(0)
+        if self.burst_distribution == "lognormal":
+            w = rng.lognormal(self._log_median, self.burst_sigma, n)
+        elif self.burst_distribution == "exponential":
+            w = rng.exponential(self.mean_burst_size, n)
+        else:
+            w = rng.integers(self.min_burst_size, self.max_burst_size + 1, n)
+        w = np.clip(w, self.min_burst_size, self.max_burst_size)
+        target = self.rt_early_population_threshold * self.peak_viral_load
+        cycles = np.array(
+            [self.calculate_replication_cycles(self.initial_viral_load, target, b)
+             for b in w], dtype=np.float64)
+        ec = float(cycles.mean())
+        return {
+            "distribution": self.burst_distribution,
+            "mean_w": float(w.mean()),
+            "median_w": float(np.median(w)),
+            "expected_cycles": ec,
+            "lambda_per_transmission": self._lambda_per_cycle * ec,
+        }
+
     def _draw_burst(self):
         """One burst size for this transmission.
 
         The uniform branch keeps random.randint so that an unset config draws
         from the same RNG stream as before and reproduces earlier runs; the
-        exponential branch uses this model's own seeded Generator.
+        exponential and lognormal branches use this model's own seeded
+        Generator.
         """
+        if self.burst_distribution == "lognormal":
+            w = self._rng.lognormal(self._log_median, self.burst_sigma)
+            return int(min(max(w, self.min_burst_size), self.max_burst_size))
         if self.burst_distribution == "exponential":
             w = self._rng.exponential(self.mean_burst_size)
             return int(min(max(w, self.min_burst_size), self.max_burst_size))

@@ -527,6 +527,8 @@ rule paint_network:
             "genetic_painter.rt_early_population_threshold", None),
         burst_distribution=cfg("genetic_painter.burst_distribution", None),
         mean_burst_size=cfg("genetic_painter.mean_burst_size", None),
+        median_burst_size=cfg("genetic_painter.median_burst_size", None),
+        burst_sigma=cfg("genetic_painter.burst_sigma", None),
         min_burst_size=cfg("genetic_painter.min_burst_size", None),
         max_burst_size=cfg("genetic_painter.max_burst_size", None),
         random_seed=cfg("random_seed", 42),

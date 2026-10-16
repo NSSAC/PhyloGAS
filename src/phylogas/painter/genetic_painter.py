@@ -175,16 +175,29 @@ def getClas():
                              "replication cycles -> more mutations per transmission. "
                              "Unset keeps the model default (1e6).")
     parser.add_argument("--burst_distribution", default=None, dest="burst_distribution",
-                        choices=["uniform", "exponential"],
+                        choices=["uniform", "exponential", "lognormal"],
                         help="Shape of the per-transmission burst-size draw. "
                              "'uniform' (default) is random.randint(min,max); "
-                             "'exponential' draws mean mean_burst_size, floored at "
-                             "min_burst_size and capped at max_burst_size.")
+                             "'exponential' draws mean mean_burst_size; "
+                             "'lognormal' draws median median_burst_size with "
+                             "log-scale burst_sigma -- the option that puts the "
+                             "cited ~10^3 burst size at the median rather than "
+                             "the mean. All are floored at min_burst_size and "
+                             "capped at max_burst_size.")
     parser.add_argument("--mean_burst_size", type=float, default=None,
                         dest="mean_burst_size",
                         help="Mean of the exponential burst draw. Burst size enters the "
                              "BASE of the replication-cycle logarithm, so E[cycles] is "
                              "more sensitive to this than to peak_viral_load.")
+    parser.add_argument("--median_burst_size", type=float, default=None,
+                        dest="median_burst_size",
+                        help="Median of the lognormal burst draw; ignored by the other "
+                             "distributions. 1000 is the Bar-On et al. (eLife 2020) "
+                             "coronavirus estimate, an order-of-magnitude figure.")
+    parser.add_argument("--burst_sigma", type=float, default=None, dest="burst_sigma",
+                        help="Log-scale sigma of the lognormal burst draw. A modelling "
+                             "choice, not a cited value: 0.7 keeps ~90%% of draws inside "
+                             "the 10^2-10^4 band.")
     parser.add_argument("--min_burst_size", type=int, default=None, dest="min_burst_size",
                         help="Lower bound on burst size (must exceed 1). With a skewed "
                              "draw this bound, not the cap, sets the tail of E[cycles].")
@@ -1239,14 +1252,28 @@ def generate_sequences(args):
             burst_distribution=args.burst_distribution,
             mean_burst_size=args.mean_burst_size,
             min_burst_size=args.min_burst_size,
-            max_burst_size=args.max_burst_size)
+            max_burst_size=args.max_burst_size,
+            median_burst_size=args.median_burst_size,
+            burst_sigma=args.burst_sigma)
         _m = mutational_model
-        _burst = (f"exponential(mean={_m.mean_burst_size:g})"
-                  if _m.burst_distribution == "exponential" else "uniform")
+        if _m.burst_distribution == "lognormal":
+            _burst = (f"lognormal(median={_m.median_burst_size:g},"
+                      f"sigma={_m.burst_sigma:g})")
+        elif _m.burst_distribution == "exponential":
+            _burst = f"exponential(mean={_m.mean_burst_size:g})"
+        else:
+            _burst = "uniform"
         print(f"  rate-limited model: initial={_m.initial_viral_load:g} "
               f"peak={_m.peak_viral_load:g} "
               f"early_threshold={_m.rt_early_population_threshold:g} "
               f"burst={_burst} in [{_m.min_burst_size},{_m.max_burst_size}]",
+              file=sys.stderr)
+        # Print the lambda this configuration implies before painting anything.
+        # Recovering it afterwards costs a full paint plus a benchmark run.
+        _bs = _m.burst_summary()
+        print(f"  burst draw: E[w]={_bs['mean_w']:.0f} median={_bs['median_w']:.0f} "
+              f"E[cycles]={_bs['expected_cycles']:.3f} "
+              f"-> lambda={_bs['lambda_per_transmission']:.4f} subs/transmission",
               file=sys.stderr)
     else:
         mutational_model = model_registry["simple"](thresh, cumulative_probs_matrix, LETTERS)

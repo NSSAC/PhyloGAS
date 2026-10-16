@@ -296,24 +296,50 @@ genetic_painter:
 
   # Burst size: virions per infected cell per replication cycle. It enters the
   # BASE of the replication-cycle logarithm, so the emergent clock is more
-  # sensitive to this than to peak_viral_load. "uniform" is the historical
-  # draw and is what an unset config uses.
+  # sensitive to this than to peak_viral_load.
   #
-  #   draw                         E[w]  median   E[cycles]   emergent subs/yr
-  #   uniform 10-1000               505     505       4.01        ~20
-  #   exponential mean 100          101      70       5.72        ~28
-  #   exponential mean 250          245     173       4.83        ~24
+  # Bar-On et al. (eLife 2020, "SARS-CoV-2 by the numbers") put coronavirus
+  # burst size at ~10^3 virions/cell -- an ORDER OF MAGNITUDE, and derived from
+  # 6-7x10^2 PFU/cell measured in MHV, a murine coronavirus, not in SARS-CoV-2
+  # directly. The cited band is therefore 10^2-10^4 about 10^3.
   #
-  # Real SARS-CoV-2 is ~24. 100 is the biologically motivated mean rather than
-  # the one that lands on that number -- picking the mean to hit the target
-  # would be fitting a free parameter. Expect some overshoot in the projection
-  # and some of it absorbed by saturation at hotspots, which these figures do
-  # not model. Only ~0.004% of draws reach the cap at mean 100, while ~9.5%
-  # hit the floor, so min_burst_size is the bound that matters.
-  burst_distribution: "exponential"
-  mean_burst_size: 100
-  min_burst_size: 10
-  max_burst_size: 1000
+  #   distribution                  E[w]   med    E[cycles]  lambda
+  #   uniform 10-1000                504    504     4.01      0.408
+  #   exponential mean 100           101     69     5.73      0.582
+  #   exponential mean 1000         1007    696     3.69      0.375
+  #   lognormal med 1000 s=0.7      1278    998     3.37      0.343
+  #
+  # lambda is substitutions placed per transmission and -- collisions being
+  # ~1e-5 at these rates -- also the parent->child divergence a tree has to
+  # work from. Real transmission pairs differ by ~0.3 substitutions, so lambda
+  # is the term to match for tree-topology realism. The painter prints the
+  # lambda a config implies at startup; recovering it afterwards costs a full
+  # paint plus `phylogas benchmark sequence`.
+  #
+  # Why lognormal rather than exponential: an exponential with mean 1000 has
+  # median 693, so half its draws fall below the cited estimate. Lognormal puts
+  # the cited ~10^3 at the median, which is what "~10^3" means.
+  #
+  # burst_sigma is a MODELLING CHOICE, not a cited value. 0.7 keeps ~90% of
+  # draws inside the 10^2-10^4 band; 1.0 pushes E[w] to ~1600, past the cited
+  # central value; 0.5 is tighter than the stated uncertainty warrants. Report
+  # it as a choice with a range, never as a citation.
+  #
+  # The bounds bracket the cited band rather than sitting inside it -- the
+  # previous floor of 10 was an order of magnitude below Bar-On's lower bound
+  # and could not be justified while citing him.
+  #
+  # NOTE the clock consequence. lambda 0.582 -> 0.343 at the measured
+  # generation interval of 6.87 d takes mu_truth from 1.10x real SARS-CoV-2 to
+  # ~0.68x. That is a TRANSIT STATE, deliberately accepted: lambda is the term
+  # that must be right in the end state, and at a realistic interval of ~4.5 d
+  # these values give ~1.03x. Fixing the interval first instead would push the
+  # clock to 1.68x and leave divergence untouched. See docs/abm_contribution.md.
+  burst_distribution: "lognormal"
+  median_burst_size: 1000
+  burst_sigma: 0.7
+  min_burst_size: 100
+  max_burst_size: 10000
 
   # Peak within-host virion count. This sets the emergent molecular clock:
   # the early-growth target is rt_early_population_threshold x peak_viral_load,

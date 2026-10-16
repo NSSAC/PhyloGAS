@@ -90,6 +90,80 @@ What EpiHiper does *not* determine: anything about which substitutions appear
 or how many. Attack rate, epidemic size, county mixing and network homophily
 are invisible to this identity.
 
+### Where in the config the interval actually comes from
+
+There is no generation-interval parameter. It is emergent from six `dwellTime`
+fields and the per-state `infectivity` weights in `cfg/exp1/disease.json`,
+identical in all ten age x strain combinations:
+
+| transition | dwell | role | infectivity |
+|---|---|---|---|
+| `E->P` (p=0.65) | fixed 3 | latent, symptomatic branch | 0 |
+| `E->A` (p=0.35) | normal(5, 1) | latent, asymptomatic branch | 0 |
+| `P->I` | fixed 2 | presymptomatic infectious | 1.6 |
+| `I->rM` (p=0.958) | discrete, mean 4.375 | symptomatic infectious | 1.6 |
+| `A->R` | normal(5, 1) | asymptomatic infectious | 0.8 |
+
+Mean latent period = 0.65*3 + 0.35*5 = **3.70 d**, which is 54% of the
+interval. The infectious window is 6.24 d at infectivity 1.6 (symptomatic) or
+5 d at 0.8 (asymptomatic). Computing the interval as latent plus mean time into
+the infectious run, branches weighted by expected transmissions (infectivity x
+duration), gives **6.31 d** against the 6.872 d measured. The ~0.5 d gap is
+what integer ticks predict (`startTick 0`, `endTick 700`): with transmission
+only on day boundaries the mean time into the window is (n+1)/2 rather than
+n/2, putting the estimate at 6.81.
+
+So the measurement is consistent with the disease model, and **the fields that
+would move the clock are the latent block** -- the `fixed: 3`, the
+`normal(5,1)`, and the 0.65/0.35 split.
+
+Two consequences:
+
+* **Strain 1 and strain 2 have identical timing** (6.311 vs 6.309 d). Delta's
+  1.6x is pure hazard, not tempo, so variant composition cannot move the clock.
+* **The one per-state calibrated knob cannot touch timing.** `calibration.csv`
+  tunes `transmissibility` and nothing else -- a hazard scalar. Every twin
+  shares the same `disease.json`, so the modelled timing is byte-identical
+  across all five.
+
+### How much a recalibration could move the clock
+
+`transmissibility` varies 64% across the twins while the interval varies 2.5%,
+and the two are inversely ordered (Spearman rho = **-0.975**):
+
+| state | transmissibility | edges | GI (d) |
+|---|---|---|---|
+| ga | 0.1512 | 6,126,993 | 6.93 |
+| wa | 0.1691 | 4,166,779 | 6.91 |
+| va | 0.1898 | 5,292,666 | 6.88 |
+| ma | 0.1977 | 3,861,499 | 6.88 |
+| mn | 0.2772 | 4,287,236 | 6.76 |
+
+The plausible mechanism is that a higher hazard lands the first successful
+transmission earlier in the infectious window, compressing the *realised*
+interval while the modelled timing is unchanged. Elasticity is **-0.029**: an
+83% change in transmissibility moves the interval 2.5%, and since
+`mu_truth` ~ 1/GI, the clock by 2.5% the other way. Real and directional, but
+very inelastic.
+
+**This correlation is not established as causal, and a rival explanation is
+large enough to produce it on its own.** The interval varies by age group,
+because the `I->hM` and `I->dM` branches shorten the infectious run for older
+people:
+
+| age group | GI_est (strain 2) |
+|---|---|
+| school-aged (5-17) | 6.389 |
+| preschool / adult | 6.363 |
+| older adult (50-64) | 6.300 |
+| golden-aged (65+) | 6.127 |
+
+That is a 0.26 d span from age mix alone, against a 0.17 d observed cross-state
+span -- 1.5x larger than the effect being explained. A state whose infections
+skew older gets a shorter interval for reasons unrelated to transmissibility,
+and the five twins differ in population, network, age structure, seeding and
+geography all at once. `Open` has how to separate them.
+
 ## Which measures are ABM-resilient
 
 Ranked by how much an ABM change would move them:
@@ -147,6 +221,25 @@ before anyone uses it to choose a parameter again.
   (exposure to exposure). Serial (onset to onset) would need the symptom
   columns and is what epidemiological estimates usually report, so the two
   should not be compared directly.
+* **Is transmissibility -> interval causal?** The cross-state rho of -0.975 is
+  confounded six ways, and the age-mix rival above is larger than the effect.
+  Two ways to test it, cheapest first.
+  *Free:* the all-events tables carry `age_group`. Compute each state's
+  infection age mix, weight the per-age table above by it, and see whether that
+  alone predicts the 6.76 -> 6.93 ordering. If it does, the transmissibility
+  explanation is dead without running anything.
+  *One extra run:* take va twice -- once at its calibrated 0.1898, once at mn's
+  0.2772 -- holding population, network, seeds, `disease.json` and the RNG seed
+  fixed. Two runs differing in one variable beat five differing in six. If the
+  interval drops ~2.5%, any future transmissibility recalibration silently
+  shifts the clock by a known elasticity; if it does not move, recalibration is
+  clock-neutral.
+  The interval needs only the ABM output -- no painting, trees or Nextstrain --
+  so this costs one EpiHiper run plus seconds of arithmetic. Note the code gap:
+  `generation_interval()` does not depend on the painter, but it is only
+  reachable through `benchmark sequence`, which demands a painted FASTA because
+  it also computes divergence. Running this experiment wants a subcommand that
+  takes an all-events file alone.
 * **The 1.108x overshoot is not explained.** The identity closes, so it is
   not a bookkeeping error -- `lambda` would need to come down ~10%, which
   means `mean_burst_size` up (E[cycles] down). Whether to chase that or
