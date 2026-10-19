@@ -520,91 +520,91 @@
     {
       "id": "P2_p",
       "ann:label": "Presymptomatic (infectious) preschool (0-4)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "P2_s",
       "ann:label": "Presymptomatic (infectious) school-aged (5-17)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "P2_a",
       "ann:label": "Presymptomatic (infectious) adult (18-49)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "P2_o",
       "ann:label": "Presymptomatic (infectious) older adult (50-64)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "P2_g",
       "ann:label": "Presymptomatic (infectious) golden-aged (65+)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "I2_p",
       "ann:label": "Symptomatic (infectious) preschool (0-4)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "I2_s",
       "ann:label": "Symptomatic (infectious) school-aged (5-17)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "I2_a",
       "ann:label": "Symptomatic (infectious) adult (18-49)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "I2_o",
       "ann:label": "Symptomatic (infectious) older adult (50-64)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "I2_g",
       "ann:label": "Symptomatic (infectious) golden-aged (65+)",
-      "infectivity": 2.05,
+      "infectivity": 1.6,
       "susceptibility": 0.0
     },
     {
       "id": "A2_p",
       "ann:label": "Asymptomatic (infectious) preschool (0-4)",
-      "infectivity": 1.025,
+      "infectivity": 0.8,
       "susceptibility": 0.0
     },
     {
       "id": "A2_s",
       "ann:label": "Asymptomatic (infectious) school-aged (5-17)",
-      "infectivity": 1.025,
+      "infectivity": 0.8,
       "susceptibility": 0.0
     },
     {
       "id": "A2_a",
       "ann:label": "Asymptomatic (infectious) adult (18-49)",
-      "infectivity": 1.025,
+      "infectivity": 0.8,
       "susceptibility": 0.0
     },
     {
       "id": "A2_o",
       "ann:label": "Asymptomatic (infectious) older adult (50-64)",
-      "infectivity": 1.025,
+      "infectivity": 0.8,
       "susceptibility": 0.0
     },
     {
       "id": "A2_g",
       "ann:label": "Asymptomatic (infectious) golden-aged (65+)",
-      "infectivity": 1.025,
+      "infectivity": 0.8,
       "susceptibility": 0.0
     },
     {

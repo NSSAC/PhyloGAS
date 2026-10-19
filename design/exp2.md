@@ -4,13 +4,13 @@ Adapted from [exp1](exp1.md). Three files differ from `cfg/exp1/` --
 `disease.json`, `runParameters.json` and `config.json`; every other file is
 byte-identical.
 
-Four changes: three to `disease.json` (dwell times, waning shape, variant-2
-infectivity) and one to the run length. The new variant keeps its 60% `R_0`
-advantage over the current variant, but because the dwell-time change is
-variant-specific that now takes a different infectivity ratio to achieve --
-see Change 4. Nothing else about the design moves: the cross-infection cell
-structure, vaccination, seeding, networks and replicates are all inherited
-from exp1 unchanged.
+Four changes: two to `disease.json` (dwell times, waning shape), one to the
+run length, and one retargeting of the new variant's `R_0` -- which needs no
+new parameter, because the dwell-time change delivers it. exp1's 1.6x
+infectivity ratio is deliberately left in place for that reason; see Change 4.
+Nothing else about the design moves: the cross-infection cell structure,
+vaccination, seeding, networks and replicates are all inherited from exp1
+unchanged.
 
 ## 1. Generation interval, now variant-specific
 
@@ -155,46 +155,71 @@ mentions replicates, and nothing in the repo expands the `%tick%` templates
 either. The count (exp1: 60 per cell) is set in the EpiHiper pipeline batch
 layer on Rivanna, so a reduction to 30 happens there, not here.
 
-## 4. Variant-2 infectivity raised to preserve the 60% advantage
+## 4. `R_0` of the new variant retargeted from 6.4 to ~5.0
 
-Change 1 cut variant 2's infectious period harder than variant 1's (Delta
-`I -> rM` 4.375 -> 2.458 and `A -> R` 5 -> 3.5, against Alpha's 4.375 -> 3.607
-with `A -> R` unchanged). Because `R_0` tracks infectious duration, that
-asymmetry does not cancel:
+exp1 set `R_0(v1) = 4.0` and gave the new variant a 1.6x infectivity ratio,
+which -- with both variants on identical dwell times -- made `R_0(v2) = 6.4`.
+Our epidemiologist flagged that as too high, and the exp1 output supports it.
+Georgia, 0.5 cross-infection cell, population 7,605,731:
 
-| | `R_0(v2) / R_0(v1)` |
+| | |
 |---|---|
-| exp1 | 1.600 |
-| exp2, Change 1 only | **1.248** |
+| Delta exposure events | 11,584,455 (152% of population) |
+| people infected by Delta at least once | 5,878,579 (77.3%) |
+| of those, reinfected by Delta | 3,456,290 (58.8%) |
+| maximum Delta infections in one person | 10 |
 
-In exp1 the per-contact infectivity ratio and the `R_0` ratio were both 1.6,
-because the two variants had identical dwell times. Under exp2's
-variant-specific timings they can no longer both be 1.6, and leaving infectivity
-alone would have cut Delta's advantage from 60% to 25%. That is not a
-cosmetic inconsistency: the whole painted window is the Delta wave, and at a
-25% advantage Delta may displace Alpha far more slowly, or not within 300
-ticks.
+The literature does not support 6.4. Delta's mean `R_0` across five studies is
+**5.08** (range 3.2-8; ancestral 2.79) -- Liu & Rocklov, J Travel Med 2021,
+doi:10.1093/jtm/taab124. Alpha sits near 4.2, so the naive-population `R_0`
+ratio is about **1.2**, not 1.6. The widely quoted "Delta is 60% more
+transmissible" figure is a *realised growth and secondary-attack-rate
+advantage* measured in partially immune, partially vaccinated, NPI-affected
+populations; it bundles immune escape and contact effects together and should
+not be transplanted onto an `R_0` ratio in a naive population. exp1's 1.6-on-
+`R_0` was that transplant.
 
-The literature statement -- Delta is roughly 60% more transmissible -- is about
-growth and `R_0`, not per-contact infectivity, so exp2 holds the `R_0` ratio
-and lets the infectivity ratio move. Variant-2 infectivities are scaled by
-**1.28125**, which restores the ratio while preserving the internal
-asymptomatic/symptomatic ratio of 0.5:
+**exp2 therefore targets `R_0(v2)` near 5.0**, which the Change 1 dwell times
+deliver at exp1's unchanged infectivity ratio. Variant-2 infectivity stays at
+exp1's values (`P2`/`I2` = 1.6, `A2` = 0.8); the ratio moves because Change 1
+cut variant 2's infectious period harder than variant 1's (Delta `I -> rM`
+4.375 -> 2.458 and `A -> R` 5 -> 3.5, against Alpha's 4.375 -> 3.607 with
+`A -> R` unchanged).
 
-| state | exp1 | exp2 |
+Realised `R_0(v2)/R_0(v1)` by age class, and the implied `R_0(v2)` once
+variant 1 is re-fitted to 4.0:
+
+| age class | ratio | implied `R_0(v2)` |
 |---|---|---|
-| `P2`, `I2` | 1.6 | **2.05** |
-| `A2` | 0.8 | **1.025** |
+| p | 1.2483 | 4.99 |
+| s | 1.2467 | 4.99 |
+| a | 1.2483 | 4.99 |
+| o | 1.2559 | 5.02 |
+| g | 1.2811 | 5.12 |
 
-Variant 1's infectivities (`P1`/`I1` 1.0, `A1` 0.5) are untouched, so it remains
-the calibration reference.
+The spread across age classes comes from the age-dependent
+`I -> {rM, hM, dM}` severity split, not from infectivity, so no single
+infectivity value removes it. **This is a recorded target, not a leftover.**
+The ratio is now a quantity exp2 commits to: if a future change to any dwell
+time moves it away from ~1.25, that is a regression to catch, and the
+`R_0(v2)` figure in a write-up has a citation behind it rather than an
+inherited assumption.
 
-Realised ratio after the change, per age class: 1.599 (p), 1.597 (s), 1.599
-(a), 1.609 (o), 1.642 (g). A single scalar cannot hit 1.600 in every class
-because the `I -> {rM, hM, dM}` severity split is age-dependent and the
-hospitalised and deceased branches carry short fixed dwells; the geriatric
-class therefore overshoots by about 2.6%. The classes holding most of the
-population are on target.
+**What this does not fix.** The 152% cumulative incidence is not an `R_0`
+artefact. Final epidemic size is saturated in this range -- an SIR final size
+is ~99.3% at `R_0 = 5` and ~99.8% at `R_0 = 6.4` -- so dropping 6.4 to 5.0
+barely moves the 77.3% ever-infected figure. Cumulative incidence passes 100%
+because people cycle through infection repeatedly, which is the exponential
+waning tail that Change 2 addresses. The two faults act on different
+observables: `R_0` on wave speed, peak height and time to displace the current
+variant; waning on repeat infections, the endemic plateau and cumulative
+incidence above 100%.
+
+**Attribution caveat.** Changes 2 and 4 land in the same generation, so if
+exp2's attack rate comes back reasonable it will not be separable into a
+waning effect and an `R_0` effect. Running Change 2 alone first would
+separate them; there is no compute budget for that intermediate, so the
+confound is accepted and recorded here.
 
 ## What exp2 deliberately does NOT change
 
