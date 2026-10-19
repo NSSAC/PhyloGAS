@@ -27,7 +27,7 @@ assumed, and it was wrong by 1.7x in every projection made before 2026-10-12.
 `lambda` is the only term the painter controls, `GI` the only term the ABM
 controls, and `s_path` is a consequence of both.
 
-## It closes, at two independent parameter settings
+## It closes, at three independent parameter settings
 
 This is the check that makes the decomposition more than bookkeeping. Nothing
 below is fitted; every term is measured or computed from first principles.
@@ -41,20 +41,50 @@ collision rate is ~1.1e-5 (see `clock_modes.md` §1c), so the two should agree:
 |---|---|---|---|---|
 | uniform 10-1000, init 10, peak 1e6 | 2.02 | 0.2054 | 0.2054 | **0.0%** |
 | exponential(100), init 2, peak 1e11 | 5.72 | 0.5816 | 0.5834 | **0.3%** |
+| lognormal(med 1e3, s 0.7), init 2, peak 1e11 | 3.37 | 0.3430 | 0.3428 | **0.06%** |
+
+The third row is the strongest of the three: `lambda` was printed by
+`burst_summary()` from the config *before* the run, and the painter then placed
+that many mutations independently. Two code paths reading the same config and
+agreeing to 0.06% is a different claim from a post-hoc fit.
 
 **The full identity against `mu_truth`.** Same two settings, `GI` measured,
 `s_path` measured:
 
 | | lambda | / GI | x s_path | predicted | measured `mu_truth` | agreement |
 |---|---|---|---|---|---|---|
-| old | 0.2054 | 6.872 | 0.9080 | 9.90 | 9.90 | **0.0%** |
-| new | 0.5816 | 6.872 | 0.8510 | 26.29 | 26.37 | **-0.3%** |
+| uniform | 0.2054 | 6.872 | 0.9080 | 9.90 | 9.90 | **0.0%** |
+| exponential | 0.5816 | 6.872 | 0.8510 | 26.29 | 26.37 | **-0.3%** |
+| lognormal | 0.3428 | 6.872 | 0.8853 | 16.12 | 16.12 | **0.0%** |
 
 (subs/genome/year. Divide by `L` for per-site: 26.37 -> 8.82e-4.)
 
 So the emergent clock is fully accounted for. There is no residual to attribute
 to the contact network, the mixing structure, or anything else about the ABM
 beyond the generation interval.
+
+### The interval did not move when lambda did
+
+The lognormal run is a controlled experiment that came for free. It repainted
+the *same* ABM output with `lambda` 1.7x lower, and the measured interval came
+back **byte-identical in every state**:
+
+| state | GI, exponential run | GI, lognormal run |
+|---|---|---|
+| ga | 6.93 | 6.93 |
+| ma | 6.88 | 6.88 |
+| mn | 6.76 | 6.76 |
+| va | 6.88 | 6.88 |
+| wa | 6.91 | 6.91 |
+
+Not "close" -- every digit. That is the sharpest available statement of the
+claim this document makes: the interval is a property of the ABM output alone,
+and nothing the painter does can touch it. A 1.7x change in the one term the
+painter owns moved the other term not at all.
+
+`s_path` also behaved as predicted. Lower `lambda` means fewer repeat hits per
+site, so less should be lost along root-to-tip paths: predicted ~0.89 before
+the run, measured **0.8853**, a 0.6% miss.
 
 ## What EpiHiper actually determines
 
@@ -183,14 +213,55 @@ so `mu_truth` is the only one of these comparable to it.
 
 ## Where the twin currently sits
 
-| | value | vs real SARS-CoV-2 (~8.0e-4/site/yr) |
-|---|---|---|
-| `mu_truth` mean | 8.864e-4 /site/yr (26.37 subs/genome/yr) | **1.108x** |
-| per-state range | 8.56e-4 - 9.30e-4 | 1.07x - 1.16x |
-| before recalibration | 3.31e-4 (9.90 subs/genome/yr) | 0.41x |
+| arm | lambda | GI | `mu_truth` | vs real (~8.0e-4/site/yr) |
+|---|---|---|---|---|
+| uniform painting | 0.2054 | 6.872 | 3.31e-4 | 0.41x |
+| exponential painting | 0.5816 | 6.872 | 8.86e-4 | 1.11x |
+| **lognormal painting (current)** | **0.3428** | **6.872** | **5.42e-4** | **0.67x** |
+| lognormal + exp2 ABM (not yet run) | 0.3428 | ~4.69 | ~7.9e-4 | ~0.99x |
 
-`mu_sim` (augur refine, no clock prior) sits 0.3-6.5% below `mu_truth` in all
-five states -- all low, never high.
+The current 0.67x is a deliberate transit state, not a regression: `lambda` is
+now literature-grounded (Bar-On burst size at the median) and the interval is
+still 1.5x too long. The exp2 disease model shortens the interval; see
+`design/exp2.md`. Fixing the interval first instead would have pushed the clock
+to 1.6x and left per-transmission divergence untouched, so this ordering is the
+only one that converges.
+
+`mu_sim` (augur refine, no clock prior) sat 0.3-6.5% below `mu_truth` in all
+five states at the exponential setting -- all low, never high.
+
+### The cross-state spread is the estimator, not the twins
+
+`mu_truth` spreads 6.5-8.4% across the five states, far more than any of its
+inputs. The lognormal run settles where that comes from, because it changed
+`lambda` by 1.7x and left the spread untouched:
+
+| | exponential | lognormal |
+|---|---|---|
+| `lambda` spread | 0.7% | 0.9% |
+| GI spread | 2.5% | 2.5% |
+| implied clock (lambda/GI) spread | 2.3% | 3.1% |
+| **`s_path` spread** | **8.8%** | **8.8%** |
+| `mu_truth` spread | 8.4% | 6.5% |
+| mean r2 of the `mu_truth` fits | 0.46 | 0.31 |
+
+**`s_path`'s spread is identical to the decimal across a 1.7x change in
+`lambda`.** A physical property of the twins had every opportunity to move and
+did not. Meanwhile r2 *fell* to 0.31 (ga 0.425 down to wa 0.216), because
+fewer substitutions per genome means less signal per tip. The spread tracks fit
+quality, not saturation.
+
+The practical consequence: **no change to the disease model or the painter will
+tighten this.** They move `lambda` and GI, whose spreads are under 3%. The
+6.5-8.8% lives in the pooled root-to-tip estimator, which
+`scripts/clock_within_component.py` already diagnoses -- each chain carries its
+seed's own divergence as a constant, and continued importation attenuates the
+pooled slope. The within-chain decomposition is the only lever on it.
+
+One caution for comparing arms: at lower `lambda`, `mu_truth` is a *weaker*
+measurement (r2 0.31 vs 0.46). Per-state values deserve error bars rather than
+being read as points, and exp1-vs-exp2 comparisons of `mu_truth` are comparing
+estimates of different precision.
 
 ## A correction worth recording
 

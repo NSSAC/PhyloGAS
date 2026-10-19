@@ -76,6 +76,11 @@ def logo(p, path, x, y, w, h):
     return dpi
 
 
+PGCOE = "poster_project/pgcoe_icon.png"
+FUNDING = ("This work was supported by Cooperative Agreement number "
+           "6NU50CK000555-03-01 from the Centers for Disease Control and "
+           "Prevention (CDC).")
+
 SHOT = "poster_project/assets/nextstrain_importations_screenshot.png"
 CONFERENCE = ("ASM Bioinformatics, Genomics and Big Data Conference (ASM BIG)  \u00b7  "
               "Washington, DC  \u00b7  October 11\u201314, 2026")
@@ -95,6 +100,39 @@ def raster(p, path, x, y, w):
              f'preserveAspectRatio="xMidYMid meet" xlink:href="data:image/png;base64,{b64}" '
              f'href="data:image/png;base64,{b64}"/>')
     return y + h
+
+
+def funding(p, x, y, w):
+    """Funding statement with the PGCoE mark, as a bottom-corner block.
+
+    Neither existing raster helper fits: `raster` scales to a given width and
+    `logo` right-aligns inside a box, while this wants a fixed height with
+    text flowing beside it. Returns the bottom edge so the caller can check it
+    against the column limit like any other element.
+    """
+    import base64
+    import struct
+    ih_target = 96
+    xt = x
+    if os.path.exists(PGCOE):
+        raw = open(PGCOE, "rb").read()
+        iw, ih = struct.unpack(">II", raw[16:24])
+        dh = float(ih_target)
+        dw = iw * dh / ih
+        dpi = iw / (dw / 100.0)
+        if dpi < 150:
+            WARN.append(f"pgcoe icon renders at {dpi:.0f} dpi (want >=150)")
+        b64 = base64.b64encode(raw).decode("ascii")
+        p.append(f'<image x="{x:.1f}" y="{y:.1f}" width="{dw:.1f}" height="{dh:.1f}" '
+                 f'preserveAspectRatio="xMidYMid meet" '
+                 f'xlink:href="data:image/png;base64,{b64}" '
+                 f'href="data:image/png;base64,{b64}"/>')
+        xt = x + dw + 24
+    else:
+        WARN.append(f"pgcoe icon not found at {PGCOE}")
+    yb = para(p, xt, y + 30, FUNDING, max(20, int((w - (xt - x)) / 10.6)),
+              size=21, lead=28, fill=INK3)
+    return max(yb, y + ih_target)
 
 
 def esc(s):
@@ -157,7 +195,8 @@ def headline(data_dir):
          - float(M[s]["4S__surs"]["cosine_similarity"]) for s in STATES]
     m, sd = st.mean(d), st.stdev(d)
     t = m / (sd / math.sqrt(len(d)))
-    return m, sum(x > 0 for x in d), t
+    ref = st.mean(float(M[s]["4S__surs"]["cosine_similarity"]) for s in STATES)
+    return m, m / ref * 100, sum(x > 0 for x in d), t
 
 
 def baselines(data_dir):
@@ -319,12 +358,18 @@ def main():
         a.out = ("poster_project/poster_alt.svg" if a.layout == "alt"
                  else "poster_project/poster.svg")
     F = lambda n: os.path.join(a.figures, n)
-    hd_m, hd_w, hd_t = headline(a.data)
+    hd_m, hd_pct, hd_w, hd_t = headline(a.data)
     BASE = baselines(a.data)
     SWEEP_N, SWEEP_TOT = sweeps(a.data)
     C = clock(a.results)
     truths = [v["truth"] for v in C.values()]
-    ratio = 8e-4 / st.mean(truths) if truths else None
+    # How the twin's clock compares to real SARS-CoV-2 (~8e-4 subs/site/year),
+    # as twin/real so the DIRECTION is in the number. The old form was
+    # 8e-4/mean(truth) rendered as "{:.1f}x slower", which was written when the
+    # twin was slow and silently became false once it was recalibrated: at
+    # mean 8.86e-4 it printed "about 0.9x slower", which is both the wrong
+    # direction and a meaningless phrase.
+    clock_x = st.mean(truths) / 8e-4 if truths else None
 
     p = [f'<svg xmlns="http://www.w3.org/2000/svg" '
          f'xmlns:xlink="http://www.w3.org/1999/xlink" width="{W}" height="{H}" '
@@ -452,9 +497,9 @@ def main():
         pval = "p < 0.01" if hd_t > 4.604 else ("p < 0.05" if hd_t > 2.776 else "n.s.")
         gaps = [abs(v["sim"] - v["truth"]) / v["truth"] * 100 for v in have_sim.values()]
         concl = [
-            f"Picking cases so the sample resembles the whole population, with the algorithm "
-            f"free to choose from a four-week pool, reconstructed county-to-county spread "
-            f"best: {hd_m:+.3f} over random, better in {hd_w} of 5 state twins (paired t = "
+            f"LASSO-Greedy with a population target, choosing freely from a four-week "
+            f"pool, reconstructed county-to-county flow best: {hd_pct:+.1f}% over random "
+            f"({hd_m:+.3f} cosine), better in {hd_w} of 5 state twins (paired t = "
             f"{hd_t:.1f}, {pval}).",
             "Rigid demographic quotas lost to random in every combination tested. The same "
             "target helps or hurts depending on whether the algorithm is free to choose.",
@@ -468,8 +513,8 @@ def main():
                 f"sample to within {max(gaps):.1f}%"
                 + (f" ({len(gaps)} of 5 twins)" if len(gaps) < 5 else "")
                 + ": a readable molecular clock"
-                + (f", though about {ratio:.1f}\u00d7 slower than real SARS-CoV-2."
-                   if ratio else "."))
+                + (f", running at {clock_x:.2f}\u00d7 the rate of real SARS-CoV-2."
+                   if clock_x else "."))
         for i, c in enumerate(concl, 1):
             p.append(f'<circle cx="{xB+18}" cy="{y-9}" r="19" fill="{BLUE}"/>')
             p.append(txt(xB + 18, y, str(i), 26, "#ffffff", anchor="middle", weight="bold"))
@@ -489,8 +534,14 @@ def main():
 
         # ---- column C (alt): cross-tab on top, then the per-recipe profile
         xC, wC = 3240, 1480
-        y = embed(p, F("panel_crosstab_compact.svg"), xC, TOP - 30, wC)
-        y = embed(p, F("panel_profile_compact.svg"), xC, y + 20, wC)
+        # Scaled to 95% and centred. At full width the two compact panels fill
+        # the column to y=2340, which leaves nothing for the funding block;
+        # 5% off their width buys ~95px of height for 37px of side margin.
+        wC2 = int(wC * 0.94)
+        xC2 = xC + (wC - wC2) // 2
+        y = embed(p, F("panel_crosstab_compact.svg"), xC2, TOP - 30, wC2)
+        y = embed(p, F("panel_profile_compact.svg"), xC2, y + 20, wC2)
+        y = funding(p, xC, max(y + 20, BOT - 112), wC)
         check("C", y, BOT)
     else:
         # ---- column B --------------------------------------------------------
@@ -504,19 +555,31 @@ def main():
                  "genomes and their dates, with no tree involved. Nextstrain, given one random "
                  "sample and no rate, estimated it from its own tree:", nB, size=25, lead=34)
         y += 6
-        for s, v in have_sim.items():
-            gap = abs(v["sim"] - v["truth"]) / v["truth"] * 100
-            p.append(txt(xB + 20, y + 4, STATE_NAME[s], 27, INK, weight="bold"))
-            p.append(txt(xB + 300, y + 4, f"true {v['truth']*1e4:.2f}\u00d710\u207b\u2074", 27, T_BLUE))
-            p.append(txt(xB + 650, y + 4, f"Nextstrain {v['sim']*1e4:.2f}\u00d710\u207b\u2074", 27, T_AQUA))
-            p.append(txt(xB + 1080, y + 4, f"{gap:.1f}% apart", 27, INK, weight="bold"))
-            y += 42
-        if not have_sim:
+        # One row per state was fine when only one twin had a mu_sim estimate.
+        # With all five it is 5x42px of near-identical numbers, which both
+        # overflowed the column and buried the point -- the agreement is the
+        # result, and the spread is what makes it credible. Ranges plus the
+        # per-state gaps on one line say it in a third of the height.
+        if have_sim:
+            tr = [v["truth"] for v in have_sim.values()]
+            gp = {s: abs(v["sim"] - v["truth"]) / v["truth"] * 100
+                  for s, v in have_sim.items()}
+            p.append(txt(xB + 20, y + 4, f"true {min(tr)*1e4:.2f}\u2013{max(tr)*1e4:.2f}"
+                         f"\u00d710\u207b\u2074", 27, T_BLUE, weight="bold"))
+            p.append(txt(xB + 560, y + 4, f"recovered to within {max(gp.values()):.1f}%",
+                         27, T_AQUA, weight="bold"))
+            p.append(txt(xB + 1140, y + 4, f"in {len(gp)} of 5 twins", 27, INK3))
+            y += 44
+            parts = "   ".join(f"{s.upper()} {g:.1f}%" for s, g in
+                               sorted(gp.items(), key=lambda kv: kv[1]))
+            p.append(txt(xB + 20, y + 4, parts, 25, INK))
+            y += 28
+        else:
             WARN.append("no mu_sim rows: validation box has no comparison")
-        if ratio:
-            y = para(p, xB, y + 4, f"The twin's rate is about {ratio:.1f}\u00d7 slower than real "
-                     "SARS-CoV-2 (\u22488\u00d710\u207b\u2074): fewer mutations give the tree less "
-                     "to work with. Calibrating it upward is ongoing work.", nB, size=23,
+        if clock_x:
+            y = para(p, xB, y + 4, f"That rate is {clock_x:.2f}\u00d7 real SARS-CoV-2 "
+                     f"(\u22488\u00d710\u207b\u2074), so the synthetic genomes carry a "
+                     f"clock of realistic tempo for a tree to read.", nB, size=23,
                      lead=31, fill=INK3)
         y = heading(p, xB, y + 10, "References", w=260)
         for r in ["Chen J, Hoops S, Mortveit HS, et al. EpiHiper \u2014 a high performance "
@@ -540,9 +603,9 @@ def main():
         pval = "p < 0.01" if hd_t > 4.604 else ("p < 0.05" if hd_t > 2.776 else "n.s.")
         gaps = [abs(v["sim"] - v["truth"]) / v["truth"] * 100 for v in have_sim.values()]
         concl = [
-            f"Picking cases so the sample resembles the whole population, with the algorithm "
-            f"free to choose from a four-week pool, reconstructed county-to-county spread best: "
-            f"{hd_m:+.3f} over random, better in {hd_w} of 5 state twins (paired t = "
+            f"LASSO-Greedy with a population target, choosing freely from a four-week "
+            f"pool, reconstructed county-to-county flow best: {hd_pct:+.1f}% over random "
+            f"({hd_m:+.3f} cosine), better in {hd_w} of 5 state twins (paired t = "
             f"{hd_t:.1f}, {pval}).",
             "Rigid demographic quotas lost to random in every combination tested. The same "
             "target helps or hurts depending on whether the algorithm is free to choose.",
@@ -560,6 +623,7 @@ def main():
             p.append(txt(xC + 18, y, str(i), 26, "#ffffff", anchor="middle", weight="bold"))
             y = para(p, xC + 56, y, c, 94, size=25, lead=33, fill=INK)
             y += 14
+        y = funding(p, xC, max(y + 16, BOT - 112), wC)
         check("C", y, BOT)
 
     p.append(f'<rect x="0" y="{H-12}" width="{W}" height="12" fill="{BLUE}"/>')

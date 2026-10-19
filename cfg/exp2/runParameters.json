@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/NSSAC/EpiHiper-Schema/master/schema/runParametersSchema.json",
+  "epiHiperSchema": "https://raw.githubusercontent.com/NSSAC/EpiHiper-Schema/master/schema/runParametersSchema.json",
+  "modelScenario": "self://./modelScenario",
+  "status": "self://./epihiper.status.json",
+  "output": "self://./output.csv",
+  "summaryOutput": "self://./outputSummary.csv",
+  "startTick": 0,
+  "endTick": 700,
+  "dbHost": "localhost:5432", 
+  "dbMaxRecords": 0,
+  "logLevel": "warn"
+}

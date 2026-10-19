@@ -549,7 +549,13 @@ def panel_crosstab(M, out_path):
         b = base(r)
         d = [float(M[s][r]["cosine_similarity"]) - float(M[s][b]["cosine_similarity"])
              for s in M]
-        cell[(alg(r), tgt(scen(r)), scen(r)[:2])] = (st.mean(d), sum(x > 0 for x in d), len(d))
+        # As a PERCENT of what random scored, not a raw cosine delta. "+0.072"
+        # is meaningless without the 0.669 baseline beside it; "+10.7%" is the
+        # same number made legible, and it matches panel_profile, which was
+        # already in percent.
+        ref = st.mean(float(M[s][b]["cosine_similarity"]) for s in M)
+        cell[(alg(r), tgt(scen(r)), scen(r)[:2])] = (st.mean(d) / ref * 100,
+                                                     sum(x > 0 for x in d), len(d))
     sched = all(cell[(a, t, "4S")][0] > cell[(a, t, "1S")][0] for a in ALG for t in TGT)
     order = all(cell[("lasso_greedy", t, c)][0] > cell[("lasso_stratified", t, c)][0]
                 > cell[("stratified", t, c)][0] for t in TGT for c in ("1S", "4S"))
@@ -562,12 +568,24 @@ def panel_crosstab(M, out_path):
     LW, CW, RH = 330, 450, 150
     T = 330
     p = [svg_open(W, H)]
-    p.append(txt(40, 58, "Representativeness evaluation of demographic-aware "
+    p.append(txt(40, 58, "Flow reconstruction evaluation of demographic-aware "
                  "sampling strategies", 34, INK, weight="bold"))
-    p.append(txt(40, 98, "Gain in reconstruction score over random sampling run on the "
-                         "same schedule. Above zero = better than random.", 22, INK2))
-    p.append(txt(40, 130, "Each cell shows the weekly and the 4-weekly version, and in how "
-                          "many of the five state twins it beat random.", 22, INK2))
+    # Name the metric. "Reconstruction score" was undefined on the printed
+    # poster, and this table scores cosine_similarity only -- the agreement in
+    # flow PROPORTIONS. Topology is a separate metric (topological_f1), shown
+    # in its own column in panel_profile.
+    p.append(txt(40, 98, "Gain in flow proportions \u2014 cosine similarity to the true "
+                         "county-to-county flow matrix \u2014 as a percent of what random "
+                         "scored on the same schedule.", 22, INK2))
+    p.append(txt(40, 130, "Above zero beats random. Each cell shows the weekly and the "
+                          "4-weekly version, and in how many of the five twins it won.",
+                 22, INK2))
+    # Axis labels. The table had none: the columns are the algorithm (how it
+    # chooses) and the rows the target (what it aims at), which is easy to
+    # read backwards without saying so.
+    p.append(txt(40 + LW + (3 * CW - 14) / 2, T - 98, "Strategy type", 22, INK3,
+                 anchor="middle"))
+    p.append(txt(40, T - 26, "Sampling target", 22, INK3))
     for j, a in enumerate(ALG):
         x = 40 + LW + j * CW + (CW - 14) / 2
         l1, l2 = COLS[a]
@@ -585,7 +603,7 @@ def panel_crosstab(M, out_path):
             vals = [cell.get((a, t, c)) for c in ("1S", "4S")]
             mu = st.mean(v[0] for v in vals if v)
             p.append(f'<rect x="{x}" y="{y}" width="{CW-14}" height="{RH-14}" '
-                     f'fill="{_ramp(mu, lim=0.20)}" stroke="#ffffff" stroke-width="2"/>')
+                     f'fill="{_ramp(mu, lim=20.0)}" stroke="#ffffff" stroke-width="2"/>')
             for k, v in enumerate(vals):
                 if v is None:
                     continue
@@ -593,7 +611,7 @@ def panel_crosstab(M, out_path):
                 sweep = pos == n and d > 0
                 yy = y + 56 + k * 56
                 p.append(txt(x + 28, yy, "weekly" if k == 0 else "4-weekly", 21, INK3))
-                p.append(txt(x + 238, yy, f"{d:+.3f}", 30, INK, anchor="end",
+                p.append(txt(x + 238, yy, f"{d:+.1f}%", 30, INK, anchor="end",
                              weight="bold" if sweep else "normal"))
                 p.append(txt(x + 258, yy, f"{pos}/{n} states", 20,
                              INK if sweep else INK3))
@@ -610,7 +628,7 @@ def panel_crosstab(M, out_path):
         lines.append(("Targeting the population pays only with free choice. Quota-only "
                       "sampling lost to random in all six combinations,", True))
         lines.append((f"and with the population target it did worst of all "
-                      f"({cell[worst][0]:+.3f}).", True))
+                      f"({cell[worst][0]:+.1f}%).", True))
     for k, (s, bold) in enumerate(lines):
         p.append(txt(40, yb + 40 + k * 32 + (14 if bold else 0), s, 22,
                      INK if bold else INK2, weight="bold" if bold else "normal"))
@@ -650,7 +668,9 @@ def panel_crosstab_compact(M, out_path, W=1480):
             continue
         d = [float(M[s][r]["cosine_similarity"]) - float(M[s][base(r)]["cosine_similarity"])
              for s in M]
-        cell[(alg(r), tgt(scen(r)), scen(r)[:2])] = (st.mean(d), sum(x > 0 for x in d), len(d))
+        ref = st.mean(float(M[s][base(r)]["cosine_similarity"]) for s in M)
+        cell[(alg(r), tgt(scen(r)), scen(r)[:2])] = (st.mean(d) / ref * 100,
+                                                     sum(x > 0 for x in d), len(d))
     sched = all(cell[(a, t, "4S")][0] > cell[(a, t, "1S")][0] for a in ALG for t in TGT)
     order = all(cell[("lasso_greedy", t, c)][0] > cell[("lasso_stratified", t, c)][0]
                 > cell[("stratified", t, c)][0] for t in TGT for c in ("1S", "4S"))
@@ -670,16 +690,20 @@ def panel_crosstab_compact(M, out_path, W=1480):
         lines.append(("Targeting the population pays only with free choice. Quota-only sampling "
                       "lost to random in all six", True))
         lines.append((f"combinations, and with the population target it did worst of all "
-                      f"({cell[worst][0]:+.3f}).", True))
+                      f"({cell[worst][0]:+.1f}%).", True))
     yb = T + 3 * RH
     H = yb + 34 + len(lines) * 28 + 14 + 36 + 28 + 22
     p = [svg_open(W, H)]
-    p.append(txt(40, 52, "Representativeness evaluation of demographic-aware sampling "
+    p.append(txt(40, 52, "Flow reconstruction evaluation of demographic-aware sampling "
                  "strategies", 31, INK, weight="bold"))
-    p.append(txt(40, 92, "Gain in reconstruction score over random sampling run on the same "
-                         "schedule. Above zero = better than random.", 21, INK2))
-    p.append(txt(40, 121, "Each cell shows the weekly and the 4-weekly version, and in how many "
-                          "of the five state twins it beat random.", 21, INK2))
+    # One subtitle line, not two: the alt column C is full, so the axis label
+    # has to come out of the header rather than out of the panel's height.
+    p.append(txt(40, 92, "Gain in flow proportions (cosine similarity to true "
+                         "county-to-county flow), as a percent of schedule-matched "
+                         "random; above zero is better.", 21, INK2))
+    p.append(txt(40 + LW + (3 * CW - 14) / 2, T - 72, "Strategy type", 21, INK3,
+                 anchor="middle"))
+    p.append(txt(40, T - 18, "Sampling target", 21, INK3))
     for j, a in enumerate(ALG):
         x = 40 + LW + j * CW + (CW - 14) / 2
         l1, l2 = COLS[a]
@@ -697,7 +721,7 @@ def panel_crosstab_compact(M, out_path, W=1480):
             vals = [cell.get((a, t, c)) for c in ("1S", "4S")]
             mu = st.mean(v[0] for v in vals if v)
             p.append(f'<rect x="{x}" y="{y}" width="{CW-14}" height="{RH-12}" '
-                     f'fill="{_ramp(mu, lim=0.20)}" stroke="#ffffff" stroke-width="2"/>')
+                     f'fill="{_ramp(mu, lim=20.0)}" stroke="#ffffff" stroke-width="2"/>')
             for k, v in enumerate(vals):
                 if v is None:
                     continue
@@ -705,7 +729,7 @@ def panel_crosstab_compact(M, out_path, W=1480):
                 sweep = pos == n and d > 0
                 yy = y + 38 + k * 38
                 p.append(txt(x + 18, yy, "weekly" if k == 0 else "4-weekly", 18, INK3))
-                p.append(txt(x + 196, yy, f"{d:+.3f}", 24, INK, anchor="end",
+                p.append(txt(x + 196, yy, f"{d:+.1f}%", 24, INK, anchor="end",
                              weight="bold" if sweep else "normal"))
                 p.append(txt(x + 210, yy, f"{pos}/{n} states", 17, INK if sweep else INK3))
                 if sweep:
@@ -952,12 +976,18 @@ def panel_profile(M, A, out_path, W=1480, RH=42, T=300, bottom=330):
             return float(M[s][r][c])
         return A[s][c][r]
     # (metric, header, higher_is_better)
+    #
+    # The last column is KL(sample demographics || TRUE INFECTION
+    # demographics) over the stride window -- the reference is every
+    # infection, NOT the line list, which is what the header now says.
+    # Scored lower-is-better, so more divergence colours orange: the sign and
+    # the "mismatch" framing are kept, and the colour follows them.
     COLS = [("cosine_similarity", "Flow\nproportions", True),
             ("topological_f1", "Flow\ntopology", True),
             ("coverage_size_100", "Tree\ncoverage", True),
             ("8_week_rolling_tree_coverage", "Recent tree\ncoverage", True),
             ("stride_component_coverage", "Clusters\nreached", True),
-            ("stride_window_infections", "Mismatch with\ncase mix", False)]
+            ("stride_window_infections", "Trait mismatch\nw/ infections", False)]
     S = [s for s in STATES if s in A]
     R = [r for r in sorted(M[S[0]]) if not r.endswith("surs")]
     tab = {}
@@ -988,14 +1018,15 @@ def panel_profile(M, A, out_path, W=1480, RH=42, T=300, bottom=330):
     p.append(txt(40, 52, "What each strategy is good at, compared with random sampling",
                  31, INK, weight="bold"))
     for k, line in enumerate([
-            "Each row is one recipe, sorted by how well it reconstructed spread. Each cell "
-            "compares it with random",
-            "sampling on the same schedule, averaged over five state twins. Blue = better "
-            "than random in most twins;",
-            "orange = worse; darker = more twins agree. Number = average change; changes "
+            "Each row is one recipe, sorted by how well it reconstructed flow proportions. "
+            "Each cell compares it with",
+            "random sampling on the same schedule, averaged over five state twins. Blue = "
+            "better than random in most twins;",
+            "orange = worse; darker = more twins agree. Number = average % change; changes "
             "under 1% are grey."]):
         p.append(txt(40, 92 + k * 29, line, 21, INK2))
     # column groups and headers
+    p.append(txt(40, T - 43, "Sampling strategy", 21, INK3))
     p.append(txt(x0 + CW, T - 104, "Reconstruction", 21, INK, anchor="middle", weight="bold"))
     p.append(f'<line x1="{x0+6}" y1="{T-96}" x2="{x0+2*CW-6}" y2="{T-96}" stroke="{INK3}" stroke-width="1.5"/>')
     p.append(txt(x0 + 4 * CW, T - 104, "Surveillance goals", 21, INK, anchor="middle", weight="bold"))
@@ -1021,8 +1052,9 @@ def panel_profile(M, A, out_path, W=1480, RH=42, T=300, bottom=330):
             fill = "#f1f0ed" if neglig else wins_colour(w)
             p.append(f'<rect x="{x+3}" y="{y+2}" width="{CW-6}" height="{RH-4}" fill="{fill}"/>')
             strong = (w in (0, len(S))) and not neglig
-            p.append(txt(x + CW / 2, y + round(RH * 2 / 3), f"{rel:+.1f}%", 20, INK3 if neglig else INK,
-                         anchor="middle", weight="bold" if strong else "normal"))
+            p.append(txt(x + CW / 2, y + round(RH * 2 / 3), f"{rel:+.1f}%", 20,
+                         INK3 if neglig else INK, anchor="middle",
+                         weight="bold" if strong else "normal"))
     yb = T + len(R) * RH
     p.append(f'<line x1="40" y1="{yb+8}" x2="{x0+6*CW}" y2="{yb+8}" stroke="{INK3}" stroke-width="1.5"/>')
     p.append(txt(40, yb + 44, "Moves with better flow", 20, INK, weight="bold"))
@@ -1045,7 +1077,7 @@ def panel_profile(M, A, out_path, W=1480, RH=42, T=300, bottom=330):
     msg = []
     if mis_rho > 0.4 and mis_pos == mis_n:
         msg.append("Reconstruction tracks one thing: the best recipes sample cases least "
-                   "like the current case mix.")
+                   "like the true infection mix.")
     if tree_max < 1.0 and abs(clu_rho) < 0.2:
         msg.append(f"Tree coverage barely differs between recipes (within {tree_max:.1f}% "
                    "of random), and reaching more clusters doesn't predict who wins.")

@@ -1,0 +1,185 @@
+{
+  "ann:id": "seed_2_%tick%",
+  "trigger": {
+    "left": {
+      "observable": "time"
+    },
+    "operator": "==",
+    "right": {
+      "value": {
+        "number": %tick%
+      }
+    }
+  },
+  "target": {
+    "elementType": "node",
+    "scope": "local",
+    "left": {
+      "node": {
+        "property": "healthState"
+      }
+    },
+    "operator": "in",
+    "right": {
+      "valueList": {
+        "healthState": [
+          "S_p","W_p","R1_p",
+          "S_s","W_s","R1_s",
+          "S_a","W_a","R1_a",
+          "S_o","W_o","R1_o",
+          "S_g","W_g","R1_g"
+        ]
+      }
+    }
+  },
+  "sampling": {
+    "type": "absolute",
+    "count": {
+      "number": %count%
+    },
+    "sampled": {
+      "foreach": [
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_p","W_p","R1_p"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E2_p"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_s","W_s","R1_s"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E2_s"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_a","W_a","R1_a"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E2_a"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_o","W_o","R1_o"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E2_o"
+              }
+            }
+          ]
+        },
+        {
+          "condition": {
+            "left": {
+              "node": {
+                "property": "healthState"
+              }
+            },
+            "operator": "in",
+            "right": {
+              "valueList": {
+                "healthState": ["S_g","W_g","R1_g"]
+              }
+            }
+          },
+          "operations": [
+            {
+              "target": {
+                "node": {
+                  "property": "healthState"
+                }
+              },
+              "operator": "=",
+              "value": {
+                "healthState": "E2_g"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
