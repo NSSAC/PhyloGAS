@@ -4,10 +4,13 @@ Adapted from [exp1](exp1.md). Three files differ from `cfg/exp1/` --
 `disease.json`, `runParameters.json` and `config.json`; every other file is
 byte-identical.
 
-Three changes: two to transition dwell times in `disease.json`, and the run
-length. Nothing else about the design moves: the cross-infection cell
-structure, the 60% transmissibility advantage of the new variant, vaccination,
-seeding, networks and replicates are all inherited from exp1 unchanged.
+Four changes: three to `disease.json` (dwell times, waning shape, variant-2
+infectivity) and one to the run length. The new variant keeps its 60% `R_0`
+advantage over the current variant, but because the dwell-time change is
+variant-specific that now takes a different infectivity ratio to achieve --
+see Change 4. Nothing else about the design moves: the cross-infection cell
+structure, vaccination, seeding, networks and replicates are all inherited
+from exp1 unchanged.
 
 ## 1. Generation interval, now variant-specific
 
@@ -152,6 +155,47 @@ mentions replicates, and nothing in the repo expands the `%tick%` templates
 either. The count (exp1: 60 per cell) is set in the EpiHiper pipeline batch
 layer on Rivanna, so a reduction to 30 happens there, not here.
 
+## 4. Variant-2 infectivity raised to preserve the 60% advantage
+
+Change 1 cut variant 2's infectious period harder than variant 1's (Delta
+`I -> rM` 4.375 -> 2.458 and `A -> R` 5 -> 3.5, against Alpha's 4.375 -> 3.607
+with `A -> R` unchanged). Because `R_0` tracks infectious duration, that
+asymmetry does not cancel:
+
+| | `R_0(v2) / R_0(v1)` |
+|---|---|
+| exp1 | 1.600 |
+| exp2, Change 1 only | **1.248** |
+
+In exp1 the per-contact infectivity ratio and the `R_0` ratio were both 1.6,
+because the two variants had identical dwell times. Under exp2's
+variant-specific timings they can no longer both be 1.6, and leaving infectivity
+alone would have cut Delta's advantage from 60% to 25%. That is not a
+cosmetic inconsistency: the whole painted window is the Delta wave, and at a
+25% advantage Delta may displace Alpha far more slowly, or not within 300
+ticks.
+
+The literature statement -- Delta is roughly 60% more transmissible -- is about
+growth and `R_0`, not per-contact infectivity, so exp2 holds the `R_0` ratio
+and lets the infectivity ratio move. Variant-2 infectivities are scaled by
+**1.28125**, which restores the ratio while preserving the internal
+asymptomatic/symptomatic ratio of 0.5:
+
+| state | exp1 | exp2 |
+|---|---|---|
+| `P2`, `I2` | 1.6 | **2.05** |
+| `A2` | 0.8 | **1.025** |
+
+Variant 1's infectivities (`P1`/`I1` 1.0, `A1` 0.5) are untouched, so it remains
+the calibration reference.
+
+Realised ratio after the change, per age class: 1.599 (p), 1.597 (s), 1.599
+(a), 1.609 (o), 1.642 (g). A single scalar cannot hit 1.600 in every class
+because the `I -> {rM, hM, dM}` severity split is age-dependent and the
+hospitalised and deceased branches carry short fixed dwells; the geriatric
+class therefore overshoots by about 2.6%. The classes holding most of the
+population are on target.
+
 ## What exp2 deliberately does NOT change
 
 * **The cross-infection sweep.** `R1_*` susceptibility stays at **1.00**, which
@@ -162,10 +206,25 @@ layer on Rivanna, so a reduction to 30 happens there, not here.
   four levels.
 * Transmissibility calibration, vaccination, seeding, networks, replicates.
 
-**Recalibration.** Shortening the generation interval raises `R_0` for a given
-transmissibility, so the exp1 calibration (current variant against `R_0 = 4.0`)
-does not carry over unchanged. Transmissibility should be re-fitted before the
-exp2 twins are treated as comparable to exp1.
+**Recalibration.** `R_0` is proportional to the infectivity-weighted expected
+infectious duration. Shortening *latent* dwells (`E -> P`, `E -> A`) moves the
+generation interval but leaves `R_0` untouched; shortening *infectious* dwells
+(`I -> rM`, `A -> R`) lowers it. Change 1 did both, so `R_0` fell and
+transmissibility has to be re-fitted **upward** -- by about **1.107x** for
+variant 1 as a starting point for the sweep. (An earlier revision of this doc
+had the direction backwards.) The multiplier is first-order: it assumes
+transmissions scale linearly with infectious duration, which finite contact
+sets violate through saturation, so it is a starting point and not a
+substitute for the empirical fit against `R_0 = 4.0`.
+
+Calibration is fitted on **variant 1**, which is the unit-infectivity
+reference (`P1`/`I1` = 1.0). `calibration.csv` holds one scalar per state,
+which the pipeline substitutes for the global `transmissibility` field
+(`disease.json` ships it as 1). Variant 1 is also the only variant that can be
+calibrated: it seeds from tick ~10 into a naive population, while variant 2
+arrives at tick 103-130 after variant 1 has immunised part of the population
+and vaccination has begun, so variant 2 never experiences a naive population
+and its `R_0` is not cleanly measurable in situ.
 
 ## Resolved: the exp1 duration discrepancy
 
