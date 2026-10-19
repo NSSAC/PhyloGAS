@@ -6,7 +6,7 @@
   "output": "self://./output.csv",
   "summaryOutput": "self://./outputSummary.csv",
   "startTick": 0,
-  "endTick": 700,
+  "endTick": 500,
   "dbHost": "localhost:5432", 
   "dbMaxRecords": 0,
   "logLevel": "warn"

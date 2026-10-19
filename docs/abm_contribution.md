@@ -253,10 +253,53 @@ quality, not saturation.
 
 The practical consequence: **no change to the disease model or the painter will
 tighten this.** They move `lambda` and GI, whose spreads are under 3%. The
-6.5-8.8% lives in the pooled root-to-tip estimator, which
-`scripts/clock_within_component.py` already diagnoses -- each chain carries its
-seed's own divergence as a constant, and continued importation attenuates the
-pooled slope. The within-chain decomposition is the only lever on it.
+6.5-8.8% lives in the estimator.
+
+### The within-chain estimator does not fix it
+
+An earlier draft of this section claimed the within-chain decomposition was
+"the only lever" on the spread. That was wrong twice over, and the numbers were
+already sitting in `clock_estimates.csv` when it was written.
+
+It is not something to build: `mu_lineage` in `src/phylogas/benchmark/lineage.py`
+is already a fixed-effects within-chain fit -- one shared rate, a free intercept
+per chain, streamed as six running sums -- and it already runs in the pipeline.
+(It is also the better implementation. `scripts/clock_within_component.py`
+recentres each chain on `min(y)`, and the minimum of a larger sample runs lower,
+so that baseline is size-biased.)
+
+And it does not tighten the spread. It widens it:
+
+| | mean | spread | vs real 8e-4 |
+|---|---|---|---|
+| `mu_truth` (pooled) | 5.42e-4 | **6.5%** | 0.68x |
+| `mu_lineage` (within-chain) | 6.53e-4 | **15.7%** | 0.82x |
+
+The two trade bias against variance, and the lever arm is what does it. Pooled
+regresses across the whole wave, so `Sxx` is large and the slope is precisely
+estimated, but every calendar date mixes old and young chains and that
+attenuates it. Within-chain absorbs each chain's seed offset so it attenuates
+less -- hence landing closer to 8e-4 -- but it only has each chain's own date
+span as a lever, a much smaller `Sxx`, so `SE(slope)` is larger. The 15.7% *is*
+that variance.
+
+**Do not read r2 as slope precision here.** `mu_lineage` shows r2 0.05-0.11
+against `mu_truth`'s 0.22-0.43, which looks damning but is not comparable: the
+within fit's r2 is computed on centred data where most tip-to-tip variation is
+genuine noise. Low r2 over millions of tips does not imply an imprecise slope.
+Cross-state spread is the honest diagnostic, and it favours the pooled fit.
+
+**`within_date_variance_share` is 0.94-0.99 in all five states.** Nearly all
+the date variance already lies within chains rather than between them, so the
+pooled slope cannot be badly contaminated by import mixing in these runs. The
+32x attenuation cited in `lineage.py`'s docstring came from synthetic data with
+far less chain overlap; these twins are not in that regime. Consistent with
+that, `mu_between_chains` comes back negative (-4.0e-3) -- a term fitted on
+1-6% of the variance, dominated by seed-divergence scatter. It is noise.
+
+So `mu_truth` at 6.5% is the tightest estimator available here, and nothing in
+the codebase beats it. If the spread needs to come down, the lever is more tips
+per state or a longer date span -- more signal, not a different fit.
 
 One caution for comparing arms: at lower `lambda`, `mu_truth` is a *weaker*
 measurement (r2 0.31 vs 0.46). Per-state values deserve error bars rather than

@@ -9,7 +9,7 @@ Adapted based on [multi-variant surveilance exp7 design](https://github.com/NSSA
 - **Vaccination**: We implement state level vaccine administration data from CDC. Vaccine efficacy is 95% protection on fully vaccinated individuals against infection.
 - **NPIs**: We do not consider NPIs for now, but may add them if needed.
 - **Network**: v2.4.0 networks of GA, MA, MN, VA, WA.
-- **Duration**: 365 days.
+- **Duration**: 700 ticks (`runParameters.json` `endTick: 700`; measured from `output.csv.gz`, which runs tick 0-699). An earlier revision of this doc said 365 days; that was never what ran.
 - **Replicates**: 60.
 - **Cells**: Each state has 4 cells for 4 levels of cross-infection parameter.
 - Simulation path on Rivanna: `/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20250120_1/output_root/proj/20250120_1/batch_1/`. The output files are `output*.csv.gz`.
