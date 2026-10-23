@@ -12,6 +12,8 @@ Nothing else about the design moves: the cross-infection cell structure,
 vaccination, seeding, networks and replicates are all inherited from exp1
 unchanged.
 
+Simulation path on Rivanna: `/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20261022_2/output_root/proj/20261022_2/batch_1/`. The output files are `output*.csv.gz`.
+
 ## 1. Generation interval, now variant-specific
 
 **Why.** The realised generation interval of the exp1 twins was measured at
