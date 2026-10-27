@@ -7,6 +7,8 @@ per-state `transmissibility` values. Every other file in `cfg/exp3/`
 `initialization-base.json`, `intervention-base-noise.json`, and the seeding/vax
 templates) is byte-identical to `cfg/exp2/`.
 
+Simulation path on Rivanna: `/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20261026_1/output_root/proj/20261026_1/batch_1/`. The output files are `output*.csv.gz`.
+
 ## 1. What `exp2` Fixed (and `exp3` Preserves Unchanged)
 
 Evaluated across all five states (`GA, MA, MN, VA, WA`, cell `0.25`) in the
