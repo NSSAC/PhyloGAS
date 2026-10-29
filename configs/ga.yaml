@@ -181,7 +181,7 @@ abm:
   # EpiHiper's config.json, whose "tickZero" dates tick 0. The bundled
   # experiment used 2020-11-30 for every state, deliberately, so each state's
   # ticks sit on one shared calendar.
-  config: "cfg/exp1/config.json"
+  config: "cfg/exp3/config.json"
   # Only needed for an ABM whose config does not carry the date.
   tick_zero: ""
   # The importation schedule the ABM actually ran for the painted variant
@@ -220,12 +220,12 @@ training:
 epihiper:
   # Transmission log: tick,pid,exit_state,contact_pid,location_id
   #
-  # Published on Zenodo, one replicate per state (~0.4-0.6 GB compressed):
+  # Published exp1 replicates on Zenodo (~0.4-0.6 GB compressed):
   #   doi:10.5281/zenodo.23067670   (concept doi:10.5281/zenodo.23067669)
-  # Fetch with:  phylogas fetch-data --states va --with-simulations
+  #   output_csv: "{data_dir}/{population.state}/{population.state}_replicate_0_output.csv.gz"
   #
-  # Available: va, ga, ma, mn, wa  (no California replicate published)
-  output_csv: "{data_dir}/{population.state}/{population.state}_replicate_0_output.csv.gz"
+  # exp3 on Rivanna (0.25 cross-infection cell, replicate_0):
+  output_csv: "/project/bii_nssac/epihiper-simulations/pipeline-jc/run/20261026_1/output_root/proj/20261026_1/batch_1/0.25/{population.state}/replicate_0/output.csv.gz"
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +454,23 @@ sampling:
   no_replacement: true
   outdir: "{results_dir}/03_sampled_datasets"
 
+  # The sampler's calendar, resolved once (`phylogas sampling-calendar`) and
+  # read by both the sampler and `benchmark truth`, so every scoring window
+  # covers exactly the weeks the samples were drawn from. Week 0 is the seven
+  # days *before* start_date.
+  #
+  #   "auto"       week 0 = the first week of the all-events file, i.e. the
+  #                start of the simulated window being benchmarked.
+  #   YYYY-MM-DD   used as given (BeyondBaseline's old default was 2021-05-31
+  #                for every state, which skipped the first two months or so
+  #                of each wave).
+  start_date: "auto"
+  # The end of the window: sampling runs through the last week with at least
+  # this many reported cases. Sparser weeks inside the window -- typically the
+  # opening weeks of a wave -- are sampled too; when the budget covers a
+  # week's pool, every case is sequenced. Empty = BeyondBaseline's default (50).
+  min_pool: ""
+
   # Which recipes get a Nextstrain tree. One tree per entry; "all" means
   # every id `scenarios-recipes` prints. A recipe is a scenario and an
   # algorithm together, because the algorithm alone does not identify a
@@ -506,6 +523,15 @@ nextstrain:
   # project's inputs and writes each arm's config. It stages rather than
   # points because `nextstrain build <dir>` mounts only that directory --
   # absolute paths elsewhere are invisible under docker and singularity.
+  #
+  # Each arm gets <stage_subdir>/<recipe>/, and the files they all share
+  # (lat/longs, the Auspice config, the reference) go in
+  # <stage_subdir>/_shared/. cfg/nextstrain/ncov/base.yaml spells those as
+  # "data/phylogas/_shared/..." so it reads as a working ncov config on its
+  # own; nextstrain-config rewrites that prefix to match whatever is set here.
+  # scripts/make_state_configs.py appends /{project_name}, which is redundant
+  # now that each project has its own checkout but harmless, and still correct
+  # if you ever point two projects at one checkout.
   stage_subdir: "data/phylogas/{project_name}"
 
   outdir: "{results_dir}/04_nextstrain_builds"
