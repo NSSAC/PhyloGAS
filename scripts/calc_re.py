@@ -42,7 +42,12 @@ DEFAULT_EXP2_ROOT = (
     "/project/bii_nssac/epihiper-simulations/pipeline-jc/run/"
     "20261022_2/output_root/proj/20261022_2/batch_1"
 )
+DEFAULT_EXP3_ROOT = (
+    "/project/bii_nssac/epihiper-simulations/pipeline-jc/run/"
+    "20261026_1/output_root/proj/20261026_1/batch_1"
+)
 STATES = ("ga", "ma", "mn", "va", "wa")
+FIRST_V2_SEED = {"ga": 130, "ma": 103, "mn": 124, "va": 128, "wa": 124}
 
 
 def compute_cohort_re(
@@ -174,6 +179,76 @@ def plot_re(re_rows: list[dict], plot_file: Path, title: str = "Time-Varying Coh
     return True
 
 
+def run_check_gi(args: argparse.Namespace) -> None:
+    """Measure realized GI (E1 & E2), reinfection rates, and inter-infection gaps."""
+    exp_map = {"exp1": args.exp1_root, "exp2": args.exp2_root, "exp3": args.exp3_root}
+    root = exp_map.get(args.check_gi, args.check_gi)
+
+    for st in args.states:
+        path = Path(root) / args.cell / st / f"replicate_{args.replicate}" / "output.csv.gz"
+        if not path.exists():
+            print(f"{st.upper()}: MISSING {path}")
+            continue
+        t0, t1 = FIRST_V2_SEED.get(st, 125), FIRST_V2_SEED.get(st, 125) + 300
+        last_exp: dict[str, tuple[int, str]] = {}
+        gi_sum = {"E1": 0, "E2": 0, "E2_win": 0}
+        gi_cnt = {"E1": 0, "E2": 0, "E2_win": 0}
+        e2_ticks = collections.defaultdict(list)
+        e2_win_cnt: collections.Counter[str] = collections.Counter()
+        max_tick = 0
+        e1_total = e2_total = 0
+
+        with gzip.open(path, "rt") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                t = int(row["tick"])
+                if t > max_tick:
+                    max_tick = t
+                es = row["exit_state"]
+                if not (es.startswith("E1_") or es.startswith("E2_")):
+                    continue
+                var = "E1" if es.startswith("E1_") else "E2"
+                pid = row["pid"].strip()
+                cpid = row["contact_pid"].strip()
+
+                if var == "E1":
+                    e1_total += 1
+                else:
+                    e2_total += 1
+                    e2_ticks[pid].append(t)
+                    if t0 <= t <= t1:
+                        e2_win_cnt[pid] += 1
+
+                if cpid in last_exp:
+                    ctick, cvar = last_exp[cpid]
+                    dt = t - ctick
+                    if cvar == var and dt >= 0:
+                        gi_sum[var] += dt
+                        gi_cnt[var] += 1
+                        if var == "E2" and t0 <= t <= t1:
+                            gi_sum["E2_win"] += dt
+                            gi_cnt["E2_win"] += 1
+                last_exp[pid] = (t, var)
+
+        gaps = [ts[i + 1] - ts[i] for ts in e2_ticks.values() if len(ts) > 1 for i in range(len(ts) - 1)]
+        gaps.sort()
+        n_u = len(e2_ticks)
+        n_r = sum(1 for ts in e2_ticks.values() if len(ts) > 1)
+        n_wu = len(e2_win_cnt)
+        n_wr = sum(1 for c in e2_win_cnt.values() if c > 1)
+        max_inf = max((len(ts) for ts in e2_ticks.values()), default=0)
+        g30 = sum(1 for g in gaps if g <= 30) / len(gaps) * 100 if gaps else 0.0
+        g60 = sum(1 for g in gaps if g <= 60) / len(gaps) * 100 if gaps else 0.0
+
+        print(
+            f"{st.upper()} (cell {args.cell}) | max_tick={max_tick} | "
+            f"E1={e1_total:,} (GI={gi_sum['E1']/max(1,gi_cnt['E1']):.2f}d) | "
+            f"E2={e2_total:,} (GI={gi_sum['E2']/max(1,gi_cnt['E2']):.2f}d, win_edges={gi_cnt['E2_win']:,}) | "
+            f"E2 unique={n_u:,}, reinf_all={n_r/max(1,n_u)*100:.1f}%, reinf_win={n_wr/max(1,n_wu)*100:.1f}%, max_inf={max_inf} | "
+            f"gaps<=30d={g30:.2f}%, <=60d={g60:.2f}%"
+        )
+
+
 def run_comparison(args: argparse.Namespace) -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -186,18 +261,20 @@ def run_comparison(args: argparse.Namespace) -> None:
     )
     print("-" * 86)
 
+    exp_roots = [("exp1", args.exp1_root), ("exp2", args.exp2_root), ("exp3", args.exp3_root)]
+    exp_colors = {"exp1": "#E66101", "exp2": "#008891", "exp3": "#5E3C99"}
+
     rows = []
     for st in args.states:
-        series_pair = {}
-        for exp_name, root in (("exp1", args.exp1_root), ("exp2", args.exp2_root)):
+        series_map = {}
+        for exp_name, root in exp_roots:
             path = Path(root) / args.cell / st / f"replicate_{args.replicate}" / "output.csv.gz"
             if not path.exists():
-                print(f"{st.upper():<5} {exp_name:<4} | MISSING: {path}")
                 continue
             _, re_rows, summ = compute_cohort_re(path, variant=args.variant, start_tick=args.start_tick, stop_tick=args.stop_tick)
             re_csv = out_dir / f"{st}_{exp_name}_v{args.variant or 'all'}_Re.csv"
             write_re_csv(re_rows, re_csv)
-            series_pair[exp_name] = re_rows
+            series_map[exp_name] = re_rows
 
             print(
                 f"{st.upper():<5} {exp_name:<4} | {summ['n_total']:>11,d} | "
@@ -207,17 +284,17 @@ def run_comparison(args: argparse.Namespace) -> None:
             rows.append({"state": st, "experiment": exp_name, **summ})
         print("-" * 86)
 
-        if len(series_pair) == 2 and plt is not None:
+        if len(series_map) >= 2 and plt is not None:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-            for exp_name, color in (("exp1", "#E66101"), ("exp2", "#008891")):
-                rlist = series_pair[exp_name]
+            for exp_name, rlist in series_map.items():
+                color = exp_colors.get(exp_name, "black")
                 sub = [r for r in rlist if r["cases"] >= 20]
                 ax1.plot([r["tick"] for r in sub], [r["R_e_rolling7"] for r in sub], color=color, linewidth=2.2, label=f"{exp_name} (7-tick rolling $R_e$, cases>=20)")
                 ax2.plot([r["tick"] for r in rlist], [r["cases"] for r in rlist], color=color, linewidth=2.0, label=f"{exp_name} daily exposures")
             ax1.axhline(1.0, color="black", linestyle="--", linewidth=1.2, label="$R_e = 1.0$")
             ax1.axhline(4.0, color="gray", linestyle=":", linewidth=1.2, label="Target $R_0 = 4.0$")
             ax1.set_ylabel(f"Cohort $R_e(t)$ ({var_label})")
-            ax1.set_title(f"{st.upper()} (cell {args.cell}) — {var_label} Cohort $R_e(t)$ & Daily Incidence: exp1 vs. exp2")
+            ax1.set_title(f"{st.upper()} (cell {args.cell}) — {var_label} Cohort $R_e(t)$ & Daily Incidence: {' vs. '.join(series_map.keys())}")
             ax1.legend()
             ax1.grid(True, linestyle=":", alpha=0.7)
             ax2.set_ylabel("Daily Exposures")
@@ -225,7 +302,7 @@ def run_comparison(args: argparse.Namespace) -> None:
             ax2.legend()
             ax2.grid(True, linestyle=":", alpha=0.7)
             fig.tight_layout()
-            fig.savefig(out_dir / f"{st}_v{args.variant or 'all'}_exp1_vs_exp2_Re.png", dpi=250)
+            fig.savefig(out_dir / f"{st}_v{args.variant or 'all'}_Re_comparison.png", dpi=250)
             plt.close(fig)
 
     if rows:
@@ -237,6 +314,58 @@ def run_comparison(args: argparse.Namespace) -> None:
         print(f"Saved summary table (and plots if matplotlib available) to: {out_dir}")
 
 
+def run_plot_grid(args: argparse.Namespace) -> None:
+    """Plot 5-state x 4-cell daily incidence curves (E1 dashed, E2 solid) across experiments."""
+    if plt is None:
+        print("Error: matplotlib is required for --plot-grid")
+        return
+    cells = ("0.25", "0.5", "0.75", "1.0")
+    exp_roots = [("exp1", args.exp1_root, "#E66101"), ("exp2", args.exp2_root, "#008891"), ("exp3", args.exp3_root, "#5E3C99")]
+    fig, axes = plt.subplots(len(args.states), len(cells), figsize=(20, 3.2 * len(args.states)), sharex=True)
+    if len(args.states) == 1:
+        axes = [axes]
+
+    for i, st in enumerate(args.states):
+        for j, cell in enumerate(cells):
+            ax = axes[i][j]
+            for exp_name, root, color in exp_roots:
+                path = Path(root) / cell / st / f"replicate_{args.replicate}" / "output.csv.gz"
+                if not path.exists():
+                    continue
+                e1_cnt: collections.Counter[int] = collections.Counter()
+                e2_cnt: collections.Counter[int] = collections.Counter()
+                with gzip.open(path, "rt") as f:
+                    for row in csv.DictReader(f):
+                        es = row["exit_state"]
+                        if es.startswith("E1_"):
+                            e1_cnt[int(row["tick"])] += 1
+                        elif es.startswith("E2_"):
+                            e2_cnt[int(row["tick"])] += 1
+                t1 = sorted(e1_cnt)
+                t2 = sorted(e2_cnt)
+                if t1:
+                    ax.plot(t1, [e1_cnt[t] for t in t1], linestyle="--", color=color, alpha=0.85, linewidth=1.4, label=f"{exp_name} E1 (Alpha)")
+                if t2:
+                    ax.plot(t2, [e2_cnt[t] for t in t2], linestyle="-", color=color, alpha=0.9, linewidth=1.6, label=f"{exp_name} E2 (Delta)")
+            ax.set_xlim(0, 500)
+            ax.set_title(f"{st.upper()} | cell {cell}", fontsize=10)
+            ax.grid(True, linestyle=":", alpha=0.5)
+            if j == 0:
+                ax.set_ylabel("Exposures / day")
+            if i == len(args.states) - 1:
+                ax.set_xlabel("Tick")
+            if i == 0 and j == len(cells) - 1:
+                ax.legend(fontsize=7, loc="upper right")
+
+    fig.suptitle("EpiHiper Daily Exposures: exp1 vs. exp2 vs. exp3 (replicate_0, ticks 0-500)", fontsize=14, y=0.995)
+    fig.tight_layout()
+    out_file = Path(args.plot_grid)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_file, dpi=250)
+    plt.close(fig)
+    print(f"Saved 5-state x 4-cell daily incidence grid to: {out_file}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Calculate overall, early-wave R_0, and time-varying cohort R_e(t) from EpiHiper output.")
     parser.add_argument("--epihiper", help="Path to raw EpiHiper output.csv.gz (single-file mode)")
@@ -245,16 +374,27 @@ def main() -> None:
     parser.add_argument("--start_tick", type=int, default=None, help="Only consider infections occurring on or after this tick")
     parser.add_argument("--stop_tick", type=int, default=None, help="Only consider infections occurring on or before this tick")
 
-    # Side-by-side comparison mode flags
-    parser.add_argument("--compare", action="store_true", help="Compare exp1 vs. exp2 across states")
+    # Side-by-side comparison & GI diagnostic flags
+    parser.add_argument("--compare", action="store_true", help="Compare exp1 vs. exp2 vs. exp3 across states")
+    parser.add_argument("--check-gi", metavar="EXP", help="Run GI & reinfection-gap diagnostic for 'exp1', 'exp2', 'exp3', or a batch_1 root path")
+    parser.add_argument("--plot-grid", metavar="OUT_PNG", help="Plot 5-state x 4-cell daily incidence curves (exp1 vs. exp2 vs. exp3)")
     parser.add_argument("--exp1-root", default=DEFAULT_EXP1_ROOT, help="Root path for exp1 batch_1 directory")
     parser.add_argument("--exp2-root", default=DEFAULT_EXP2_ROOT, help="Root path for exp2 batch_1 directory")
+    parser.add_argument("--exp3-root", default=DEFAULT_EXP3_ROOT, help="Root path for exp3 batch_1 directory")
     parser.add_argument("--cell", default="0.25", help="Cross-infection cell folder (default: 0.25)")
     parser.add_argument("--replicate", type=int, default=0, help="Replicate number (default: 0)")
-    parser.add_argument("--states", nargs="+", default=list(STATES), help="States to compare in --compare mode")
-    parser.add_argument("--out-dir", default="results/re_exp1_vs_exp2", help="Output directory for --compare mode")
+    parser.add_argument("--states", nargs="+", default=list(STATES), help="States to compare in --compare / --check-gi mode")
+    parser.add_argument("--out-dir", default="results/re_comparison", help="Output directory for --compare mode")
 
     args = parser.parse_args()
+
+    if args.check_gi:
+        run_check_gi(args)
+        return
+
+    if args.plot_grid:
+        run_plot_grid(args)
+        return
 
     if args.compare:
         run_comparison(args)
