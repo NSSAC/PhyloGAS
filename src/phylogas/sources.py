@@ -180,18 +180,18 @@ def decompress_xz(path: Path, keep: bool = False) -> Path:
 # Zenodo: EpiHiper simulation outputs
 # ==========================================================================
 # "Phylogeographic Analysis Similars - Agent Based Simulations"
-# Verified open-access 2026-09-30; MD5s confirmed against the upload log.
-ZENODO_RECORD = "23067670"
-ZENODO_DOI = "10.5281/zenodo.23067670"
+# Concept DOI 10.5281/zenodo.23067669 (v1 exp1: 23067670; v2 exp3: 23989650).
+ZENODO_RECORD = "23989650"
+ZENODO_DOI = "10.5281/zenodo.23989650"
 ZENODO_CONCEPT_DOI = "10.5281/zenodo.23067669"   # always resolves to the latest version
 
 # state -> (filename, size_mb, md5)
 SIMULATION_FILES = {
-    "va": ("va_replicate_0_output.csv.gz", 530.3, "2971f450fde914fd12b420096b90848b"),
-    "ga": ("ga_replicate_0_output.csv.gz", 583.7, "508eab5b6a04ec44982ceba62306ae28"),
-    "ma": ("ma_replicate_0_output.csv.gz", 431.8, "bfdcc576f006b10ba114165033ac5088"),
-    "mn": ("mn_replicate_0_output.csv.gz", 428.1, "ac6f078664fedade69058d9bf0b8fb9e"),
-    "wa": ("wa_replicate_0_output.csv.gz", 425.2, "9be12c1f872654e5af64cb2352fcb263"),
+    "va": ("va_replicate_0_output.csv.gz", 306.1, "2cc45dbd32a9e5f132e3a0a505cb5c0d"),
+    "ga": ("ga_replicate_0_output.csv.gz", 346.7, "801f654047c035916180ca11d7a7c011"),
+    "ma": ("ma_replicate_0_output.csv.gz", 251.4, "d2b45090e7336afebefacafa0f48c61c"),
+    "mn": ("mn_replicate_0_output.csv.gz", 261.8, "01582331648fbd270486cdc61050667b"),
+    "wa": ("wa_replicate_0_output.csv.gz", 248.0, "335d6090a54c69b9ee5b017b3c7f51d4"),
     # NOTE: no California replicate in this record.
 }
 
