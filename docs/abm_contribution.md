@@ -39,25 +39,28 @@ collision rate is ~1.1e-5 (see `clock_modes.md` §1c), so the two should agree:
 
 | parameters | E[cycles] | lambda predicted | one-step observed | agreement |
 |---|---|---|---|---|
-| uniform 10-1000, init 10, peak 1e6 | 2.02 | 0.2054 | 0.2054 | **0.0%** |
-| exponential(100), init 2, peak 1e11 | 5.72 | 0.5816 | 0.5834 | **0.3%** |
-| lognormal(med 1e3, s 0.7), init 2, peak 1e11 | 3.37 | 0.3430 | 0.3428 | **0.06%** |
+| uniform 10-1000, init 10, peak 1e6 (`exp1`) | 2.02 | 0.2054 | 0.2054 | **0.0%** |
+| exponential(100), init 2, peak 1e11 (`exp1`) | 5.72 | 0.5816 | 0.5834 | **0.3%** |
+| lognormal(med 1e3, s 0.7), init 2, peak 1e11 (`exp1`) | 3.37 | 0.3430 | 0.3428 | **0.06%** |
+| lognormal(med 1e3, s 0.7), init 2, peak 1e11 (`exp3`) | 3.37 | 0.3430 | 0.3432 | **0.06%** |
 
-The third row is the strongest of the three: `lambda` was printed by
+The third and fourth rows are the strongest: `lambda` was printed by
 `burst_summary()` from the config *before* the run, and the painter then placed
-that many mutations independently. Two code paths reading the same config and
-agreeing to 0.06% is a different claim from a post-hoc fit.
+that many mutations independently across two completely different ABM
+transmission networks (`exp1` and `exp3`). Two code paths reading the same
+config and agreeing to 0.06% is a different claim from a post-hoc fit.
 
-**The full identity against `mu_truth`.** Same two settings, `GI` measured,
+**The full identity against `mu_truth`.** Same settings, `GI` measured,
 `s_path` measured:
 
 | | lambda | / GI | x s_path | predicted | measured `mu_truth` | agreement |
 |---|---|---|---|---|---|---|
-| uniform | 0.2054 | 6.872 | 0.9080 | 9.90 | 9.90 | **0.0%** |
-| exponential | 0.5816 | 6.872 | 0.8510 | 26.29 | 26.37 | **-0.3%** |
-| lognormal | 0.3428 | 6.872 | 0.8853 | 16.12 | 16.12 | **0.0%** |
+| uniform (`exp1`) | 0.2054 | 6.872 | 0.9080 | 9.90 | 9.90 | **0.0%** |
+| exponential (`exp1`) | 0.5816 | 6.872 | 0.8510 | 26.29 | 26.37 | **-0.3%** |
+| lognormal (`exp1`) | 0.3428 | 6.872 | 0.8853 | 16.12 | 16.12 | **0.0%** |
+| lognormal (`exp3`) | 0.3432 | 4.682 | 0.8446 | 22.60 | 22.60 | **0.0%** |
 
-(subs/genome/year. Divide by `L` for per-site: 26.37 -> 8.82e-4.)
+(subs/genome/year. Divide by comparable sites `L = 29,750` for per-site: 22.60 -> 7.60e-4.)
 
 So the emergent clock is fully accounted for. There is no residual to attribute
 to the contact network, the mixing structure, or anything else about the ABM
@@ -85,6 +88,31 @@ painter owns moved the other term not at all.
 `s_path` also behaved as predicted. Lower `lambda` means fewer repeat hits per
 site, so less should be lost along root-to-tip paths: predicted ~0.89 before
 the run, measured **0.8853**, a 0.6% miss.
+
+### And lambda did not move when the interval did (`exp1` -> `exp3`)
+
+Running the same `lognormal(median=1000, sigma=0.7)` painter on the `exp3` ABM
+(which adopted `exp2`'s `disease.json` dwell times while retaining `exp1`'s
+`calibration.csv`; see [`design/exp3.md`](../design/exp3.md)) provided the
+converse controlled experiment:
+
+| state | GI (`exp1` -> `exp3`) | `lambda` (`exp1` -> `exp3`) | implied `lambda/GI` (`/yr`, `exp1` -> `exp3`) | `mu_truth` (`/site/yr`, `exp1` -> `exp3`) | `mu_truth` $R^2$ (`exp1` -> `exp3`) |
+|---|---|---|---|---|---|
+| ga | 6.93 -> **4.72** | 0.3415 -> **0.3433** | 17.98 -> **26.53** | 5.26e-4 -> **7.98e-4 (1.00x)** | 0.425 -> **0.601** |
+| ma | 6.88 -> **4.69** | 0.3423 -> **0.3434** | 18.16 -> **26.74** | 5.61e-4 -> **8.16e-4 (1.02x)** | 0.217 -> **0.518** |
+| mn | 6.76 -> **4.60** | 0.3436 -> **0.3412** | 18.55 -> **27.09** | 5.25e-4 -> **7.30e-4 (0.91x)** | 0.332 -> **0.556** |
+| va | 6.88 -> **4.67** | 0.3433 -> **0.3457** | 18.22 -> **27.00** | 5.55e-4 -> **6.84e-4 (0.85x)** | 0.382 -> **0.389** |
+| wa | 6.91 -> **4.73** | 0.3436 -> **0.3424** | 18.16 -> **26.43** | 5.41e-4 -> **7.71e-4 (0.96x)** | 0.216 -> **0.460** |
+| **mean** | **6.87 -> 4.68** | **0.3428 -> 0.3432** | **18.21 -> 26.76** | **5.42e-4 -> 7.60e-4 (0.95x)** | **0.314 -> 0.505** |
+
+Shortening the ABM's generation interval by 31.9% (`6.87 d` -> `4.68 d`,
+matching the `4.69 d` analytic prediction from the dwell-time table to **0.2%**)
+left the painter's per-transmission substitution count `lambda` unchanged to
+0.1% (`0.3428` -> `0.3432`, against `0.3430` predicted), raised the implied
+clock `lambda/GI` from `18.21` to `26.76 subs/genome/yr` (against `26.6`
+predicted), and raised the 5-state mean `mu_truth` from `5.42e-4` (`0.68x` real)
+to **`7.60e-4 subs/site/yr` (`0.95x` real SARS-CoV-2)** (`7.95e-4` or `0.99x`
+across GA, MA, and WA, where `s_path` averaged `0.890`).
 
 ## What EpiHiper actually determines
 
@@ -215,20 +243,29 @@ so `mu_truth` is the only one of these comparable to it.
 
 | arm | lambda | GI | `mu_truth` | vs real (~8.0e-4/site/yr) |
 |---|---|---|---|---|
-| uniform painting | 0.2054 | 6.872 | 3.31e-4 | 0.41x |
-| exponential painting | 0.5816 | 6.872 | 8.86e-4 | 1.11x |
-| **lognormal painting (current)** | **0.3428** | **6.872** | **5.42e-4** | **0.67x** |
-| lognormal + exp2 ABM (not yet run) | 0.3428 | ~4.69 | ~7.9e-4 | ~0.99x |
+| uniform painting (`exp1`) | 0.2054 | 6.872 | 3.31e-4 | 0.41x |
+| exponential painting (`exp1`) | 0.5816 | 6.872 | 8.86e-4 | 1.11x |
+| lognormal painting (`exp1`) | 0.3428 | 6.872 | 5.42e-4 | 0.67x |
+| lognormal + exp2/exp3 ABM (pre-run prediction) | 0.3428 | ~4.69 | ~7.9e-4 | ~0.99x |
+| **lognormal + exp3 ABM (measured, GA/MA/WA mean)** | **0.3430** | **4.713** | **7.95e-4** | **0.99x** |
+| **lognormal + exp3 ABM (measured, 5-state mean)** | **0.3432** | **4.682** | **7.60e-4** | **0.95x** |
 
-The current 0.67x is a deliberate transit state, not a regression: `lambda` is
-now literature-grounded (Bar-On burst size at the median) and the interval is
-still 1.5x too long. The exp2 disease model shortens the interval; see
-`design/exp2.md`. Fixing the interval first instead would have pushed the clock
-to 1.6x and left per-transmission divergence untouched, so this ordering is the
-only one that converges.
+The `exp1` lognormal `0.67x` was a deliberate transit state, not a regression:
+`lambda` was literature-grounded (Bar-On burst size at the median) while the
+interval was still 1.5x too long. The `exp2`/`exp3` disease model shortened the
+interval (see [`design/exp2.md`](../design/exp2.md) and
+[`design/exp3.md`](../design/exp3.md)). Fixing the interval first instead would
+have pushed the clock to 1.6x and left per-transmission divergence untouched,
+so this ordering was the only one that converged. When `exp3` ran, `GI` landed
+at **4.682 d** (against `~4.69 d` predicted, a 0.2% difference), `lambda` held
+at **0.3432** (against `0.3430` predicted, a 0.06% difference), and `mu_truth`
+rose to **7.60e-4 subs/site/yr (`0.95x` real)** across all five states (**7.95e-4**
+or **`0.99x` real** across GA, MA, and WA, where `s_path` remained at `0.890`).
 
 `mu_sim` (augur refine, no clock prior) sat 0.3-6.5% below `mu_truth` in all
-five states at the exponential setting -- all low, never high.
+five states at the `exp1` exponential setting -- all low, never high -- and in
+`exp3` averaged **7.46e-4 (`0.93x` real)** across GA, MA, VA, and WA (`6.80e-4`
+or `0.85x` across all five states including MN).
 
 ### The cross-state spread is the estimator, not the twins
 

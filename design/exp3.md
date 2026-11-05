@@ -189,3 +189,73 @@ almost invariant:**
   **tick 246.4 (`2021-08-03`)** in `exp1` (a 1.4-day difference) and **tick 206.0
   (`2021-06-24`)** in `exp2` (+41.8 days later than `exp2`), restoring `4.3×–11.7×`
   more pre-peak `E2` importations (`307–749 seeds` per state).
+
+---
+
+## 5. PhyloGAS Molecular-Clock Benchmark: Pre-Run Predictions vs. Measured `exp3` Results
+
+Archived benchmark outputs:
+* **`exp1` baseline (`lognormal` painter):** `results/_archive/2026-10-16_exp1_lognormal/{ga,ma,mn,va,wa}/`
+* **`exp3` (`lognormal` painter):** `results/_archive/2026-11-05_exp3_lognormal/{ga,ma,mn,va,wa}/` (and `results/{ga,ma,mn,va,wa}_delta_wave/05_benchmarks/`)
+
+### A. Pre-Run Predictions Connected to Measured 5-State Means
+
+Using the molecular-clock decomposition from [`docs/abm_contribution.md`](../docs/abm_contribution.md),
+$$\mu_{\text{truth}} = \frac{\lambda}{\text{GI}} \times s_{\text{path}},$$
+the pre-run predictions (Section 1 above) were derived from $\lambda = 0.3430\text{ subs/tx}$ (`burst_summary()` for `lognormal(median=1000, sigma=0.7)` in `[100, 10000]`), the analytic Variant-2 generation interval $\text{GI} = 4.69\text{ d}$ (measured at `4.70 d` across all `E2` edges in Section 4A), and `exp1`'s path-saturation factor $s_{\text{path}} = 0.885$:
+
+| Quantity | Source / Formula | `exp1` Baseline (`GI = 6.87 d`) | Pre-Run `exp3` Prediction | Measured `exp3` Mean (5-State Range) | Prediction vs. Measured |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **$\hat{\lambda}$ (`mean_substitutions`)** | `sequence_divergence.csv` | `0.3428` (`0.3415–0.3436`) | **`0.3430`** | **`0.3432`** (`0.3412–0.3457`, 1.3% spread) | **+0.06% (+0.0002 subs/tx)** |
+| **`frac_unchanged`** | `sequence_divergence.csv` | `0.7109` (`0.7102–0.7121`) | **`~0.711`** | **`0.7107`** (`0.7086–0.7120`, 0.5% spread) | **−0.03%** |
+| **`gi_mean_days` (painted window)** | `sequence_divergence.csv` | `6.87 d` (`6.76–6.93 d`) | **`4.69 d` (analytic) / `4.70 d` (ABM)** | **`4.68 d`** (`4.60–4.73 d`, 2.8% spread) | **−0.2% vs. analytic (−0.01 d)** |
+| **`gi_parent_unmatched` / `gi_nonpositive`** | `sequence_divergence.csv` | `0 / 0` | **`0 / 0`** | **`0 / 0`** (across 14,414,476 edges) | **Exact match** |
+| **Implied clock $\lambda / \text{GI}$ (`/genome/yr`)** | $365 \times \hat{\lambda} / \text{GI}$ | `18.21 /yr` (`17.98–18.55`) | **`26.6 /yr`** | **`26.76 /yr`** (`26.43–27.09`, 2.5% spread) | **+0.6% (+0.16 /yr)** |
+| **Implied clock $\lambda / \text{GI}$ (`/site/yr`)** | $(\hat{\lambda} / \text{GI}) \times 365.25 / 29750$ | $6.13 \times 10^{-4}$ | **$8.91 \times 10^{-4}$** | **$9.00 \times 10^{-4}$** ($8.89\text{--}9.11 \times 10^{-4}$) | **+1.0%** |
+| **Within-chain clock $\mu_{\text{lineage}}$ (`/site/yr`)** | `clock_estimates.csv` (`mu_lineage`) | $6.53 \times 10^{-4}$ (`0.82×` real) | **`~8.9e-4`** (unattenuated lineage rate) | **$9.26 \times 10^{-4}$** ($8.44 \times 10^{-4}\text{--}1.06 \times 10^{-3}$) | **+4.0%** |
+| **Effective path factor $s_{\text{path}}$** | $\mu_{\text{truth}} / (\hat{\lambda} / \text{GI})$ | `0.885` (`0.842–0.919`) | **`~0.885–0.890`** | **`0.845`** (`0.754–0.909`; **`0.890`** in GA/MA/WA) | **−4.5% (5-state); +0.6% in GA/MA/WA** |
+| **Pooled truth clock $\mu_{\text{truth}}$ (`/site/yr`)** | `clock_estimates.csv` (`mu_truth`) | $5.42 \times 10^{-4}$ (`0.68×` real) | **$7.89 \times 10^{-4}$ (`0.99×` real)** | **$7.60 \times 10^{-4}$ (`0.95×` real)** ($6.84\text{--}8.16 \times 10^{-4}$) | **−3.7% (5-state); `0.99×` in GA/MA/WA** |
+| **Root-to-tip regression $R^2$ (`mu_truth`)** | `clock_estimates.csv` (`r_squared`) | `0.314` (`0.216–0.425`) | **Higher than `exp1` (`> 0.314`)** | **`0.505`** (`0.389–0.601`) | **+61% relative increase in $R^2$** |
+
+---
+
+### B. State-by-State `sequence_divergence.csv` (`exp1` vs. `exp3`)
+
+| State | `exp1` Edges | `exp3` Edges | `exp1` $\hat{\lambda}$ | `exp3` $\hat{\lambda}$ | `exp1` GI (d) | `exp3` GI (d) | `exp3` Median (IQR) | `exp1` Implied (`/yr` \| `/site/yr`) | `exp3` Implied (`/yr` \| `/site/yr`) | Unmatched / Non-pos |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **GA** | 6,126,993 | 3,874,013 | 0.3415 | **0.3433** | 6.93 | **4.72** | `4.0` (`3–6`) | `17.98` \| $6.05 \times 10^{-4}$ | **`26.53` \| $8.92 \times 10^{-4}$** | `0 / 0` |
+| **MA** | 3,861,499 | 2,067,299 | 0.3423 | **0.3434** | 6.88 | **4.69** | `4.0` (`3–6`) | `18.16` \| $6.11 \times 10^{-4}$ | **`26.74` \| $8.99 \times 10^{-4}$** | `0 / 0` |
+| **MN** | 4,287,236 | 2,985,515 | 0.3436 | **0.3412** | 6.76 | **4.60** | `4.0` (`3–5`) | `18.55` \| $6.24 \times 10^{-4}$ | **`27.09` \| $9.11 \times 10^{-4}$** | `0 / 0` |
+| **VA** | 5,292,666 | 3,159,069 | 0.3433 | **0.3457** | 6.88 | **4.67** | `4.0` (`3–5`) | `18.22` \| $6.13 \times 10^{-4}$ | **`27.00` \| $9.08 \times 10^{-4}$** | `0 / 0` |
+| **WA** | 4,166,779 | 2,328,580 | 0.3436 | **0.3424** | 6.91 | **4.73** | `4.0` (`3–6`) | `18.16` \| $6.11 \times 10^{-4}$ | **`26.43` \| $8.89 \times 10^{-4}$** | `0 / 0` |
+| **Mean** | **4,747,035** | **2,882,895** | **0.3428** | **0.3432** | **6.87** | **4.68** | **`4.0`** | **`18.21` \| $6.13 \times 10^{-4}$** | **`26.76` \| $9.00 \times 10^{-4}$** | **`0 / 0`** |
+
+---
+
+### C. State-by-State `clock_estimates.csv` (`exp1` vs. `exp3`)
+
+| State | `exp1` $\mu_{\text{truth}}$ (`/site/yr`, vs. `8e-4`) | `exp3` $\mu_{\text{truth}}$ (`/site/yr`, vs. `8e-4`) | `exp1` $\to$ `exp3` $R^2$ | `exp1` $\to$ `exp3` $s_{\text{path}}$ | `exp3` $\mu_{\text{lineage}}$ (`/site/yr`) | `exp3` Weighted Seed Trend (`/site/yr`) | `exp3` TreeTime $\mu_{\text{sim}}$ (`1S__surs` \| `1S-P__lasso`) | `exp3` Chains (Surv $\ge 10$) | `within_date_var` |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **GA** | $5.26 \times 10^{-4}$ (`0.66×`) | **$7.98 \times 10^{-4}$ (`1.00×`)** | `0.425` $\to$ **0.601** | `0.871` $\to$ **0.895** | $8.95 \times 10^{-4}$ | $+9.77 \times 10^{-4}$ | $6.67 \times 10^{-4}$ \| $7.37 \times 10^{-4}$ | 68 (9) | 0.993 |
+| **MA** | $5.61 \times 10^{-4}$ (`0.70×`) | **$8.16 \times 10^{-4}$ (`1.02×`)** | `0.217` $\to$ **0.518** | `0.919` $\to$ **0.909** | $9.68 \times 10^{-4}$ | $+1.36 \times 10^{-3}$ | $7.88 \times 10^{-4}$ \| $7.00 \times 10^{-4}$ | 108 (22) | 0.973 |
+| **MN** | $5.25 \times 10^{-4}$ (`0.66×`) | **$7.30 \times 10^{-4}$ (`0.91×`)** | `0.332` $\to$ **0.556** | `0.842` $\to$ **0.801** | $1.06 \times 10^{-3}$ | $+2.21 \times 10^{-3}$ | $4.31 \times 10^{-4}$ \| $4.31 \times 10^{-4}$ | 138 (30) | 0.900 |
+| **VA** | $5.55 \times 10^{-4}$ (`0.69×`) | **$6.84 \times 10^{-4}$ (`0.85×`)** | `0.382` $\to$ **0.389** | `0.906` $\to$ **0.754** | $8.62 \times 10^{-4}$ | $-5.42 \times 10^{-5}$ | $7.54 \times 10^{-4}$ \| $7.72 \times 10^{-4}$ | 107 (24) | 0.931 |
+| **WA** | $5.41 \times 10^{-4}$ (`0.68×`) | **$7.71 \times 10^{-4}$ (`0.96×`)** | `0.216` $\to$ **0.460** | `0.887` $\to$ **0.867** | $8.44 \times 10^{-4}$ | $-6.55 \times 10^{-5}$ | $7.58 \times 10^{-4}$ \| $7.92 \times 10^{-4}$ | 266 (23) | 0.955 |
+| **Mean** | **$5.42 \times 10^{-4}$ (`0.68×`)** | **$7.60 \times 10^{-4}$ (`0.95×`)** | **`0.314` $\to$ `0.505`** | **`0.885` $\to$ `0.845`** | **$9.26 \times 10^{-4}$** | $+8.86 \times 10^{-4}$ | **$6.80 \times 10^{-4}$ \| $6.86 \times 10^{-4}$** | **137 (21.6)** | **0.950** |
+
+---
+
+### D. Interpretation of Predictions vs. Measured Outcomes
+
+1. **Exact Closure of the Numerator ($\hat{\lambda}$) and Denominator ($\text{GI}$):**
+   * The painter's per-transmission substitution rate $\hat{\lambda}$ (`0.3432`) matched the pre-run prediction (`0.3430`) to **0.06%** and remained invariant when the underlying ABM changed from `exp1` (`0.3428`) to `exp3` (`0.3432`).
+   * The painted-window generation interval (`4.68 d`, range `4.60–4.73 d`) matched the pre-run analytic prediction (`4.69 d`) to **0.2%** (`0.01 d`) and the full-simulation `E2` diagnostic (`4.70 d` in Section 4A) to **0.4%** (`0.02 d`).
+   * Consequently, the implied clock $\lambda / \text{GI}$ closed at **`26.76 subs/genome/yr` ($9.00 \times 10^{-4}\text{ subs/site/yr}$)** vs. **`26.6 subs/genome/yr` ($8.91 \times 10^{-4}\text{ subs/site/yr}$)** predicted, with only a **2.5% cross-state spread**.
+2. **Emergent Truth Clock ($\mu_{\text{truth}}$) and Path Factor ($s_{\text{path}}$):**
+   * Across **GA (`7.98e-4`, `1.00×`)**, **MA (`8.16e-4`, `1.02×`)**, and **WA (`7.71e-4`, `0.96×`)**, the measured $s_{\text{path}}$ averaged **`0.890`** (`0.867–0.909`), matching the pre-run assumption ($s_{\text{path}} \approx 0.885\text{--}0.890$) and putting their 3-state mean $\mu_{\text{truth}}$ at **$7.95 \times 10^{-4}\text{ subs/site/yr}$ (`0.99×` real SARS-CoV-2)**—within **0.8%** of the $7.89 \times 10^{-4}$ prediction.
+   * Including **MN (`7.30e-4`, `0.91×`)** and **VA (`6.84e-4`, `0.85×`)**, the 5-state mean $\mu_{\text{truth}}$ is **$7.60 \times 10^{-4}\text{ subs/site/yr}$ (`0.95×` real SARS-CoV-2)**, up from **$5.42 \times 10^{-4}$ (`0.68×` real)** in `exp1`.
+   * Why VA's pooled $s_{\text{path}}$ (`0.754`) is lower than its within-chain rate: VA's within-chain lineage clock is right on target ($\mu_{\text{lineage}} = 8.62 \times 10^{-4}$), and TreeTime on the phylogeny recovers **$\mu_{\text{sim}} = 7.54 \times 10^{-4}\text{ (`1S`)}$ / $7.72 \times 10^{-4}\text{ (`1S-P`)}$ (`0.94×–0.97×` real)**. Only the tree-free pooled regression (`mu_truth = 6.84e-4`) is attenuated in VA because its tip-weighted seed divergence trend (`mu_seed_trend_weighted = -5.42e-5`) is slightly negative (a late-peaking VA chain was founded by a slightly less-diverged seed).
+   * Conversely, in **MN**, the pooled truth clock is strong ($\mu_{\text{truth}} = 7.30 \times 10^{-4}$, `0.91×` real, $R^2 = 0.556$), while TreeTime's uncalibrated root-to-tip fit ($\mu_{\text{sim}} = 4.31 \times 10^{-4}$) is pulled by MN having the largest between-chain date variance share (`1 - 0.900 = 10.0%` across 30 surviving chains). Across the other four states (**GA, MA, VA, WA**), TreeTime's $\mu_{\text{sim}}$ averages **$7.46 \times 10^{-4}\text{ subs/site/yr}$ (`0.93×` real)**.
+3. **Stronger Root-to-Tip Temporal Signal ($R^2$):**
+   * Because `exp3` turns over $1.47\times$ more transmission generations per calendar day (`GI = 4.68 d` vs. `6.87 d`), lineages accumulate $1.47\times$ more de novo substitutions over the 300-day window relative to the initial standing diversity of the imported seeds. As a result, the 5-state mean root-to-tip $R^2$ jumped from **`0.314` in `exp1` to `0.505` in `exp3`**.
+
