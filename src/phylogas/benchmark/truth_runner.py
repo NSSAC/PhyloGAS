@@ -311,10 +311,27 @@ def score_samples(
         sys.exit(f"ERROR: no week from {start.date()} holds {pool} or more cases; check "
                  f"--start-date / --min-pool against the line list.")
 
-    # True weekly variant counts, on the same calendar.
+    # True weekly variant counts, on the same calendar, plus component/pid ->
+    # variant_benchmark lookups so sampled sets drawn from linelist.csv (which
+    # carries component_id + legacy variant_label="Variant_2", not
+    # variant_benchmark) inherit their component's assigned benchmark variant.
     true_variants = None
+    comp_to_variant = None
+    pid_to_variant = None
     if vcol and "_wk" in inf.columns:
         true_variants = _weekly_counts(inf, vcol, n_weeks)
+        if "component_id" in inf.columns:
+            comp_to_variant = (
+                inf.dropna(subset=["component_id", vcol])
+                .drop_duplicates("component_id")
+                .set_index("component_id")[vcol]
+            )
+        if "alias_pid" in inf.columns:
+            pid_to_variant = (
+                inf.dropna(subset=["alias_pid", vcol])
+                .drop_duplicates("alias_pid")
+                .set_index("alias_pid")[vcol]
+            )
 
     # Demographic groups for the KL metrics, built by BeyondBaseline's own
     # loader so the population recoding and the group keys are identical to
@@ -396,7 +413,12 @@ def score_samples(
                 _add(name, xs, ys)
 
         # --- stride_variant_prevalence_error (figure E) ---------------------
-        svcol = T.variant_column(sdf)
+        if vcol and vcol not in sdf.columns:
+            if comp_to_variant is not None and "component_id" in sdf.columns:
+                sdf[vcol] = sdf["component_id"].map(comp_to_variant).fillna("background")
+            elif pid_to_variant is not None and s_col:
+                sdf[vcol] = sdf[s_col].map(pid_to_variant).fillna("background")
+        svcol = vcol if (vcol and vcol in sdf.columns) else T.variant_column(sdf)
         if true_variants is not None and svcol:
             xs, ys = [], []
             for end in eval_idx:

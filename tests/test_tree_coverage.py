@@ -331,3 +331,28 @@ def test_coverage_ranks_higher_first(tmp_path):
         sub = df[df["eval_type"] == et]
         best = sub.loc[sub["rank_overall"] == 1, "auc"].max()
         assert best == sub["auc"].max(), et
+
+
+def test_variant_prevalence_maps_component_id_when_samples_carry_legacy_label(tmp_path):
+    """In the Snakemake DAG, BeyondBaseline samples from linelist.csv (which
+    carries component_id and variant_label='Variant_2', before assign-variants
+    runs on allevents). score_samples must map component_id -> variant_benchmark
+    from infections onto the sample sets rather than falling back to
+    variant_label='Variant_2' (which would yield a constant L1 error of 2.0)."""
+    _toy_epidemic(tmp_path)
+    df_direct = _score(tmp_path)
+
+    for recipe in ("4S__surs", "1S__dense"):
+        p = tmp_path / f"{recipe}_samples.csv"
+        s = pd.read_csv(p)
+        s = s.drop(columns=["variant_benchmark"])
+        s["variant_label"] = "Variant_2"
+        s.to_csv(p, index=False)
+
+    df_mapped = _score(tmp_path)
+    sub_direct = df_direct[df_direct["eval_type"] == "stride_variant_prevalence_error"].set_index("algorithm")["auc"]
+    sub_mapped = df_mapped[df_mapped["eval_type"] == "stride_variant_prevalence_error"].set_index("algorithm")["auc"]
+    for recipe in ("4S__surs", "1S__dense"):
+        assert sub_mapped[recipe] == pytest.approx(sub_direct[recipe], abs=1e-12)
+        assert sub_mapped[recipe] < 1.9
+
