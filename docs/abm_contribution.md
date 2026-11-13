@@ -1,6 +1,11 @@
 # What the ABM contributes to the twin's molecular clock
 
-`clock_modes.md` defines the clock quantities and says which comparisons are
+> **Related Documentation:**
+> - **[`docs/clock_modes.md`](clock_modes.md)** — Definitions of `mu_truth`, `mu_lineage`, `mu_between_chains`, and `mu_sim`.
+> - **[`docs/benchmarks_and_metrics.md`](benchmarks_and_metrics.md)** — Canonical definitions of all PhyloGAS sampling recipes, epidemiological measures, phylogeographic flow metrics, and Mean Reciprocal Distance (MRD) tree coverage benchmarks.
+> - **[`docs/characterization/README.md`](characterization/README.md)** — Multi-state `exp3` characterization report and benchmark tables.
+
+[`clock_modes.md`](clock_modes.md) defines the clock quantities and says which comparisons are
 legitimate. This file answers a different question: when the emergent clock
 moves, **how much of that is EpiHiper and how much is ours?** It matters
 because only one of the two is a knob we hold, and because a reviewer asking

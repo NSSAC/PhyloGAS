@@ -22,7 +22,7 @@ PhyloGAS is orchestrated via **Snakemake**. The pipeline consists of five primar
 2. **The Genetic Painter (`src/phylogas/painter/`):** Overlays biologically plausible SARS-CoV-2 genomes onto the transmission tree, starting from real imported sequences (the seed FASTA) rather than the reference. A "Speedometer" (calibrated Poisson rate-limiting) dictates *how many* mutations occur per transmission; a "Map" (MSA-derived entropy and substitution matrices) dictates *where* they fixate.
 3. **Ascertainment Simulation ([TwinSampler](https://github.com/NSSAC/TwinSampler)):** Applies severity- and demographics-dependent detection to every infection, producing a biased line list plus the full infection record. It models *who* gets detected, not reporting delay: dates are symptom/state onset.
 4. **Adaptive Sampling ([BeyondBaseline](https://github.com/NSSAC/BeyondBaseline)):** Selects which cases to sequence under a weekly budget — SURS, stratified, greedy and LASSO-based strategies, across stride / pool-window / target scenarios. Each (scenario × algorithm) pair is a **recipe**, e.g. `4S__surs` or `4S-4_LL-P__lasso_greedy`.
-5. **Reconstruction & Benchmarking:** Builds a Nextstrain (augur/TreeTime) tree per chosen recipe, then scores against the ground truth: geographic flow (cosine similarity, topological F1), variant prevalence, painted-sequence sanity, and the molecular clock (the rate the painter actually produced vs. the rate Nextstrain assumed or inferred — see [`docs/clock_modes.md`](docs/clock_modes.md)).
+5. **Reconstruction & Benchmarking:** Builds a Nextstrain (augur/TreeTime) tree per chosen recipe, then scores against the ground truth: geographic flow (cosine similarity, topological $F_1$), variant prevalence, phylogenetic tree coverage (Mean Reciprocal Distance), painted-sequence sanity, and the molecular clock (the rate the painter actually produced vs. the rate Nextstrain assumed or inferred — see **[`docs/benchmarks_and_metrics.md`](docs/benchmarks_and_metrics.md)**, **[`docs/clock_modes.md`](docs/clock_modes.md)**, **[`docs/abm_contribution.md`](docs/abm_contribution.md)**, and the 5-state characterization report in **[`docs/characterization/README.md`](docs/characterization/README.md)**).
 
 ---
 
@@ -346,9 +346,12 @@ PhyloGAS/
 │       ├── lineage.py         #   within- vs between-chain clock decomposition
 │       └── runner.py          #   batch drivers
 ├── docs/
-│   ├── clock_modes.md         # what each clock rate measures, and how to read them
-│   ├── design/                # open design questions (e.g. metadata_ownership.md)
-│   └── staging_local_data.md  # using files already on a cluster
+│   ├── benchmarks_and_metrics.md # canonical reference for recipes, flow, MRD, & clock metrics
+│   ├── clock_modes.md            # what each clock rate measures, and how to read them
+│   ├── abm_contribution.md       # two-way orthogonality identity (lambda, GI, s_path)
+│   ├── characterization/         # 5-state exp3 characterization report, tables, & SVG/PNG figures
+│   ├── design/                   # open design questions (e.g. metadata_ownership.md)
+│   └── staging_local_data.md     # using files already on a cluster
 └── cfg/
     ├── nextstrain/ncov/       # ncov build overrides (clock, coalescent)
     └── ...                    # EpiHiper experiment configs

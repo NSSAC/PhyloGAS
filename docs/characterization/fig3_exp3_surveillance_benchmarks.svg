@@ -162,7 +162,7 @@
 <text x="958.0" y="142.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#0b0b0b" text-anchor="end" font-weight="bold">Recipe (LASSO50 / SURS)</text>
 <text x="1052.0" y="142.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#0b0b0b" text-anchor="middle" font-weight="bold">Flow F1 (10-Run)</text>
 <text x="1192.0" y="142.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#0b0b0b" text-anchor="middle" font-weight="bold">Clusters (10-Run)</text>
-<text x="1334.0" y="142.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#0b0b0b" text-anchor="middle" font-weight="bold">8-Wk Tree (10-Run)</text>
+<text x="1334.0" y="142.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#0b0b0b" text-anchor="middle" font-weight="bold">Senior 65+ MRD</text>
 <text x="1482.0" y="142.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#0b0b0b" text-anchor="middle" font-weight="bold">Regime Drift |ΔCos|</text>
 <line x1="826.0" y1="150.0" x2="1558.0" y2="150.0" stroke="#4a4946" stroke-width="1.2"/>
 <line x1="826.0" y1="192.8" x2="1558.0" y2="192.8" stroke="#e5e4e0" stroke-width="0.8"/>
@@ -171,8 +171,8 @@
 <text x="1052.0" y="181.8" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+5.4% (10/10●)</text>
 <rect x="1129.0" y="167.8" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1192.0" y="181.8" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+3.2% (9/10●)</text>
-<rect x="1271.0" y="167.8" width="126.0" height="20.0" fill="#4a4946" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.06"/>
-<text x="1334.0" y="181.8" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#4a4946" text-anchor="middle" font-weight="bold">+0.10% (3/10)</text>
+<rect x="1271.0" y="167.8" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
+<text x="1334.0" y="181.8" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+2.9% (10/10●)</text>
 <rect x="1414.0" y="167.8" width="136.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1482.0" y="181.8" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#1baf7a" text-anchor="middle" font-weight="bold">0.029 (1.3x stable)</text>
 <line x1="826.0" y1="234.4" x2="1558.0" y2="234.4" stroke="#e5e4e0" stroke-width="0.8"/>
@@ -182,7 +182,7 @@
 <rect x="1129.0" y="209.4" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1192.0" y="223.4" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+10.9% (9/10●)</text>
 <rect x="1271.0" y="209.4" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
-<text x="1334.0" y="223.4" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+2.08% (10/10●)</text>
+<text x="1334.0" y="223.4" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+6.9% (10/10●)</text>
 <rect x="1414.0" y="209.4" width="136.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1482.0" y="223.4" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#1baf7a" text-anchor="middle" font-weight="bold">0.025 (3.9x stable)</text>
 <line x1="826.0" y1="276.1" x2="1558.0" y2="276.1" stroke="#e5e4e0" stroke-width="0.8"/>
@@ -192,7 +192,7 @@
 <rect x="1129.0" y="251.1" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1192.0" y="265.1" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+8.3% (9/10●)</text>
 <rect x="1271.0" y="251.1" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
-<text x="1334.0" y="265.1" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+0.67% (10/10●)</text>
+<text x="1334.0" y="265.1" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+3.7% (10/10●)</text>
 <rect x="1414.0" y="251.1" width="136.0" height="20.0" fill="#2a78d6" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1482.0" y="265.1" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#2a78d6" text-anchor="middle" font-weight="bold">0.035 (2.8x stable)</text>
 <line x1="826.0" y1="317.7" x2="1558.0" y2="317.7" stroke="#e5e4e0" stroke-width="0.8"/>
@@ -201,8 +201,8 @@
 <text x="1052.0" y="306.7" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+2.6% (9/10●)</text>
 <rect x="1129.0" y="292.7" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1192.0" y="306.7" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+4.4% (10/10●)</text>
-<rect x="1271.0" y="292.7" width="126.0" height="20.0" fill="#2a78d6" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.06"/>
-<text x="1334.0" y="306.7" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#2a78d6" text-anchor="middle" font-weight="bold">+0.99% (8/10)</text>
+<rect x="1271.0" y="292.7" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
+<text x="1334.0" y="306.7" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+4.9% (10/10●)</text>
 <rect x="1414.0" y="292.7" width="136.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
 <text x="1482.0" y="306.7" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#1baf7a" text-anchor="middle" font-weight="bold">0.028 (1.3x stable)</text>
 <line x1="826.0" y1="359.3" x2="1558.0" y2="359.3" stroke="#e5e4e0" stroke-width="0.8"/>
@@ -211,22 +211,22 @@
 <text x="1052.0" y="348.3" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#5e3c99" text-anchor="middle" font-weight="bold">+2.4% (8/10)</text>
 <rect x="1129.0" y="334.3" width="126.0" height="20.0" fill="#c93b2b" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.08"/>
 <text x="1192.0" y="348.3" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#c93b2b" text-anchor="middle" font-weight="bold">-0.1% (7/10)</text>
-<rect x="1271.0" y="334.3" width="126.0" height="20.0" fill="#4a4946" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.06"/>
-<text x="1334.0" y="348.3" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#4a4946" text-anchor="middle" font-weight="bold">-0.01% (6/10)</text>
+<rect x="1271.0" y="334.3" width="126.0" height="20.0" fill="#2a78d6" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.08"/>
+<text x="1334.0" y="348.3" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#2a78d6" text-anchor="middle" font-weight="bold">+0.2% (7/10)</text>
 <rect x="1414.0" y="334.3" width="136.0" height="20.0" fill="#eb6834" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.08"/>
 <text x="1482.0" y="348.3" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#eb6834" text-anchor="middle" font-weight="bold">0.050 (0.7x stable)</text>
 <line x1="826.0" y1="400.9" x2="1558.0" y2="400.9" stroke="#e5e4e0" stroke-width="0.8"/>
 <text x="958.0" y="390.9" font-family="Arial, Helvetica, sans-serif" font-size="9.6" fill="#0b0b0b" text-anchor="end" font-weight="normal">1S (SURS)</text>
 <text x="1052.0" y="390.9" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.583 (Base)</text>
 <text x="1192.0" y="390.9" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.242 (Base)</text>
-<text x="1334.0" y="390.9" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.2007 (Base)</text>
+<text x="1334.0" y="390.9" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.2020 (Base)</text>
 <rect x="1414.0" y="375.9" width="136.0" height="20.0" fill="#eb6834" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.12"/>
 <text x="1482.0" y="389.9" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#eb6834" text-anchor="middle" font-weight="bold">0.037 (Base 1S)</text>
 <line x1="826.0" y1="442.6" x2="1558.0" y2="442.6" stroke="#e5e4e0" stroke-width="0.8"/>
 <text x="958.0" y="432.6" font-family="Arial, Helvetica, sans-serif" font-size="9.6" fill="#0b0b0b" text-anchor="end" font-weight="normal">4S (SURS)</text>
 <text x="1052.0" y="432.6" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.573 (Base)</text>
 <text x="1192.0" y="432.6" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.214 (Base)</text>
-<text x="1334.0" y="432.6" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.1927 (Base)</text>
+<text x="1334.0" y="432.6" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#4a4946" text-anchor="middle" font-weight="normal">0.2091 (Base)</text>
 <rect x="1414.0" y="417.6" width="136.0" height="20.0" fill="#c93b2b" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.12"/>
 <text x="1482.0" y="431.6" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#c93b2b" text-anchor="middle" font-weight="bold">0.096 (Fragile)</text>
 <line x1="826.0" y1="484.2" x2="1558.0" y2="484.2" stroke="#e5e4e0" stroke-width="0.8"/>
@@ -235,13 +235,13 @@
 <text x="1052.0" y="473.2" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#c93b2b" text-anchor="middle" font-weight="bold">-2.5% (1/10)</text>
 <rect x="1129.0" y="459.2" width="126.0" height="20.0" fill="#c93b2b" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.08"/>
 <text x="1192.0" y="473.2" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#c93b2b" text-anchor="middle" font-weight="bold">-5.1% (4/10)</text>
-<rect x="1271.0" y="459.2" width="126.0" height="20.0" fill="#1baf7a" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.13"/>
-<text x="1334.0" y="473.2" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#1baf7a" text-anchor="middle" font-weight="bold">+0.34% (9/10●)</text>
+<rect x="1271.0" y="459.2" width="126.0" height="20.0" fill="#c93b2b" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.08"/>
+<text x="1334.0" y="473.2" font-family="Arial, Helvetica, sans-serif" font-size="9.5" fill="#c93b2b" text-anchor="middle" font-weight="bold">-0.9% (3/10)</text>
 <rect x="1414.0" y="459.2" width="136.0" height="20.0" fill="#2a78d6" stroke="none" stroke-width="1.0" rx="4.0" fill-opacity="0.08"/>
 <text x="1482.0" y="473.2" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#2a78d6" text-anchor="middle" font-weight="bold">0.044 (2.2x stable)</text>
 <rect x="826.0" y="512.0" width="732.0" height="52.0" fill="#ffffff" stroke="#e5e4e0" stroke-width="1.0" rx="5.0"/>
 <text x="838.0" y="531.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#1baf7a" text-anchor="start" font-weight="bold">Cross-Regime Wins (●):</text>
-<text x="972.0" y="531.0" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#0b0b0b" text-anchor="start" font-weight="normal">4S-P &amp; 4S-4_LL-P win 10/10 runs on 8-Wk Tree MRD &amp; 9/10 on Clusters; 1S-1_LL-P wins 10/10 on Flow F1.</text>
+<text x="972.0" y="531.0" font-family="Arial, Helvetica, sans-serif" font-size="9.3" fill="#0b0b0b" text-anchor="start" font-weight="normal">LASSO50-Greedy (P &amp; LL-P) wins 10/10 runs on Senior 65+ &amp; Adult Tree MRD and 9-10/10 on Flow F1 &amp; Clusters.</text>
 <text x="838.0" y="550.0" font-family="Arial, Helvetica, sans-serif" font-size="9.8" fill="#eb6834" text-anchor="start" font-weight="bold">Regime Resilience:</text>
-<text x="955.0" y="550.0" font-family="Arial, Helvetica, sans-serif" font-size="9.4" fill="#0b0b0b" text-anchor="start" font-weight="normal">SURS · 4S drifts by |ΔCos| = 0.096 between exp1 &amp; exp3; LASSO50-Greedy · 4S-P drifts by just 0.025 (3.9x more stable).</text>
+<text x="955.0" y="550.0" font-family="Arial, Helvetica, sans-serif" font-size="9.3" fill="#0b0b0b" text-anchor="start" font-weight="normal">SURS · 4S drifts by |ΔCos| = 0.096 between exp1 &amp; exp3; LASSO50-Greedy · 4S-P drifts by just 0.025 (3.9x more stable).</text>
 </svg>

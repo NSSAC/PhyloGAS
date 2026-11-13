@@ -1,5 +1,10 @@
 # Clock rate: which mode answers which question
 
+> **Related Documentation:**
+> - **[`docs/benchmarks_and_metrics.md`](benchmarks_and_metrics.md)** — Canonical definitions of all PhyloGAS sampling recipes, phylogeographic flow metrics, and Mean Reciprocal Distance (MRD) coverage benchmarks.
+> - **[`docs/abm_contribution.md`](abm_contribution.md)** — How the ABM generation interval ($\text{GI}$) and the painter substitution count ($\hat{\lambda}$) combine via $\mu_{\text{truth}} = \frac{\hat{\lambda}}{\text{GI}} \cdot s_{\text{path}}$.
+> - **[`docs/characterization/README.md`](characterization/README.md)** — Multi-state `exp3` characterization report and benchmark tables.
+
 The molecular clock is the one parameter where the simulated and the real
 analysis can be made to disagree *by configuration rather than by biology*, so
 it needs deciding deliberately rather than per run. This document is the
