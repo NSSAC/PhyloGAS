@@ -1028,7 +1028,7 @@ if ALLEVENTS:
             summary=f"{MICROBETRACE_DIR}/{PROJECT}_{{recipe}}_microbetrace_summary.json",
         params:
             outdir=MICROBETRACE_DIR,
-            prefix=f"{PROJECT}_{{wildcards.recipe}}_microbetrace",
+            prefix=f"{PROJECT}_{{recipe}}_microbetrace",
             mode=MICROBETRACE_MODE,
             max_seq=MICROBETRACE_MAX,
         shell:

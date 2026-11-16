@@ -23,6 +23,10 @@ dependencies = [
   "scikit-learn>=1.1",
   "pyyaml>=6.0",
   "requests>=2.28",
+  # Legacy third-party dependencies (e.g. ete3 / snakemake plugins) still import
+  # `six` and `pkg_resources` (which setuptools>=81 removed).
+  "setuptools>=69,<81",
+  "six>=1.16",
   # Sample selection. PhyloGAS orchestrates BeyondBaseline's samplers and
   # scores their output; `phylogas compare-strategies` shells out to
   # `beyond-baseline-sweep`.
