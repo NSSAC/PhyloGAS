@@ -2560,6 +2560,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--residence", default=None, help="needed for home_latitude/longitude")
     sp.set_defaults(func=cmd_build_demographics)
 
+    # -- export-microbetrace ----------------------------------------------
+    from .microbetrace import add_microbetrace_arguments, run_from_args as cmd_export_microbetrace
+    sp = sub.add_parser(
+        "export-microbetrace",
+        help="Export MicrobeTrace-ready FASTA, node metadata, and ground-truth link bundles",
+    )
+    add_microbetrace_arguments(sp)
+    sp.set_defaults(func=cmd_export_microbetrace)
+
     return p
 
 

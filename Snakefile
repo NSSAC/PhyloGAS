@@ -985,15 +985,77 @@ if ALLEVENTS:
 
 
 # --------------------------------------------------------------------------
+# Stage 8: MicrobeTrace bundle export (included in `benchmarks`/`full` by default)
+# --------------------------------------------------------------------------
+MICROBETRACE_ENABLED = bool(cfg("microbetrace.enabled", True))
+MICROBETRACE_DIR = cfg("microbetrace.outdir", f"{RESULTS}/06_microbetrace")
+MICROBETRACE_MAX = cfg("microbetrace.max_sequences", 600)
+MICROBETRACE_MODE = cfg("microbetrace.selection_mode", "cluster-enriched")
+MICROBETRACE_RECIPES = cfg("microbetrace.recipes", "surs")
+
+def _microbetrace_targets():
+    if not ALLEVENTS or not MICROBETRACE_ENABLED:
+        return []
+    ns_list = [r for r in _ns_recipes() if r != "all_infections"]
+    if isinstance(MICROBETRACE_RECIPES, (list, tuple)):
+        recipes = [r for r in MICROBETRACE_RECIPES if r != "all_infections"]
+    elif str(MICROBETRACE_RECIPES).strip().lower() == "all":
+        recipes = ns_list
+    else:
+        # Default ("surs"): only export MicrobeTrace bundles for SURS recipes
+        want_algo = str(MICROBETRACE_RECIPES).strip().lower() or "surs"
+        recipes = [r for r in ns_list if _recipe_algo(r) == want_algo]
+        if not recipes and ns_list:
+            recipes = ns_list[:1]
+    return expand(
+        f"{MICROBETRACE_DIR}/{PROJECT}_{{recipe}}_microbetrace_summary.json",
+        recipe=recipes,
+    )
+
+if ALLEVENTS:
+
+    rule export_microbetrace:
+        """Export a curated MicrobeTrace bundle (FASTA, nodes.csv, truth_links.csv,
+        summary.json) for one sampled surveillance recipe."""
+        input:
+            fasta=f"{SAMPLE_DIR}/{PROJECT}.{{recipe}}.fasta{_EXT}",
+            samples=f"{SAMPLE_DIR}/{{recipe}}_samples.csv.xz",
+            infections=f"{BENCH_DIR}/allevents_variants.csv.xz",
+        output:
+            fasta=f"{MICROBETRACE_DIR}/{PROJECT}_{{recipe}}_microbetrace_sequences.fasta",
+            nodes=f"{MICROBETRACE_DIR}/{PROJECT}_{{recipe}}_microbetrace_nodes.csv",
+            links=f"{MICROBETRACE_DIR}/{PROJECT}_{{recipe}}_microbetrace_truth_links.csv",
+            summary=f"{MICROBETRACE_DIR}/{PROJECT}_{{recipe}}_microbetrace_summary.json",
+        params:
+            outdir=MICROBETRACE_DIR,
+            prefix=f"{PROJECT}_{{wildcards.recipe}}_microbetrace",
+            mode=MICROBETRACE_MODE,
+            max_seq=MICROBETRACE_MAX,
+        shell:
+            "phylogas export-microbetrace "
+            "--fasta {input.fasta} --samples {input.samples} "
+            "--infections {input.infections} --outdir {params.outdir} "
+            "--prefix {params.prefix} --selection-mode {params.mode} "
+            "--max-sequences {params.max_seq}"
+
+    rule microbetrace:
+        """Export MicrobeTrace bundles for every recipe in sampling.nextstrain_recipes."""
+        input:
+            _microbetrace_targets()
+
+
+# --------------------------------------------------------------------------
 # End-to-end targets
 #
 # `all` (the default) stops at painted genomes, sampled subsets and -- with
 # nextstrain enabled -- the trees and clock_estimates.csv. The ground-truth
-# benchmarks depend on the line-list step's all-events and mugration outputs,
-# which Snakemake schedules first, so one invocation runs everything:
+# benchmarks and MicrobeTrace bundles depend on the line-list step's all-events
+# and mugration outputs, which Snakemake schedules first, so one invocation
+# runs everything:
 #
 #   phylogas run --config config.yaml --cores all benchmarks
-#   phylogas run --config config.yaml --cores all full       # all + benchmarks
+#   phylogas run --config config.yaml --cores all microbetrace
+#   phylogas run --config config.yaml --cores all full       # all + benchmarks + microbetrace
 # --------------------------------------------------------------------------
 def _benchmark_targets():
     targets = []
@@ -1002,17 +1064,19 @@ def _benchmark_targets():
                     f"{BENCH_DIR}/sequence_divergence.csv"]
     if MUGRATION and ALLEVENTS:
         targets.append(f"{BENCH_DIR}/Mugration_Metrics.csv")
+    targets += _microbetrace_targets()
     return targets
 
 
 rule benchmarks:
-    """Every ground-truth benchmark the configured inputs allow."""
+    """Every ground-truth benchmark and MicrobeTrace bundle the configured inputs allow."""
     input:
         _benchmark_targets(),
 
 
 rule full:
-    """The default target plus the ground-truth benchmarks."""
+    """The default target plus the ground-truth benchmarks and MicrobeTrace bundles."""
     input:
         rules.all.input,
         _benchmark_targets(),
+

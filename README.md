@@ -308,13 +308,15 @@ results/<project_name>/
 ├── 04_nextstrain_builds/    # <recipe>/auspice.json, one per nextstrain_recipes entry
 ├── 05_benchmarks/           # clock_estimates.csv, Mugration_Metrics.csv,
 │                            # AUC_truth_rankings.csv, sequence_divergence.csv, ...
+├── 06_microbetrace/         # <prefix>_{sequences.fasta,nodes.csv,truth_links.csv,summary.json}
 └── ncov/                    # this project's ncov checkout (cloned, pinned);
                              # holds the staged inputs and ncov's own results/
 ```
 
 `rule all` produces the painted set, the sampled subsets and (with
 `nextstrain.enabled`) the trees and `clock_estimates.csv`. The other benchmark
-CSVs are separate targets — name them, or use `phylogas benchmark ...`.
+CSVs and MicrobeTrace bundles are separate targets (`benchmarks`, `microbetrace`,
+`full`) — name them, or use `phylogas benchmark ...` / `phylogas export-microbetrace ...`.
 
 ---
 
@@ -327,11 +329,16 @@ PhyloGAS/
 ├── command_map.md             # Old script invocations -> phylogas CLI
 ├── pyproject.toml             # Package metadata; defines the `phylogas` command
 ├── environment.yml            # Conda environment incl. satellite repos
-├── scripts/legacy/            # Superseded scripts, kept for provenance
+├── scripts/
+│   ├── utils/
+│   │   ├── characterize_exp3.py    # 5-state characterization tables & figures
+│   │   └── export_microbetrace.py  # Standalone MicrobeTrace bundle exporter
+│   └── legacy/                     # Superseded scripts, kept for provenance
 ├── src/phylogas/
 │   ├── cli.py                 # Unified command line interface
 │   ├── config.py              # YAML loading + {placeholder} expansion
-│   ├── dataverse.py           # Per-state DOIs + verified file-ID table
+│   ├── sources.py             # Zenodo & Dataverse DOIs + verified MD5 table
+│   ├── microbetrace.py        # MicrobeTrace bundle exporter & SNP threshold scorer
 │   ├── painter/               # The Genetic Painter
 │   │   ├── genetic_painter.py
 │   │   ├── mutational_models/ # rate_limited | simple | poor
@@ -366,7 +373,7 @@ This project is mid-restructure. What is actually wired up today:
 | Stage | Command | Status |
 |---|---|---|
 | — | `phylogas status` | Works — **start here** |
-| — | `phylogas fetch-data` | Works — verified against live Dataverse |
+| — | `phylogas fetch-data` | Works — verified against Zenodo |
 | — | `phylogas build-demographics` | Works — verified on 5.2M MN rows |
 | — | `phylogas ncov-checkout` | Works; clones `nextstrain.dir` at the pinned `ref`, no-op if present |
 | 0. Seed acquisition | `phylogas prep-seeds` | Works |
@@ -375,20 +382,22 @@ This project is mid-restructure. What is actually wired up today:
 | 3. Ascertainment | rule `simulate_linelist` (TwinSampler) | Works, verified at cluster scale |
 | 4. Adaptive sampling | rule `sample_scenarios` (`beyond-baseline-sweep`) | Works; one sample set per recipe (`sampling.replicates` not yet wired) |
 | 5. FASTA subsetting | `phylogas subset-fasta` | Works |
-| 6. Nextstrain | rule `nextstrain_build` | Works, opt-in; verified with the Nextstrain CLI on a cluster, 4 states concurrently |
-| 7. Clock benchmark | `phylogas benchmark clock` | Works for `truth` and `operational`; `inferred` (mu_sim) needs augur on `PATH` |
+| 6. Nextstrain | rule `nextstrain_build` | Works, opt-in; verified with the Nextstrain CLI on a cluster, 5 states concurrently |
+| 7. Clock benchmark | `phylogas benchmark clock` | Works for `truth`, `inferred` (`mu_sim`), and `operational` |
 | 7. Other benchmarks | `phylogas benchmark truth / mugration / sequence` | Work — mugration scoring verified bit-identical to the pre-split implementation |
+| 8. MicrobeTrace export | `phylogas export-microbetrace` / rule `microbetrace` | Works — emits `_sequences.fasta`, `_nodes.csv`, `_truth_links.csv`, and `_summary.json` |
 | — | `phylogas compare-strategies` | Works — runs a BeyondBaseline sweep, then ranks every strategy |
 | — | Docker / Apptainer | **Not written** |
 
-Verified end to end on the cluster: the Virginia Delta replicate (ticks
-128–428, 5.35M painted infections) through painting, ascertainment, sampling,
-a `4S__surs` Nextstrain build and `clock_estimates.csv`.
+Verified end to end on the cluster across 5 PGCoE states (`GA`, `MA`, `MN`, `VA`, `WA`): 14.41M painted Delta-wave infections through painting, ascertainment, sampling, Nextstrain builds, clock closure, and ground-truth benchmarks.
 
 ---
 
 ## 📚 Data Availability & Acknowledgements
-Due to size constraints, the synthetic population data and EpiHiper outputs are not hosted in this repository. `phylogas fetch-data` pulls the population files from the UVA Dataverse ([doi:10.18130/V3/5LSDCY](https://dataverse.lib.virginia.edu/dataset.xhtml?persistentId=doi:10.18130/V3/5LSDCY)) and the simulation replicates from Zenodo ([doi:10.5281/zenodo.23067670](https://doi.org/10.5281/zenodo.23067670)).
+Due to size constraints, the synthetic population data, EpiHiper simulation outputs, and downstream phylodynamic benchmark archives are hosted on Zenodo (with provenance mirrors on the UVA Dataverse):
+* **Synthetic Populations (v2.4.0, per-state Zenodo records):** VA ([10.5281/zenodo.23088534](https://doi.org/10.5281/zenodo.23088534)), GA ([10.5281/zenodo.23088629](https://doi.org/10.5281/zenodo.23088629)), MA ([10.5281/zenodo.23088723](https://doi.org/10.5281/zenodo.23088723)), MN ([10.5281/zenodo.23088773](https://doi.org/10.5281/zenodo.23088773)), WA ([10.5281/zenodo.23088830](https://doi.org/10.5281/zenodo.23088830)), CA ([10.5281/zenodo.23088872](https://doi.org/10.5281/zenodo.23088872)).
+* **EpiHiper ABM Simulation Replicates:** Concept DOI [10.5281/zenodo.23067669](https://doi.org/10.5281/zenodo.23067669) (`exp3` v2: [10.5281/zenodo.23989650](https://doi.org/10.5281/zenodo.23989650); `exp1` v1: [10.5281/zenodo.23067670](https://doi.org/10.5281/zenodo.23067670)).
+* **Downstream Phylodynamic & Surveillance Benchmark Datasets (`exp3`):** [10.5281/zenodo.24013208](https://doi.org/10.5281/zenodo.24013208).
 
 **Core Components:**
 * **Genetic Painter:** Integrated within `src/phylogas/painter/`.
