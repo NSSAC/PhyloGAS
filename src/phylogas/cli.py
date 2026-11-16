@@ -1443,6 +1443,242 @@ def cmd_benchmark(args) -> int:
         )
     elif args.what == "clock":
         return _benchmark_clock(args)
+    elif args.what == "contrasts":
+        return _benchmark_contrasts(args)
+    return 0
+
+
+def _benchmark_contrasts(args) -> int:
+    """Run contrast sampling arms (Stratified, LASSO50-Stratified, and stratifier
+    ablations `nocounty` / `countyonly`) and score all arms on mechanism,
+    mugration, and ABM ground-truth benchmarks without touching 03_sampled_datasets.
+    """
+    import glob as _glob
+
+    cfg = _load_config(args)
+    state = str(cfg.get("population.state", default="va"))
+    results_dir = Path(str(cfg.get("results_dir", default=f"results/{state}_delta_wave")))
+    base_sample_dir = Path(str(cfg.get("sampling.outdir", default=str(results_dir / "03_sampled_datasets"))))
+    bench_dir = Path(str(cfg.get("benchmark.outdir", default=str(results_dir / "05_benchmarks"))))
+    bench_dir.mkdir(parents=True, exist_ok=True)
+
+    linelist = args.linelist or str(cfg.get("ascertainment.output", default=str(results_dir / "02_simulated_linelists/linelist.csv.xz")))
+    population = args.population or str(cfg.get("population.demographics_file", default=f"data/{state}/{state}_2_4_0_demographics.csv"))
+
+    allevents_variants = Path(args.infections) if args.infections else (bench_dir / "allevents_variants.csv.xz")
+    if not allevents_variants.exists():
+        fallback_ae = cfg.ascertainment_outputs().get("allevents")
+        if fallback_ae and Path(fallback_ae).exists():
+            allevents_variants = Path(fallback_ae)
+
+    truth_json = args.truth or cfg.ascertainment_outputs().get("mugration")
+    batch_size = int(args.batch_size or cfg.get("sampling.batch_size", default=400) or 400)
+    seed = int(args.seed if args.seed is not None else (cfg.get("random_seed", default=43) or 43))
+    no_replacement = bool(cfg.get("sampling.no_replacement", default=True))
+    min_pool = cfg.get("sampling.min_pool", default=None)
+    max_super = int(args.max_supergroups or 50)
+
+    # Resolve start_date from existing sampling_start_date.txt or compute it
+    cal_file = base_sample_dir / "sampling_start_date.txt"
+    start_date_str = args.start_date
+    if not start_date_str and cal_file.exists():
+        start_date_str = cal_file.read_text().strip()
+    if not start_date_str and not args.dry_run:
+        from .benchmark.truth_runner import resolve_sampling_start
+        cfg_start = str(cfg.get("sampling.start_date", default="auto") or "auto")
+        mp_val = int(min_pool) if (min_pool is not None and str(min_pool).strip()) else None
+        ts = resolve_sampling_start(str(allevents_variants), str(linelist), start_date=cfg_start, min_pool=mp_val)
+        start_date_str = str(ts.date())
+    if not start_date_str:
+        start_date_str = "auto"
+
+    print("=" * 72)
+    print(f"PhyloGAS Contrast & Mechanism Benchmark  [state={state}, max_supergroups={max_super}]")
+    print("=" * 72)
+    print(f"  Config       : {args.config}")
+    print(f"  Line list    : {linelist}")
+    print(f"  Population   : {population}")
+    print(f"  Infections   : {allevents_variants}")
+    print(f"  Mugration    : {truth_json}")
+    print(f"  Start date   : {start_date_str}  (batch_size={batch_size}, seed={seed})")
+
+    contrast_specs = [
+        {
+            "name": f"foil_s{max_super}",
+            "outdir": results_dir / f"03_sampled_foil_s{max_super}",
+            "algorithms": ["stratified", "lasso_stratified"],
+            "stratifiers": None,  # default: age race county sex
+            "suffix": None,       # recipe names stratified / lasso_stratified are already distinct
+        },
+        {
+            "name": "nocounty",
+            "outdir": results_dir / "03_sampled_nocounty",
+            "algorithms": ["stratified", "lasso_greedy"],
+            "stratifiers": ["age", "race", "sex"],
+            "suffix": "nocounty",
+        },
+        {
+            "name": "countyonly",
+            "outdir": results_dir / "03_sampled_countyonly",
+            "algorithms": ["stratified", "lasso_greedy"],
+            "stratifiers": ["county"],
+            "suffix": "countyonly",
+        },
+    ]
+
+    # ---- Step 1: Run contrast sampling arms ------------------------------
+    if not args.skip_sampling:
+        py_wrapper = (
+            "import sys\n"
+            "import scenarios_simulation.sampling_algorithms as sa\n"
+            "_orig_ls = sa.lasso_clustered_stratified_sampler\n"
+            "def _ls_patched(line_df, batch_size, target_probs, prior_counts, rng, state=None):\n"
+            "    state = dict(state or {})\n"
+            f"    state.setdefault('max_supergroups', {max_super})\n"
+            "    return _orig_ls(line_df, batch_size, target_probs, prior_counts, rng, state)\n"
+            "sa.lasso_clustered_stratified_sampler = _ls_patched\n"
+            "if hasattr(sa, 'ALGORITHMS') and isinstance(sa.ALGORITHMS, dict):\n"
+            "    for k in list(sa.ALGORITHMS.keys()):\n"
+            "        if 'stratified' in k.lower() and 'lasso' in k.lower():\n"
+            "            sa.ALGORITHMS[k] = _ls_patched\n"
+            "from scenarios_simulation.run_all_scenarios import main\n"
+            "sys.exit(main())\n"
+        )
+        for spec in contrast_specs:
+            odir: Path = spec["outdir"]
+            existing = sorted(odir.glob("*_samples.csv*"))
+            if len(existing) >= 12 and not args.force_resample:
+                print(f"\n[Sampling: {spec['name']}] Reusing {len(existing)} existing sample files in {odir}")
+                continue
+
+            if not args.dry_run:
+                odir.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                sys.executable, "-c", py_wrapper,
+                "--linelist", str(linelist),
+                "--population", str(population),
+                "--outdir", str(odir),
+                "--batch-size", str(batch_size),
+                "--seed", str(seed),
+                "--start-date", str(start_date_str),
+                "--save-samples",
+                "--algorithms", *spec["algorithms"],
+            ]
+            if no_replacement:
+                cmd.append("--no-replacement")
+            if min_pool is not None and str(min_pool).strip():
+                cmd += ["--min-pool", str(min_pool).strip()]
+            if spec["stratifiers"]:
+                cmd += ["--stratifiers", *spec["stratifiers"]]
+
+            if force_clean := args.force_resample:
+                for old_f in odir.glob("*_samples.csv*"):
+                    old_f.unlink(missing_ok=True)
+
+            print(f"\n[Sampling: {spec['name']}] -> {odir}")
+            rc = _run(cmd, args.dry_run)
+            if rc != 0:
+                return rc
+
+            # Rename <recipe>_samples.csv.xz -> <recipe>_<suffix>_samples.csv.xz
+            # so recipe ids stay unique across directories while still starting
+            # with 1S / 4S for stride detection in truth_runner.py.
+            sfx = spec["suffix"]
+            if not args.dry_run:
+                for fpath in sorted(odir.glob("*_samples.csv*")):
+                    fname = fpath.name
+                    if sfx:
+                        if f"_{sfx}_samples.csv" in fname:
+                            continue
+                        new_name = fname.replace("_samples.csv", f"_{sfx}_samples.csv")
+                    elif "lasso_stratified_samples.csv" in fname:
+                        new_name = fname.replace(
+                            "lasso_stratified_samples.csv",
+                            f"lasso_stratified_s{max_super}_samples.csv",
+                        )
+                    else:
+                        new_name = fname
+                    if new_name != fname:
+                        target_path = fpath.with_name(new_name)
+                        fpath.rename(target_path)
+
+    # Collect all sample directories that exist
+    sample_dirs = [base_sample_dir] + [s["outdir"] for s in contrast_specs]
+    sample_globs = [str(d / "*_samples.csv.xz") for d in sample_dirs if d.exists() or args.dry_run]
+
+    if args.dry_run:
+        print("\n[Dry Run] Would score mechanism, mugration, and truth across:")
+        for g in sample_globs:
+            print(f"  - {g}")
+        return 0
+
+    matched_files = []
+    for g in sample_globs:
+        matched_files.extend(sorted(_glob.glob(g)))
+    print(f"\nMatched {len(matched_files)} total sampled strategy files across {len(sample_dirs)} directories.")
+
+    # ---- Step 2: Homophily, Bridge Enrichment, LASSO Weights & Mechanism -
+    if not args.skip_mechanism:
+        print("\n" + "=" * 72)
+        print("Running Homophily, LASSO Weight Attribution & Mugration Mechanism Analysis")
+        print("=" * 72)
+        repo_root = Path(__file__).resolve().parents[2]
+        mech_script = repo_root / "scripts" / "homophily_lasso_mechanism.py"
+        mech_outdir = bench_dir / "mechanism"
+        mech_cmd = [
+            sys.executable, str(mech_script),
+            "--state", state,
+            "--infections", str(allevents_variants),
+            "--linelist", str(linelist),
+            "--population", str(population),
+            "--outdir", str(mech_outdir),
+            "--samples", *[str(d) for d in sample_dirs if d.exists()],
+        ]
+        if truth_json and Path(str(truth_json)).exists():
+            mech_cmd += ["--truth", str(truth_json)]
+        rc = _run(mech_cmd, False)
+        if rc != 0:
+            print(f"WARNING: homophily_lasso_mechanism.py exited with status {rc}", file=sys.stderr)
+
+    # ---- Step 3: Mugration Benchmark across all contrast arms ------------
+    if not args.skip_mugration:
+        if truth_json and Path(str(truth_json)).exists() and allevents_variants.exists():
+            print("\n" + "=" * 72)
+            print("Running Mugration Benchmark across base + contrast arms")
+            print("=" * 72)
+            from .benchmark import runner
+            mug_out = bench_dir / "Mugration_Metrics_contrasts.csv"
+            runner.benchmark_mugration(
+                truth_json=str(truth_json),
+                samples=sample_globs,
+                infections=str(allevents_variants),
+                out_csv=str(mug_out),
+            )
+        else:
+            print("\nSkipping mugration benchmark (truth JSON or allevents missing).", file=sys.stderr)
+
+    # ---- Step 4: ABM Ground-Truth & KL Benchmark across all contrast arms -
+    if not args.skip_truth:
+        if allevents_variants.exists():
+            print("\n" + "=" * 72)
+            print("Running ABM Ground-Truth Coverage & KL Benchmark across base + contrast arms")
+            print("=" * 72)
+            from .benchmark.truth_runner import score_samples
+            truth_out = bench_dir / "AUC_truth_rankings_contrasts.csv"
+            mp_val = int(min_pool) if (min_pool is not None and str(min_pool).strip()) else None
+            score_samples(
+                samples_globs=sample_globs,
+                infections=str(allevents_variants),
+                linelist=str(linelist),
+                out_csv=str(truth_out),
+                population=str(population),
+                start_date=str(start_date_str),
+                min_pool=mp_val,
+            )
+        else:
+            print("\nSkipping truth benchmark (allevents_variants missing).", file=sys.stderr)
+
+    print("\nAll requested contrast benchmarks complete.")
     return 0
 
 
@@ -2447,6 +2683,34 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--keep-context", dest="keep_context", action="store_true",
                    help="keep the reference and other context sequences in the fit")
     b.add_argument("--out", default=None, help="CSV (default: <benchmark.outdir>/clock_estimates.csv)")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser(
+        "contrasts",
+        help="Run Stratified, LASSO50-Stratified, and stratifier ablations (nocounty, countyonly) "
+             "and score mechanism, mugration, and ABM ground-truth metrics",
+    )
+    b.add_argument("--config", "-c", default="config.yaml", help="Project YAML config (e.g. configs/va.yaml)")
+    b.add_argument("--max-supergroups", dest="max_supergroups", type=int, default=50,
+                   help="Max supergroups for LASSO-Stratified contrast arm (default: 50)")
+    b.add_argument("--linelist", default=None, help="Override line list path")
+    b.add_argument("--population", default=None, help="Override demographics file path")
+    b.add_argument("--infections", default=None, help="Override allevents_variants.csv.xz path")
+    b.add_argument("--truth", default=None, help="Override linelist_mugration.json path")
+    b.add_argument("--start-date", dest="start_date", default=None, help="Override sampling start date")
+    b.add_argument("--batch-size", dest="batch_size", type=int, default=None, help="Override weekly batch size")
+    b.add_argument("--seed", type=int, default=None, help="Override random seed")
+    b.add_argument("--force-resample", dest="force_resample", action="store_true",
+                   help="Re-run contrast sampling even if 12 sample files already exist in an output folder")
+    b.add_argument("--skip-sampling", dest="skip_sampling", action="store_true",
+                   help="Skip contrast sampling and score existing sample directories")
+    b.add_argument("--skip-mechanism", dest="skip_mechanism", action="store_true",
+                   help="Skip homophily/LASSO mechanism analysis")
+    b.add_argument("--skip-mugration", dest="skip_mugration", action="store_true",
+                   help="Skip mugration benchmark")
+    b.add_argument("--skip-truth", dest="skip_truth", action="store_true",
+                   help="Skip ABM ground-truth coverage/KL benchmark")
+    b.add_argument("--dry-run", "-n", dest="dry_run", action="store_true")
     b.set_defaults(func=cmd_benchmark)
 
     # -- assign-variants ---------------------------------------------------
