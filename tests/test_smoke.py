@@ -29,6 +29,7 @@ def test_package_imports():
     "phylogas.cli",
     "phylogas.config",
     "phylogas.sources",
+    "phylogas.sampling_canonical",
     "phylogas.benchmark.mugration",
     "phylogas.benchmark.scoring",
     "phylogas.benchmark.runner",
@@ -61,7 +62,7 @@ def test_subcommand_help(cmd):
     assert r.returncode == 0, f"`phylogas {cmd} --help` failed:\n{r.stdout}\n{r.stderr}"
 
 
-@pytest.mark.parametrize("what", ["mugration", "sequence", "compare"])
+@pytest.mark.parametrize("what", ["mugration", "sequence", "compare", "contrasts", "canonical"])
 def test_benchmark_subcommand_help(what):
     r = subprocess.run(["phylogas", "benchmark", what, "--help"],
                        capture_output=True, text=True)

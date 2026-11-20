@@ -1445,6 +1445,8 @@ def cmd_benchmark(args) -> int:
         return _benchmark_clock(args)
     elif args.what == "contrasts":
         return _benchmark_contrasts(args)
+    elif args.what == "canonical":
+        return _benchmark_canonical(args)
     return 0
 
 
@@ -1688,6 +1690,203 @@ def _benchmark_contrasts(args) -> int:
             print("\nSkipping truth benchmark (allevents_variants missing).", file=sys.stderr)
 
     print("\nAll requested contrast benchmarks complete.")
+    return 0
+
+
+def _benchmark_canonical(args) -> int:
+    """Run canonical public-health specimen-pool & line-list-only sampling strategies
+    (Convenience, Sentinel, Sentinel+CaseProp, Sentinel+GeoCap, Statewide SURS/CaseProp/GeoCap)
+    and score them on mechanism, mugration, and ABM ground-truth benchmarks.
+    """
+    import datetime as _dt
+    import glob as _glob
+    from .sampling_canonical import CANONICAL_STRATEGIES, PoolConfig, open_text_auto, run_canonical_from_csv
+
+    cfg = _load_config(args)
+    state = str(cfg.get("population.state", default="va"))
+    results_dir = Path(str(cfg.get("results_dir", default=f"results/{state}_delta_wave")))
+    base_sample_dir = Path(str(cfg.get("sampling.outdir", default=str(results_dir / "03_sampled_datasets"))))
+    canon_dir = Path(args.outdir) if args.outdir else (results_dir / "03_sampled_canonical")
+    bench_dir = Path(str(cfg.get("benchmark.outdir", default=str(results_dir / "05_benchmarks"))))
+    bench_dir.mkdir(parents=True, exist_ok=True)
+
+    linelist_cfg = args.linelist or str(cfg.get("ascertainment.output", default=str(results_dir / "02_simulated_linelists/linelist.csv.xz")))
+    population = args.population or str(cfg.get("population.demographics_file", default=f"data/{state}/{state}_2_4_0_demographics.csv"))
+
+    allevents_variants = Path(args.infections) if args.infections else (bench_dir / "allevents_variants.csv.xz")
+    if not allevents_variants.exists():
+        fallback_ae = cfg.ascertainment_outputs().get("allevents")
+        if fallback_ae and Path(fallback_ae).exists():
+            allevents_variants = Path(fallback_ae)
+
+    use_synth_ascertainment = False
+    linelist_path = Path(linelist_cfg)
+    if not linelist_path.exists() and allevents_variants.exists():
+        print(f"  NOTE: {linelist_path} not present locally; synthesizing ascertained pool from {allevents_variants} `test_prob`.")
+        linelist_path = allevents_variants
+        use_synth_ascertainment = True
+
+    truth_json = args.truth or cfg.ascertainment_outputs().get("mugration")
+    batch_size = int(args.batch_size or cfg.get("sampling.batch_size", default=400) or 400)
+    seed = int(args.seed if args.seed is not None else (cfg.get("random_seed", default=43) or 43))
+    min_pool_raw = cfg.get("sampling.min_pool", default=None)
+    min_pool_val = int(args.min_pool) if args.min_pool is not None else (
+        int(min_pool_raw) if (min_pool_raw is not None and str(min_pool_raw).strip()) else 50
+    )
+
+    # Resolve start_date (preferring sampling_start_date.txt if present)
+    cal_file = base_sample_dir / "sampling_start_date.txt"
+    start_date_str = args.start_date
+    if not start_date_str and cal_file.exists():
+        start_date_str = cal_file.read_text().strip()
+    if not start_date_str and str(start_date_str or "auto").strip().lower() in ("", "auto"):
+        cfg_start = str(cfg.get("sampling.start_date", default="auto") or "auto")
+        if cfg_start.strip().lower() not in ("", "auto"):
+            start_date_str = cfg_start.strip()
+        elif not args.dry_run and allevents_variants.exists():
+            min_ord = None
+            with open_text_auto(allevents_variants, "rt") as fh:
+                hdr = fh.readline()
+                dl = "\t" if hdr.count("\t") > hdr.count(",") else ","
+                cols = [c.strip() for c in next(csv.reader([hdr], delimiter=dl))]
+                id_col = cols.index("date") if "date" in cols else 0
+                for row in csv.reader(fh, delimiter=dl):
+                    if len(row) > id_col:
+                        ds = row[id_col].strip()[:10]
+                        if len(ds) == 10 and ds[4] == "-" and ds[7] == "-":
+                            try:
+                                d = _dt.date.fromisoformat(ds).toordinal()
+                                if min_ord is None or d < min_ord:
+                                    min_ord = d
+                            except ValueError:
+                                pass
+            if min_ord is not None:
+                start_date_str = _dt.date.fromordinal(min_ord + 7).isoformat()
+    if not start_date_str:
+        start_date_str = "2021-04-16"
+
+    strides = tuple(args.strides) if args.strides else (1, 4)
+    strategies = tuple(args.strategies) if args.strategies else CANONICAL_STRATEGIES
+    pool_cfg = PoolConfig(
+        sentinel_k_hubs=int(args.sentinel_hubs),
+        convenience_k_hubs=int(args.convenience_hubs),
+    )
+
+    print("=" * 72)
+    print(f"PhyloGAS Canonical Public-Health Sampling Benchmark  [state={state}]")
+    print("=" * 72)
+    print(f"  Config       : {args.config}")
+    print(f"  Line list    : {linelist_path}" + (" (synthesized from test_prob)" if use_synth_ascertainment else ""))
+    print(f"  Infections   : {allevents_variants}")
+    print(f"  Output dir   : {canon_dir}")
+    print(f"  Start date   : {start_date_str}  (batch_size={batch_size}/wk, min_pool={min_pool_val}, seed={seed})")
+    print(f"  Strategies   : {', '.join(strategies)}  |  strides={strides}")
+
+    if args.dry_run:
+        return 0
+
+    # ---- Step 1: Run canonical sampling suite ----------------------------
+    if not args.skip_sampling:
+        existing = sorted(canon_dir.glob("*_samples.csv*"))
+        expected_n = len(strides) * len(strategies)
+        if len(existing) >= expected_n and not args.force_resample:
+            print(f"\n[Canonical Sampling] Reusing {len(existing)} existing sample files in {canon_dir}")
+        else:
+            if args.force_resample:
+                for old_f in canon_dir.glob("*_samples.csv*"):
+                    old_f.unlink(missing_ok=True)
+            run_canonical_from_csv(
+                linelist_path=linelist_path,
+                outdir=canon_dir,
+                start_date_iso=start_date_str,
+                min_pool=min_pool_val,
+                weekly_budget=batch_size,
+                strides=strides,
+                strategies=strategies,
+                pool_cfg=pool_cfg,
+                seed=seed,
+                diagnostics_dir=bench_dir / "canonical_pools",
+                state_label=state,
+                synthesize_ascertainment_from_test_prob=use_synth_ascertainment,
+            )
+
+    # Include canonical sample sets plus existing 1S__surs / 4S__surs (if present) for direct comparison
+    sample_globs = [str(canon_dir / "*_samples.csv.xz")]
+    for base_ref in ("1S__surs_samples.csv.xz", "4S__surs_samples.csv.xz", "1S-1_LL-P__lasso_greedy_samples.csv.xz"):
+        bp = base_sample_dir / base_ref
+        if bp.exists():
+            sample_globs.append(str(bp))
+
+    matched_files = []
+    for g in sample_globs:
+        matched_files.extend(sorted(_glob.glob(g)))
+    print(f"\nMatched {len(matched_files)} sampled strategy files for scoring.")
+
+    # ---- Step 2: Mechanism & True-Tree Parsimony Flow Summary ------------
+    if not args.skip_mechanism and allevents_variants.exists():
+        print("\n" + "=" * 72)
+        print("Running Mechanism & Parsimony Flow Evaluation on Canonical Arms")
+        print("=" * 72)
+        repo_root = Path(__file__).resolve().parents[2]
+        mech_script = repo_root / "scripts" / "homophily_lasso_mechanism.py"
+        mech_outdir = bench_dir / "canonical_pools"
+        mech_cmd = [
+            sys.executable, str(mech_script),
+            "--state", f"{state}_canonical",
+            "--infections", str(allevents_variants),
+            "--outdir", str(mech_outdir),
+            "--samples", *matched_files,
+        ]
+        if Path(linelist_cfg).exists():
+            mech_cmd += ["--linelist", str(linelist_cfg)]
+        if Path(population).exists():
+            mech_cmd += ["--population", str(population)]
+        if truth_json and Path(str(truth_json)).exists():
+            mech_cmd += ["--truth", str(truth_json)]
+        rc = _run(mech_cmd, False)
+        if rc != 0:
+            print(f"WARNING: homophily_lasso_mechanism.py exited with status {rc}", file=sys.stderr)
+
+    # ---- Step 3: Mugration Benchmark -------------------------------------
+    if not args.skip_mugration:
+        if truth_json and Path(str(truth_json)).exists() and allevents_variants.exists():
+            print("\n" + "=" * 72)
+            print("Running Mugration Benchmark across canonical arms")
+            print("=" * 72)
+            from .benchmark import runner
+            mug_out = bench_dir / "Mugration_Metrics_canonical.csv"
+            runner.benchmark_mugration(
+                truth_json=str(truth_json),
+                samples=sample_globs,
+                infections=str(allevents_variants),
+                out_csv=str(mug_out),
+            )
+        else:
+            print("\nSkipping mugration benchmark (truth JSON or allevents missing).", file=sys.stderr)
+
+    # ---- Step 4: ABM Ground-Truth Coverage & Prevalence Benchmark --------
+    if not args.skip_truth:
+        if allevents_variants.exists():
+            print("\n" + "=" * 72)
+            print("Running ABM Ground-Truth Coverage & Prevalence Benchmark across canonical arms")
+            print("=" * 72)
+            from .benchmark.truth_runner import score_samples
+            truth_out = bench_dir / "AUC_truth_rankings_canonical.csv"
+            pop_arg = str(population) if Path(population).exists() else None
+            ll_arg = str(linelist_cfg) if Path(linelist_cfg).exists() else None
+            score_samples(
+                samples_globs=sample_globs,
+                infections=str(allevents_variants),
+                linelist=ll_arg,
+                out_csv=str(truth_out),
+                population=pop_arg,
+                start_date=str(start_date_str),
+                min_pool=min_pool_val,
+            )
+        else:
+            print("\nSkipping truth benchmark (allevents_variants missing).", file=sys.stderr)
+
+    print("\nAll requested canonical sampling benchmarks complete.")
     return 0
 
 
@@ -2719,6 +2918,33 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Skip mugration benchmark")
     b.add_argument("--skip-truth", dest="skip_truth", action="store_true",
                    help="Skip ABM ground-truth coverage/KL benchmark")
+    b.add_argument("--dry-run", "-n", dest="dry_run", action="store_true")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser(
+        "canonical",
+        help="Run canonical public-health sampling designs (Convenience, Sentinel, CaseProp, GeoCap, Statewide SURS) "
+             "without a population model and score against ABM ground truth",
+    )
+    b.add_argument("--config", "-c", default="config.yaml", help="Project YAML config (e.g. configs/wa.yaml)")
+    b.add_argument("--linelist", default=None, help="Override line list path")
+    b.add_argument("--population", default=None, help="Optional demographics file path (only used by KL benchmark)")
+    b.add_argument("--infections", default=None, help="Override allevents_variants.csv.xz path")
+    b.add_argument("--truth", default=None, help="Override linelist_mugration.json path")
+    b.add_argument("--outdir", default=None, help="Output folder for canonical sample sets (default: 03_sampled_canonical)")
+    b.add_argument("--start-date", dest="start_date", default=None, help="Override sampling start date")
+    b.add_argument("--min-pool", dest="min_pool", type=int, default=None, help="Minimum weekly cases for active window")
+    b.add_argument("--batch-size", dest="batch_size", type=int, default=None, help="Weekly sequencing budget (default: 400)")
+    b.add_argument("--strides", nargs="+", type=int, default=None, help="Stride windows in weeks (default: 1 4)")
+    b.add_argument("--strategies", nargs="+", default=None, help="Subset of canonical strategies to run")
+    b.add_argument("--sentinel-hubs", dest="sentinel_hubs", type=int, default=6, help="Number of regional sentinel lab hubs (default: 6)")
+    b.add_argument("--convenience-hubs", dest="convenience_hubs", type=int, default=2, help="Number of pre-sentinel convenience hubs (default: 2)")
+    b.add_argument("--seed", type=int, default=None, help="Override random seed")
+    b.add_argument("--force-resample", dest="force_resample", action="store_true", help="Regenerate sample CSVs even if present")
+    b.add_argument("--skip-sampling", dest="skip_sampling", action="store_true", help="Skip sampling and score existing files")
+    b.add_argument("--skip-mechanism", dest="skip_mechanism", action="store_true", help="Skip mechanism/parsimony evaluation")
+    b.add_argument("--skip-mugration", dest="skip_mugration", action="store_true", help="Skip mugration benchmark")
+    b.add_argument("--skip-truth", dest="skip_truth", action="store_true", help="Skip ABM ground-truth coverage benchmark")
     b.add_argument("--dry-run", "-n", dest="dry_run", action="store_true")
     b.set_defaults(func=cmd_benchmark)
 
