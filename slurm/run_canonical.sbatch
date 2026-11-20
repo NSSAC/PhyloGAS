@@ -27,6 +27,8 @@
 #   - results/<state>_delta_wave/05_benchmarks/canonical_pools/<state>_sentinel_hubs.json
 #   - results/<state>_delta_wave/05_benchmarks/canonical_pools/<state>_canonical_pool_summary.csv
 #   - results/<state>_delta_wave/05_benchmarks/canonical_pools/<state>_canonical_strategy_mechanism_summary.csv
+#   - results/<state>_delta_wave/05_benchmarks/Detection_Summary_canonical.csv
+#   - results/<state>_delta_wave/05_benchmarks/Detection_Events_canonical.csv
 #
 # Usage:
 #   sbatch slurm/run_canonical.sbatch                  # all 5 states (array 0-4)

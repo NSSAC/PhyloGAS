@@ -1447,6 +1447,23 @@ def cmd_benchmark(args) -> int:
         return _benchmark_contrasts(args)
     elif args.what == "canonical":
         return _benchmark_canonical(args)
+    elif args.what == "detection":
+        from .benchmark.detection import benchmark_detection
+        benchmark_detection(
+            samples_globs=args.samples,
+            infections=args.infections,
+            linelist=args.linelist,
+            target_col=args.target_col,
+            date_field=args.date_field,
+            start_date=args.start_date,
+            min_pool=args.min_pool,
+            min_chain_size=args.min_chain_size,
+            stratum_cols=args.stratum_cols,
+            metro_rucc_max=args.metro_rucc_max,
+            alpha=args.alpha,
+            out_csv=args.out,
+            out_events_csv=args.out_events,
+        )
     return 0
 
 
@@ -1689,6 +1706,29 @@ def _benchmark_contrasts(args) -> int:
         else:
             print("\nSkipping truth benchmark (allevents_variants missing).", file=sys.stderr)
 
+    # ---- Step 5: Detection Lead-Time Benchmark across all contrast arms ---
+    if not getattr(args, "skip_detection", False):
+        if allevents_variants.exists():
+            print("\n" + "=" * 72)
+            print("Running Detection Lead-Time Benchmark (T95 / UT95) across base + contrast arms")
+            print("=" * 72)
+            from .benchmark.detection import benchmark_detection
+            det_out = bench_dir / "Detection_Summary_contrasts.csv"
+            det_events_out = bench_dir / "Detection_Events_contrasts.csv"
+            mp_val = int(min_pool) if (min_pool is not None and str(min_pool).strip()) else 50
+            ll_arg = str(linelist) if Path(linelist).exists() else None
+            benchmark_detection(
+                samples_globs=sample_globs,
+                infections=str(allevents_variants),
+                linelist=ll_arg,
+                start_date=str(start_date_str),
+                min_pool=mp_val,
+                out_csv=str(det_out),
+                out_events_csv=str(det_events_out),
+            )
+        else:
+            print("\nSkipping detection benchmark (allevents_variants missing).", file=sys.stderr)
+
     print("\nAll requested contrast benchmarks complete.")
     return 0
 
@@ -1885,6 +1925,28 @@ def _benchmark_canonical(args) -> int:
             )
         else:
             print("\nSkipping truth benchmark (allevents_variants missing).", file=sys.stderr)
+
+    # ---- Step 5: Detection Lead-Time Benchmark (T95 / UT95 / ΔT95) -------
+    if not getattr(args, "skip_detection", False):
+        if allevents_variants.exists():
+            print("\n" + "=" * 72)
+            print("Running Detection Lead-Time Benchmark (T95 / UT95) across canonical arms")
+            print("=" * 72)
+            from .benchmark.detection import benchmark_detection
+            det_out = bench_dir / "Detection_Summary_canonical.csv"
+            det_events_out = bench_dir / "Detection_Events_canonical.csv"
+            ll_arg = str(linelist_cfg) if Path(linelist_cfg).exists() else None
+            benchmark_detection(
+                samples_globs=sample_globs,
+                infections=str(allevents_variants),
+                linelist=ll_arg,
+                start_date=str(start_date_str),
+                min_pool=min_pool_val,
+                out_csv=str(det_out),
+                out_events_csv=str(det_events_out),
+            )
+        else:
+            print("\nSkipping detection benchmark (allevents_variants missing).", file=sys.stderr)
 
     print("\nAll requested canonical sampling benchmarks complete.")
     return 0
@@ -2918,6 +2980,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Skip mugration benchmark")
     b.add_argument("--skip-truth", dest="skip_truth", action="store_true",
                    help="Skip ABM ground-truth coverage/KL benchmark")
+    b.add_argument("--skip-detection", dest="skip_detection", action="store_true",
+                   help="Skip T95 / UT95 detection lead-time benchmark")
     b.add_argument("--dry-run", "-n", dest="dry_run", action="store_true")
     b.set_defaults(func=cmd_benchmark)
 
@@ -2945,7 +3009,43 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--skip-mechanism", dest="skip_mechanism", action="store_true", help="Skip mechanism/parsimony evaluation")
     b.add_argument("--skip-mugration", dest="skip_mugration", action="store_true", help="Skip mugration benchmark")
     b.add_argument("--skip-truth", dest="skip_truth", action="store_true", help="Skip ABM ground-truth coverage benchmark")
+    b.add_argument("--skip-detection", dest="skip_detection", action="store_true", help="Skip T95 / UT95 detection lead-time benchmark")
     b.add_argument("--dry-run", "-n", dest="dry_run", action="store_true")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser(
+        "detection",
+        help="Compute T95, UT95, paired ΔT95, and true cases at T95 across "
+             "established importation chains (or variants), stratified by "
+             "metro vs. rural seeding geography",
+    )
+    b.add_argument("--samples", required=True, nargs="+",
+                   help="Sample CSV/CSV.XZ files (globs allowed)")
+    b.add_argument("--infections", required=True,
+                   help="ABM all-events file (e.g. allevents_variants.csv.xz)")
+    b.add_argument("--linelist", default=None,
+                   help="Ascertained line list used by samplers (required for "
+                        "exact stratified hypergeometric T95)")
+    b.add_argument("--target-col", dest="target_col", default="component_id",
+                   help="Target column to detect (default: component_id; also "
+                        "supports variant_benchmark)")
+    b.add_argument("--date-field", dest="date_field", default="date",
+                   help="Date column shared by infections, linelist, and samples")
+    b.add_argument("--start-date", dest="start_date", default=None,
+                   help="Sampler --start-date (YYYY-MM-DD); default auto from infections")
+    b.add_argument("--min-pool", dest="min_pool", type=int, default=50,
+                   help="Minimum weekly reported cases defining active window (default: 50)")
+    b.add_argument("--min-chain-size", dest="min_chain_size", type=int, default=100,
+                   help="Establishment filter: minimum true infections in window (default: 100)")
+    b.add_argument("--stratum-cols", dest="stratum_cols", nargs="+", default=["county"],
+                   help="Stratum columns for hypergeometric T95 (default: county; use __all__ for unstratified)")
+    b.add_argument("--metro-rucc-max", dest="metro_rucc_max", type=int, default=3,
+                   help="USDA RUCC threshold for metro vs. rural seeding (default: <=3 metro)")
+    b.add_argument("--alpha", type=float, default=0.95,
+                   help="Cumulative detection probability threshold (default: 0.95)")
+    b.add_argument("--out", default=None, help="Output summary CSV (e.g. Detection_Summary.csv)")
+    b.add_argument("--out-events", dest="out_events", default=None,
+                   help="Optional per-target detailed CSV (e.g. Detection_Events.csv)")
     b.set_defaults(func=cmd_benchmark)
 
     # -- assign-variants ---------------------------------------------------
