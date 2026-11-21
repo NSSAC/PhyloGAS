@@ -1464,6 +1464,110 @@ def cmd_benchmark(args) -> int:
             out_csv=args.out,
             out_events_csv=args.out_events,
         )
+    elif args.what == "phylogeny":
+        return _benchmark_phylogeny(args)
+    elif args.what == "outbreaks":
+        return _benchmark_outbreaks(args)
+    return 0
+
+
+def _resolve_state_paths(args):
+    cfg = _load_config(args)
+    state = str(cfg.get("population.state", default="va"))
+    results_dir = Path(str(cfg.get("results_dir", default=f"results/{state}_delta_wave")))
+    bench_dir = Path(str(cfg.get("benchmark.outdir", default=str(results_dir / "05_benchmarks"))))
+    bench_dir.mkdir(parents=True, exist_ok=True)
+    infections = Path(getattr(args, "infections", None) or (bench_dir / "allevents_variants.csv.xz"))
+    if not infections.exists():
+        fb = cfg.ascertainment_outputs().get("allevents")
+        if fb and Path(fb).exists():
+            infections = Path(fb)
+    comp = str(cfg.get("genetic_painter.compression", default="xz") or "xz")
+    ext = {"xz": ".xz", "bgzf": ".gz"}.get(comp, "")
+    prefix = str(cfg.get("genetic_painter.output_prefix", default=str(results_dir / "01_synthetic_genomes" / f"{state}_delta_wave")))
+    painted_fasta = Path(f"{prefix}.sequences.fasta{ext}")
+    ref_fasta = Path(str(cfg.get("genetic_painter.reference_fasta", default="data/reference/reference.fasta")))
+    linelist = Path(str(cfg.get("ascertainment.output", default=str(results_dir / "02_simulated_linelists/linelist.csv.xz"))))
+    builds_dir = Path(str(cfg.get("nextstrain.outdir", default=str(results_dir / "04_nextstrain_builds"))))
+    ncov_dir = Path(str(cfg.get("nextstrain.dir", default=str(results_dir / "ncov"))))
+    return cfg, state, results_dir, bench_dir, infections, painted_fasta, ref_fasta, linelist, builds_dir, ncov_dir
+
+
+def _benchmark_phylogeny(args) -> int:
+    from .benchmark.outbreak_prep import score_state_surveillance_trees
+
+    _, state, _, bench_dir, infections, _, _, _, builds_dir, _ = _resolve_state_paths(args)
+    bdir = Path(args.builds_dir) if args.builds_dir else builds_dir
+    out_csv = Path(args.out) if args.out else (bench_dir / "Phylogeny_Metrics.csv")
+    score_state_surveillance_trees(
+        state=state,
+        infections_path=infections,
+        builds_dir=bdir,
+        out_csv=out_csv,
+        juniper_runs_dir=args.juniper_runs_dir,
+    )
+    return 0
+
+
+def _benchmark_outbreaks(args) -> int:
+    import csv as _csv
+    from .benchmark import outbreak_prep as op
+
+    _, state, results_dir, bench_dir, infections, painted_fasta, ref_fasta, linelist, _, ncov_dir = _resolve_state_paths(args)
+    ob_root = Path(args.outdir) if args.outdir else (results_dir / "07_outbreak_bench")
+    step = args.step
+
+    if step == "prep":
+        op.prepare_state_outbreaks(
+            state=state,
+            infections_path=infections,
+            painted_fasta=painted_fasta,
+            reference_fasta=ref_fasta,
+            outdir=ob_root,
+            linelist_path=linelist if linelist.exists() else None,
+            bench_dir=bench_dir,
+            n_clusters=args.n_clusters,
+            sampling_rates=args.sampling_rates,
+            max_cluster_snps=args.max_cluster_snps,
+            seed=args.seed,
+        )
+    elif step == "nextstrain":
+        if not args.workdir:
+            sys.exit("ERROR: --workdir <outbreak_dir> is required for --step nextstrain")
+        op.run_nextstrain_on_outbreak(
+            run_dir=args.workdir,
+            ncov_dir=ncov_dir if ncov_dir.exists() else None,
+            threads=args.threads,
+        )
+    elif step == "score":
+        if not args.workdir:
+            sys.exit("ERROR: --workdir <outbreak_dir> is required for --step score")
+        op.score_outbreak_directory(
+            run_dir=args.workdir,
+            infections_path=infections,
+            out_csv=args.out,
+        )
+    elif step == "aggregate":
+        score_files = sorted(ob_root.glob("*/outbreak_scores.csv"))
+        rows = []
+        fieldnames: list[str] = []
+        for sf in score_files:
+            with open(sf, "r", encoding="utf-8") as fh:
+                rd = _csv.DictReader(fh)
+                for fn in (rd.fieldnames or []):
+                    if fn not in fieldnames:
+                        fieldnames.append(fn)
+                rows.extend(list(rd))
+        out_csv = Path(args.out) if args.out else (bench_dir / "Outbreak_Reconstruction_Metrics.csv")
+        if rows:
+            out_csv.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_csv, "w", newline="", encoding="utf-8") as fh:
+                w = _csv.DictWriter(fh, fieldnames=fieldnames)
+                w.writeheader()
+                w.writerows(rows)
+            print(f"[{state}] Aggregated {len(rows)} rows across {len(score_files)} outbreaks -> {out_csv}")
+        else:
+            print(f"[{state}] No outbreak_scores.csv files found under {ob_root}", file=sys.stderr)
     return 0
 
 
@@ -3046,6 +3150,41 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--out", default=None, help="Output summary CSV (e.g. Detection_Summary.csv)")
     b.add_argument("--out-events", dest="out_events", default=None,
                    help="Optional per-target detailed CSV (e.g. Detection_Events.csv)")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser(
+        "phylogeny",
+        help="Score statewide Nextstrain Auspice trees (and optional JUNIPER sub-studies) "
+             "against the pruned ABM ground-truth genealogy",
+    )
+    b.add_argument("--config", "-c", default="config.yaml", help="Project YAML config (e.g. configs/va.yaml)")
+    b.add_argument("--infections", default=None, help="Override allevents_variants.csv.xz path")
+    b.add_argument("--builds-dir", dest="builds_dir", default=None, help="Override 04_nextstrain_builds directory")
+    b.add_argument("--juniper-runs-dir", dest="juniper_runs_dir", default=None,
+                   help="Optional directory of JUNIPER sub-study runs (each holding nodes.csv + input_data/sample_lookup.csv)")
+    b.add_argument("--out", default=None, help="Output CSV (default: <benchmark.outdir>/Phylogeny_Metrics.csv)")
+    b.set_defaults(func=cmd_benchmark)
+
+    b = bsub.add_parser(
+        "outbreaks",
+        help="Prepare focal genetically-isolated outbreak benchmarks, run Nextstrain/TreeTime, "
+             "and score MicrobeTrace, Nextstrain, outbreaker2, TransPhylo, and JUNIPER",
+    )
+    b.add_argument("--config", "-c", default="config.yaml", help="Project YAML config (e.g. configs/va.yaml)")
+    b.add_argument("--step", required=True, choices=["prep", "nextstrain", "score", "aggregate"],
+                   help="Pipeline step to run")
+    b.add_argument("--infections", default=None, help="Override allevents_variants.csv.xz path")
+    b.add_argument("--outdir", default=None, help="Outbreak benchmark root (default: <results_dir>/07_outbreak_bench)")
+    b.add_argument("--workdir", default=None, help="Specific outbreak folder for --step nextstrain|score")
+    b.add_argument("--n-clusters", dest="n_clusters", type=int, default=3,
+                   help="Number of distinct focal community outbreaks per state (default: 3)")
+    b.add_argument("--sampling-rates", dest="sampling_rates", nargs="+", type=float, default=[0.25, 0.50],
+                   help="Surge sampling probabilities pi (default: 0.25 0.50)")
+    b.add_argument("--max-cluster-snps", dest="max_cluster_snps", type=int, default=3,
+                   help="SNP threshold for pre-isolating the focal outbreak cluster (default: 3)")
+    b.add_argument("--threads", type=int, default=4, help="Threads for augur tree (default: 4)")
+    b.add_argument("--seed", type=int, default=2026, help="Random seed (default: 2026)")
+    b.add_argument("--out", default=None, help="Optional output CSV override")
     b.set_defaults(func=cmd_benchmark)
 
     # -- assign-variants ---------------------------------------------------
