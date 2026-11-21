@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
-# Prepare & verify R 4.6 outbreak reconstruction packages on a Rivanna login node.
+# Prepare & verify R outbreak reconstruction packages (`ape`, `TransPhylo`,
+# `outbreaker2`, `juniper0`).
 #
-# Reuses the pre-compiled `juniper0`, `TransPhylo`, `ape`, `igraph`, and `Rcpp`
-# stack in `/project/bii_nssac/people/bl4zc/Rlibs/juniper_R4.6` when readable,
-# and installs `outbreaker2` (plus any missing packages) into your personal
-# `$HOME/Rlibs/phylogas_R4.6` directory (compute nodes have no outbound internet).
+# Installs missing packages into `USER_RLIB` (default: `$HOME/Rlibs/phylogas`),
+# optionally layering over a pre-compiled shared library passed via `SHARED_RLIB`.
+# On HPC clusters where compute nodes lack internet access, run once on a login node.
 #
-# Usage (run once on a Rivanna login node before submitting sbatch):
+# Usage:
 #   bash scripts/setup_outbreak_rlibs.sh
+#   SHARED_RLIB=/path/to/shared/Rlibs R_MODULES="gcc/14.2.0 openmpi/5.0.7 R/4.6.0" \
+#       bash scripts/setup_outbreak_rlibs.sh
 
 set -euo pipefail
 
-USER_RLIB="${HOME}/Rlibs/phylogas_R4.6"
-SHARED_RLIB="/project/bii_nssac/people/bl4zc/Rlibs/juniper_R4.6"
+USER_RLIB="${USER_RLIB:-${HOME}/Rlibs/phylogas}"
+SHARED_RLIB="${SHARED_RLIB:-}"
 mkdir -p "${USER_RLIB}"
 
-if command -v module >/dev/null 2>&1; then
+if [[ -n "${R_MODULES:-}" ]] && command -v module >/dev/null 2>&1; then
     module purge
-    module load gcc/14.2.0 openmpi/5.0.7 R/4.6.0
+    # shellcheck disable=SC2086
+    module load ${R_MODULES}
 fi
 
-if [[ -d "${SHARED_RLIB}" && -r "${SHARED_RLIB}" ]]; then
+if [[ -n "${SHARED_RLIB}" && -d "${SHARED_RLIB}" && -r "${SHARED_RLIB}" ]]; then
     export R_LIBS_USER="${USER_RLIB}:${SHARED_RLIB}"
     echo "Using layered R_LIBS_USER:"
     echo "  user  : ${USER_RLIB}"
     echo "  shared: ${SHARED_RLIB}"
 else
     export R_LIBS_USER="${USER_RLIB}"
-    echo "Shared library ${SHARED_RLIB} not readable; installing all packages into ${USER_RLIB}"
+    echo "Using R_LIBS_USER: ${USER_RLIB}"
 fi
 
 Rscript -e '

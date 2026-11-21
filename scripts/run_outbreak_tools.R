@@ -41,9 +41,8 @@ if (is.null(workdir) || !nzchar(workdir)) {
 workdir <- normalizePath(workdir, mustWork = TRUE)
 setwd(workdir)
 
-# Honour colon-separated R_LIBS_USER so a user library layered over a shared
-# group library (e.g. ~/Rlibs:/project/bii_nssac/people/bl4zc/Rlibs/juniper_R4.6)
-# resolves packages from both.
+# Honour colon-separated R_LIBS_USER so a user library layered over an optional
+# shared group library (e.g. ~/Rlibs:/shared/group/Rlibs) resolves from both.
 raw_libs <- Sys.getenv("R_LIBS_USER", unset = "")
 if (nzchar(raw_libs)) {
   parts <- strsplit(raw_libs, ":", fixed = TRUE)[[1]]

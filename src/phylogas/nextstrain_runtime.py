@@ -38,14 +38,14 @@ def _homes():
     env = os.environ.get("NEXTSTRAIN_HOME")
     if env:
         yield Path(env).expanduser()
-    # Check common shared-storage Nextstrain home on Rivanna (`/project/biocomplexity/$USER/nextstrain`)
-    # before `~/.nextstrain`, since `~/.nextstrain` often holds an older container config
-    # when the active conda runtime was relocated off `$HOME` quota.
-    user = os.environ.get("USER") or ""
-    if user:
-        proj_ns = Path(f"/project/biocomplexity/{user}/nextstrain")
-        if proj_ns.is_dir():
-            yield proj_ns
+    # Portable discovery: if the `nextstrain` CLI itself lives adjacent to a
+    # relocated runtime root (e.g. `<prefix>/bin/nextstrain` beside `<prefix>/runtimes`),
+    # inspect its parent without hardcoding any site-specific paths.
+    ns_bin = shutil.which("nextstrain")
+    if ns_bin:
+        cand_root = Path(ns_bin).resolve().parent.parent
+        if (cand_root / "runtimes").is_dir():
+            yield cand_root
     yield Path("~/.nextstrain").expanduser()
 
 
