@@ -90,8 +90,10 @@ fi
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 JUN_GLOBAL="${JUNIPER_GLOBAL:-1500}"
+OB_TOOLS="${OUTBREAK_TOOLS:-outbreaker2,transphylo,juniper}"
 Rscript "${REPO_ROOT}/scripts/run_outbreak_tools.R" \
     --workdir "${WORK_DIR}" \
+    --tools "${OB_TOOLS}" \
     --juniper-global "${JUN_GLOBAL}"
 
 # ---- Step 2: Score all 5 methods & safely aggregate per-state CSV ----

@@ -160,6 +160,8 @@ if ("outbreaker2" %in% want_tools) {
       if (any(is.na(ord))) stop("FASTA labels do not match metadata.csv sample column")
       m_ord <- meta_df[ord, , drop = FALSE]
       s_names <- m_ord$sample
+      # outbreaker2 requires DNAbin rownames to be "1".."N" (matching integer case indices)
+      rownames(dna) <- as.character(seq_len(nrow(dna)))
       dates_d <- as.Date(m_ord$date)
       d0 <- min(dates_d)
       int_dates <- as.integer(dates_d - d0)
