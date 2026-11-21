@@ -1539,6 +1539,10 @@ def _benchmark_outbreaks(args) -> int:
             ncov_dir=ncov_dir if ncov_dir.exists() else None,
             threads=args.threads,
         )
+    elif step == "refresh-dated-tree":
+        if not args.workdir:
+            sys.exit("ERROR: --workdir <outbreak_dir> is required for --step refresh-dated-tree")
+        op.refresh_dated_tree_from_existing_treetime(args.workdir)
     elif step == "score":
         if not args.workdir:
             sys.exit("ERROR: --workdir <outbreak_dir> is required for --step score")
@@ -3171,7 +3175,8 @@ def build_parser() -> argparse.ArgumentParser:
              "and score MicrobeTrace, Nextstrain, outbreaker2, TransPhylo, and JUNIPER",
     )
     b.add_argument("--config", "-c", default="config.yaml", help="Project YAML config (e.g. configs/va.yaml)")
-    b.add_argument("--step", required=True, choices=["prep", "nextstrain", "score", "aggregate"],
+    b.add_argument("--step", required=True,
+                   choices=["prep", "nextstrain", "refresh-dated-tree", "score", "aggregate"],
                    help="Pipeline step to run")
     b.add_argument("--infections", default=None, help="Override allevents_variants.csv.xz path")
     b.add_argument("--outdir", default=None, help="Outbreak benchmark root (default: <results_dir>/07_outbreak_bench)")

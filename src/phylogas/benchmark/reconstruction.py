@@ -462,9 +462,10 @@ def parse_newick(
                 tree.branch_muts[idx] = float(nd["mutation_length"])
             if isinstance(nd.get("branch_length"), (int, float)):
                 tree.branch_len[idx] = float(nd["branch_length"])
-            if isinstance(nd.get("num_date"), (int, float)):
-                tree.num_date[idx] = float(nd["num_date"])
-            ci = nd.get("num_date_confidence")
+            nd_val = nd.get("num_date") if nd.get("num_date") is not None else nd.get("numdate")
+            if isinstance(nd_val, (int, float)):
+                tree.num_date[idx] = float(nd_val)
+            ci = nd.get("num_date_confidence") or nd.get("numdate_confidence")
             if isinstance(ci, (list, tuple)) and len(ci) == 2:
                 try:
                     tree.num_date_ci[idx] = (float(ci[0]), float(ci[1]))

@@ -661,6 +661,35 @@ def run_nextstrain_on_outbreak(
     return meta
 
 
+def refresh_dated_tree_from_existing_treetime(run_dir: str | Path) -> dict[str, Any] | None:
+    """Re-export ``dated_tree_years.nwk`` and ``dated_tree_meta.json`` from an
+    already-completed ``treetime/{tree.nwk,branch_lengths.json}`` pair in <0.1s
+    without re-running ``augur tree`` or ``augur refine``."""
+    rdir = Path(run_dir).resolve()
+    tt_dir = rdir / "treetime"
+    t_nwk = tt_dir / "tree.nwk"
+    b_json = tt_dir / "branch_lengths.json"
+    if not t_nwk.exists() or not b_json.exists():
+        return None
+    old_rt = None
+    meta_p = tt_dir / "dated_tree_meta.json"
+    if meta_p.exists():
+        try:
+            old_rt = json.loads(meta_p.read_text(encoding="utf-8")).get("runtime_secs")
+        except Exception:
+            pass
+    meta = recon.export_dated_newick_for_transphylo(
+        t_nwk, b_json, tt_dir / "dated_tree_years.nwk", meta_p
+    )
+    if old_rt is not None:
+        meta["runtime_secs"] = old_rt
+        meta_p.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# 3. Unified Outbreak Scorer (All 5 Methods -> CSV)
+# ---------------------------------------------------------------------------
 def score_outbreak_directory(
     run_dir: str | Path,
     infections_path: str | Path,
@@ -845,6 +874,14 @@ def score_state_surveillance_trees(
 
     rows: list[dict[str, Any]] = []
     for arm, tr in parsed_builds:
+        raw_tip_count = len(tr.tips_map())
+        matched_count = len(set(tr.tips_map().keys()) & set(truth.parent_of.keys()))
+        if raw_tip_count > 0 and (matched_count / float(raw_tip_count)) < 0.80:
+            print(
+                f"[{state}] Skipping stale build '{arm}': only {matched_count:,}/{raw_tip_count:,} "
+                f"tips match current {Path(infections_path).name} (leftover from an earlier ABM paint)."
+            )
+            continue
         print(f"[{state}] Scoring statewide Nextstrain build: {arm}...")
         sc = recon.score_phylogeny(tr, truth)
         row: dict[str, Any] = {

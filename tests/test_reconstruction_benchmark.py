@@ -109,8 +109,8 @@ class TestReconstructionBenchmark(unittest.TestCase):
                     },
                     "N_712": {
                         "mutation_length": 6.0,
-                        "num_date": recon.date_to_decimal_year(_dt.date(2021, 6, 3)),
-                        "num_date_confidence": [
+                        "numdate": recon.date_to_decimal_year(_dt.date(2021, 6, 3)),
+                        "numdate_confidence": [
                             recon.date_to_decimal_year(_dt.date(2021, 6, 1)),
                             recon.date_to_decimal_year(_dt.date(2021, 6, 5)),
                         ],

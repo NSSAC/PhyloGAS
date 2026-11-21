@@ -297,15 +297,17 @@ if ("transphylo" %in% want_tools) {
       m_dl <- regmatches(meta_tt_txt, regexpr('"date_last_sample"\\s*:\\s*[0-9.]+', meta_tt_txt))
       date_last <- if (length(m_dl) > 0) as.numeric(sub('"date_last_sample"\\s*:\\s*', "", m_dl)) else 2021.75
 
+      # ptree branch lengths and dateLastSample are in DECIMAL YEARS, so Gamma
+      # generation/sojourn scale parameters (days) MUST be divided by 365.25!
       ptree <- TransPhylo::ptreeFromPhylo(tr, dateLastSample = date_last)
       tp_res <- TransPhylo::inferTTree(
         ptree,
         mcmcIterations = tp_iter,
         thinning = tp_thin,
         w.shape = a_g,
-        w.scale = 1.0 / lambda_g,
+        w.scale = (1.0 / lambda_g) / 365.25,
         ws.shape = a_s,
-        ws.scale = 1.0 / lambda_s,
+        ws.scale = (1.0 / lambda_s) / 365.25,
         startPi = init_pi,
         updatePi = TRUE,
         dateT = date_last + (7.0 / 365.25),
