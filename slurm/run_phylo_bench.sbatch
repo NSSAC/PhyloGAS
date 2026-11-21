@@ -42,6 +42,9 @@ exec >"slurm/logs/phylo_bench_${STATE}_${JOB_TAG}.out" 2>"slurm/logs/phylo_bench
 
 set -eo pipefail
 
+if [ -d "/project/biocomplexity/${USER:-asw3xp}/nextstrain" ]; then
+    export NEXTSTRAIN_HOME="${NEXTSTRAIN_HOME:-/project/biocomplexity/${USER:-asw3xp}/nextstrain}"
+fi
 source /project/biocomplexity/asw3xp/miniconda3/bin/activate
 conda activate phylogas_env
 unset PYTHONPATH

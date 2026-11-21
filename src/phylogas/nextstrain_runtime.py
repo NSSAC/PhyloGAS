@@ -38,10 +38,18 @@ def _homes():
     env = os.environ.get("NEXTSTRAIN_HOME")
     if env:
         yield Path(env).expanduser()
+    # Check common shared-storage Nextstrain home on Rivanna (`/project/biocomplexity/$USER/nextstrain`)
+    # before `~/.nextstrain`, since `~/.nextstrain` often holds an older container config
+    # when the active conda runtime was relocated off `$HOME` quota.
+    user = os.environ.get("USER") or ""
+    if user:
+        proj_ns = Path(f"/project/biocomplexity/{user}/nextstrain")
+        if proj_ns.is_dir():
+            yield proj_ns
     yield Path("~/.nextstrain").expanduser()
 
 
-def runtime_bin(tool: str) -> "Path | None":
+def runtime_bin(tool: str, ncov_dir=None) -> "Path | None":
     """The tool's path inside the Nextstrain runtime, if it is installed."""
     seen = set()
     for home in _homes():
@@ -52,6 +60,13 @@ def runtime_bin(tool: str) -> "Path | None":
             candidate = home / rel / tool
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return candidate
+    if ncov_dir is not None:
+        snk_conda = Path(ncov_dir) / ".snakemake" / "conda"
+        if snk_conda.is_dir():
+            for env_dir in sorted(snk_conda.iterdir()):
+                cand = env_dir / "bin" / tool
+                if cand.is_file() and os.access(cand, os.X_OK):
+                    return cand
     return None
 
 
@@ -67,19 +82,58 @@ def run(tool: str, args, ncov_dir=None, **kw):
     kw.setdefault("text", True)
     args = [str(a) for a in args]
 
-    cmd, source = tool_command(tool)
+    cmd, source = tool_command(tool, ncov_dir=ncov_dir)
     if cmd is not None:
-        return subprocess.run(cmd + args, **kw), source
+        # When invoking `augur` from a Nextstrain conda runtime's `bin/`, prepend
+        # that `bin/` directory to PATH so child tools (`iqtree3`, `iqtree2`,
+        # `fasttree`, `mafft`) that `augur tree` shells out to are found too.
+        run_kw = dict(kw)
+        if source == "runtime":
+            bin_dir = str(Path(cmd[0]).parent)
+            env_map = dict(run_kw.get("env") or os.environ)
+            cur_path = env_map.get("PATH", "")
+            env_map["PATH"] = f"{bin_dir}:{cur_path}" if cur_path else bin_dir
+            run_kw["env"] = env_map
+        return subprocess.run(cmd + args, **run_kw), source
 
     if ncov_dir is not None and shutil.which("nextstrain"):
         # Quote every argument: this becomes a shell line, and paths from a
         # config can contain spaces.
         import shlex
         line = " ".join(shlex.quote(a) for a in [tool, *args])
-        kw.pop("input", None)
-        return (subprocess.run(["nextstrain", "shell", str(ncov_dir)],
-                               input=line + "\n", **kw),
-                "nextstrain shell")
+        shell_kw = dict(kw)
+        shell_kw.pop("input", None)
+        shell_kw.pop("cwd", None)
+
+        # Try default runtime first ONLY if docker binary exists or singularity isn't needed;
+        # on HPC clusters (e.g. Rivanna) where `~/.nextstrain/config` may point to a
+        # retired `/opt/apptainer/current/bin/docker` wrapper while `apptainer`/`singularity`
+        # is loaded via `module load apptainer`, try `--singularity` as automatic fallback
+        # (or primary when `docker` is absent and `singularity`/`apptainer` is on PATH).
+        flag_attempts: list[tuple[list[str], str]] = []
+        has_singularity = bool(shutil.which("singularity") or shutil.which("apptainer"))
+        has_docker = bool(shutil.which("docker"))
+        if has_singularity and not has_docker:
+            flag_attempts.append((["--singularity"], "nextstrain shell --singularity"))
+            flag_attempts.append(([], "nextstrain shell"))
+        else:
+            flag_attempts.append(([], "nextstrain shell"))
+            if has_singularity:
+                flag_attempts.append((["--singularity"], "nextstrain shell --singularity"))
+        flag_attempts.append((["--conda"], "nextstrain shell --conda"))
+
+        last_proc = None
+        last_src = "nextstrain shell"
+        for rt_flags, label in flag_attempts:
+            proc = subprocess.run(
+                ["nextstrain", "shell", *rt_flags, str(ncov_dir)],
+                input=line + "\n",
+                **shell_kw,
+            )
+            last_proc, last_src = proc, label
+            if proc.returncode == 0:
+                return proc, label
+        return last_proc, last_src
 
     return None, source
 
@@ -94,7 +148,7 @@ def tool_command(tool: str, ncov_dir=None) -> "tuple[list, str] | tuple[None, st
     if direct:
         return [direct], "PATH"
 
-    inside = runtime_bin(tool)
+    inside = runtime_bin(tool, ncov_dir=ncov_dir)
     if inside is not None:
         return [str(inside)], "runtime"
 

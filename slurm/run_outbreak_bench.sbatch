@@ -61,6 +61,21 @@ print(data[idx]["run_dir"])
 
 echo "task: ${TASK_ID}   state: ${STATE}   ob_idx: ${OB_IDX}   workdir: ${WORK_DIR}   host: $(hostname)"
 
+# ---- Step 0: Build TreeTime dated tree if not yet present ----
+if [ ! -f "${WORK_DIR}/treetime/dated_tree_years.nwk" ]; then
+    echo "=== [Step 0] Building Nextstrain (IQ-TREE + TreeTime) dated tree for ${WORK_DIR} ==="
+    module purge
+    if [ -d "/project/biocomplexity/${USER:-asw3xp}/nextstrain" ]; then
+        export NEXTSTRAIN_HOME="${NEXTSTRAIN_HOME:-/project/biocomplexity/${USER:-asw3xp}/nextstrain}"
+    fi
+    source /project/biocomplexity/asw3xp/miniconda3/bin/activate
+    conda activate phylogas_env
+    unset PYTHONPATH
+    phylogas benchmark outbreaks --config "${CONFIG}" --step nextstrain \
+        --workdir "${WORK_DIR}" --threads "${SLURM_CPUS_PER_TASK:-8}"
+    conda deactivate 2>/dev/null || true
+fi
+
 # ---- Step 1: Run R Bayesian Outbreak Tools (outbreaker2, TransPhylo, JUNIPER) ----
 module purge
 module load gcc/14.2.0 openmpi/5.0.7 R/4.6.0

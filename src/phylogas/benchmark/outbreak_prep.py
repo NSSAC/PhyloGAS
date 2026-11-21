@@ -578,43 +578,58 @@ def run_nextstrain_on_outbreak(
     tt_dir = rdir / "treetime"
     tt_dir.mkdir(parents=True, exist_ok=True)
 
-    # Stage inside ncov_dir if needed so container runtimes mount the files
+    # Stage inside ncov_dir using RELATIVE paths from ncov_dir so both host
+    # executions (`cwd=ncov_dir`) and container executions (`nextstrain shell`,
+    # which mounts `ncov_dir` at `/nextstrain/build`) see the exact same paths!
     stage_base = None
     work_dir = rdir / "augur_stage"
     ncov_path = Path(ncov_dir).resolve() if ncov_dir and Path(ncov_dir).exists() else None
     if ncov_path is not None:
-        stage_base = ncov_path / "results" / "_outbreak_stage" / rdir.name
+        rel_dir = Path("results") / "_outbreak_stage" / rdir.name
+        stage_base = ncov_path / rel_dir
         stage_base.mkdir(parents=True, exist_ok=True)
         shutil.copy2(work_dir / "sequences.fasta", stage_base / "sequences.fasta")
         shutil.copy2(work_dir / "metadata.tsv", stage_base / "metadata.tsv")
-        target_dir = stage_base
+        run_cwd = str(ncov_path)
+        p_seq = str(rel_dir / "sequences.fasta")
+        p_meta = str(rel_dir / "metadata.tsv")
+        p_raw = str(rel_dir / "tree_raw.nwk")
+        p_ref = str(rel_dir / "tree.nwk")
+        p_node = str(rel_dir / "branch_lengths.json")
+        host_raw = stage_base / "tree_raw.nwk"
+        host_ref = stage_base / "tree.nwk"
+        host_node = stage_base / "branch_lengths.json"
     else:
-        target_dir = work_dir
-
-    raw_nwk = target_dir / "tree_raw.nwk"
-    refined_nwk = target_dir / "tree.nwk"
-    node_json = target_dir / "branch_lengths.json"
+        run_cwd = str(work_dir)
+        p_seq = "sequences.fasta"
+        p_meta = "metadata.tsv"
+        p_raw = "tree_raw.nwk"
+        p_ref = "tree.nwk"
+        p_node = "branch_lengths.json"
+        host_raw = work_dir / "tree_raw.nwk"
+        host_ref = work_dir / "tree.nwk"
+        host_node = work_dir / "branch_lengths.json"
 
     t0 = time.time()
     tree_args = [
         "tree",
-        "--alignment", str(target_dir / "sequences.fasta"),
+        "--alignment", p_seq,
         "--method", "iqtree",
         "--nthreads", str(threads),
-        "--output", str(raw_nwk),
+        "--output", p_raw,
     ]
-    proc1, src1 = _runtime.run("augur", tree_args, ncov_dir=ncov_path)
-    if proc1 is None or proc1.returncode != 0 or not raw_nwk.exists():
-        err = (proc1.stderr if proc1 else src1) or "augur tree failed"
+    proc1, src1 = _runtime.run("augur", tree_args, ncov_dir=ncov_path, cwd=run_cwd)
+    if proc1 is None or proc1.returncode != 0 or not host_raw.exists():
+        err = ((proc1.stderr or proc1.stdout) if proc1 else src1) or "augur tree failed"
         raise RuntimeError(f"augur tree failed ({src1}): {err[-600:]}")
 
     refine_args = [
         "refine",
-        "--tree", str(raw_nwk),
-        "--alignment", str(target_dir / "sequences.fasta"),
-        "--metadata", str(target_dir / "metadata.tsv"),
-        "--output-tree", str(refined_nwk),
-        "--output-node-data", str(node_json),
+        "--tree", p_raw,
+        "--alignment", p_seq,
+        "--metadata", p_meta,
+        "--output-tree", p_ref,
+        "--output-node-data", p_node,
         "--timetree",
         "--root", "Wuhan/Hu-1/2019",
         "--coalescent", "opt",
@@ -623,18 +638,17 @@ def run_nextstrain_on_outbreak(
         "--date-confidence",
         "--no-covariance",
     ]
-    proc2, src2 = _runtime.run("augur", refine_args, ncov_dir=ncov_path)
-    if proc2 is None or proc2.returncode != 0 or not node_json.exists():
-        err = (proc2.stderr if proc2 else src2) or "augur refine failed"
+    proc2, src2 = _runtime.run("augur", refine_args, ncov_dir=ncov_path, cwd=run_cwd)
+    if proc2 is None or proc2.returncode != 0 or not host_node.exists():
+        err = ((proc2.stderr or proc2.stdout) if proc2 else src2) or "augur refine failed"
         raise RuntimeError(f"augur refine failed ({src2}): {err[-600:]}")
     elapsed = time.time() - t0
 
-    if target_dir != tt_dir:
-        shutil.copy2(raw_nwk, tt_dir / "tree_raw.nwk")
-        shutil.copy2(refined_nwk, tt_dir / "tree.nwk")
-        shutil.copy2(node_json, tt_dir / "branch_lengths.json")
-        if stage_base is not None:
-            shutil.rmtree(stage_base, ignore_errors=True)
+    shutil.copy2(host_raw, tt_dir / "tree_raw.nwk")
+    shutil.copy2(host_ref, tt_dir / "tree.nwk")
+    shutil.copy2(host_node, tt_dir / "branch_lengths.json")
+    if stage_base is not None:
+        shutil.rmtree(stage_base, ignore_errors=True)
 
     meta = recon.export_dated_newick_for_transphylo(
         tt_dir / "tree.nwk",
